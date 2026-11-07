@@ -122,3 +122,4 @@ IDs follow Craft Anything's style (`R<milestone>.<n>`).
 - 2026-11-07: `simplify` gains fraction cancelling (polynomial gcd), tan, abs(sqrt). Algebra depth list from the agreed order is done except general quartics and log rules.
 - 2026-11-07: User asked for optional Vim support and a Notebook/Text view switch (Q18). Vim engine crate started.
 - 2026-11-07: `crates/vim` built (pure engine, 9 tests). Wiring waits for tabs/document model.
+- 2026-11-07: Design pass 1 reviewed (agent; gates green). Git initialised, file-by-file history. Tabs and the multi-document model built (`Doc`, tab strip). Next: folder panel, then Vim wiring + Text view, then palette.
