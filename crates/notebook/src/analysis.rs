@@ -180,6 +180,7 @@ impl Walker {
                 self.expr(a);
                 self.expr(b);
             }
+            Ex::Slice(a, b, c) => [a, b, c].into_iter().flatten().for_each(|x| self.expr(x)),
             Ex::Lambda { params, body } => self.function(params, |w| w.expr(body), None),
             Ex::IfExp { test, body, orelse } => {
                 self.expr(test);
