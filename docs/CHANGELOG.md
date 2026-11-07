@@ -11,6 +11,8 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - More limits work: variable exponents like `(1+1/x)**x`, `x*sin(1/x)`, `exp(-1/x**2)/x**2` and root differences like `sqrt(x**2+x) - x`.
 - Improper integrals work: `integrate(exp(-x), (x, 0, oo))` gives 1 (it used to return `-exp(-oo) + 1`).
 - `solve` handles polynomial systems such as `solve([x**2 + y**2 - 25, x - y - 1], [x, y])` by elimination; the answer is a list of solutions, each a list of `var == value`. Linear systems keep their flat form.
+- More integrals: powers of sin and cos (`cos(x)**3`, `sin(x)**2*cos(x)**2`), `exp(a*x)*sin(b*x)`, hyperbolic products, `abs`, `1/sqrt(1-x**2)`, `1/sqrt(x**2+1)` and Gaussians (`exp(-x**2)` gives `sqrt(pi)*erf(x)/2`, so `integrate(exp(-x**2), (x, -oo, oo))` is `sqrt(pi)`).
+- New functions: `erf`, `asinh`, `acosh`, `atanh`, `sec`, `csc`, `cot`, `atan2`.
 
 ## 0.1.1 (2026-11-08)
 
