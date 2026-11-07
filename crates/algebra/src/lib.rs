@@ -13,11 +13,23 @@ mod poly;
 mod rational;
 mod simplify;
 mod solve;
+mod sparse;
 mod util;
 
 pub use calculus::{diff, diff_n, integrate, integrate_definite, series};
 pub use complex::{abs as complex_abs, conjugate, parts as complex_parts};
 pub use expand::expand;
+
+/// Greatest common divisor of two polynomials with integer coefficients (`None` if they are not such polynomials).
+pub fn poly_gcd(a: &mathcraft_core::Expr, b: &mathcraft_core::Expr) -> mathcraft_core::MathResult<Option<mathcraft_core::Expr>> {
+    sparse::gcd(a, b)
+}
+
+/// Least common multiple of two polynomials with integer coefficients.
+pub fn poly_lcm(a: &mathcraft_core::Expr, b: &mathcraft_core::Expr) -> mathcraft_core::MathResult<Option<mathcraft_core::Expr>> {
+    sparse::lcm(a, b)
+}
+
 pub use limits::{Side, limit, limit_side};
 pub use poly::{factor, from_poly, linear_in, solve_polynomial, to_poly};
 pub use rational::{apart, cancel};
