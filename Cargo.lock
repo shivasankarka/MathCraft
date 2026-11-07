@@ -1980,6 +1980,7 @@ dependencies = [
  "mathcraft-typeset",
  "mathcraft-vim",
  "rfd",
+ "serde_json",
 ]
 
 [[package]]
