@@ -2,7 +2,9 @@
 
 User-facing changes per version. Planning notes and status live in `refs/` (not tracked).
 
-## Unreleased
+## 0.1.0 (2026-11-07)
+
+First public release.
 
 - Notebook and Text views, tabs, folder sidebar, command palette (Cmd+P), optional Vim mode.
 - Solver: polynomials to degree 4 in closed form, log and exponential equations, `nroots` for any degree.
