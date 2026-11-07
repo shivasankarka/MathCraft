@@ -20,6 +20,7 @@ USAGE:
     mathcraft-cli run <file>         run a notebook or script (cells are marked with `# %%`)
     mathcraft-cli check <file>       look for notebook problems (duplicate names, cycles, syntax errors)
     mathcraft-cli repl               interactive prompt
+    mathcraft-cli mcp                serve the engine to AI assistants over MCP (stdio)
     mathcraft-cli help               this text
 
 Inside code, run help() for the list of functions. Examples:
@@ -46,6 +47,7 @@ fn real_main() -> ExitCode {
         ["run", path] => run_file(path),
         ["check", path] => check_file(path),
         ["repl"] => repl(),
+        ["mcp"] => mcp(),
         [] | ["help" | "--help" | "-h"] => {
             print!("{USAGE}");
             ExitCode::SUCCESS
@@ -136,6 +138,20 @@ fn check_file(path: &str) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
+    }
+}
+
+/// Model Context Protocol server on stdin/stdout. Diagnostics go to stderr; stdout carries only protocol messages.
+fn mcp() -> ExitCode {
+    let mut engine = mathcraft_engine::Engine::new();
+    let stdin = std::io::stdin();
+    let mut out = std::io::stdout().lock();
+    match mathcraft_mcp::serve(&mut engine, &mut stdin.lock(), &mut out) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("mcp: {e}");
+            ExitCode::from(1)
+        }
     }
 }
 
