@@ -67,6 +67,8 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("any", "any(items)", "True if any item is true"),
     ("all", "all(items)", "True if every item is true"),
     ("str", "str(x)", "text form of a value"),
+    ("format", "format(x, spec)", "x as text with a format spec like '.3f', ',d', '>8' or '08.2f'; what f\"{x:.3f}\" uses"),
+    ("repr", "repr(x)", "the quoted, code-like text form of a value"),
     ("bool", "bool(x)", "truth value of a number or list"),
     ("int", "int(x)", "whole part of a number (towards zero)"),
     ("float", "float(x)", "machine-precision decimal value of a number or constant"),
@@ -501,6 +503,19 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
                 }
             }
             Ok(Value::Bool(result))
+        }
+        "format" => {
+            a.limits(name, 1, 2)?;
+            let spec = match a.pos.get(1) {
+                Some(Value::Str(s)) => s.to_string(),
+                Some(_) => return err("format() needs the spec as a string, like format(x, '.3f')"),
+                None => String::new(),
+            };
+            Ok(Value::Str(Arc::from(crate::format::format_value(a.get(0)?, &spec)?.as_str())))
+        }
+        "repr" => {
+            a.limits(name, 1, 1)?;
+            Ok(Value::Str(Arc::from(a.get(0)?.to_string().as_str())))
         }
         "str" => {
             a.limits(name, 1, 1)?;
