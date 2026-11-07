@@ -118,6 +118,50 @@ pub fn cubic_roots(c: &[Expr]) -> MathResult<Option<Vec<Expr>>> {
     Ok(Some(out))
 }
 
+// ---- quartics ----------------------------------------------------------------------------------------------------
+
+/// Ferrari's method for `c4 x^4 + ... + c0` with numeric coefficients: a resolvent cubic gives a real `m > 0`, which
+/// splits the depressed quartic into two quadratics. `None` when the coefficients are not numbers.
+pub fn quartic_roots(c: &[Expr]) -> MathResult<Option<Vec<Expr>>> {
+    let [e0, d0, c0, b0, a] = c else { return Ok(None) };
+    if ![e0, d0, c0, b0, a].iter().all(|v| v.is_num()) {
+        return Ok(None);
+    }
+    let int = Expr::int;
+    let frac = |n: i64, d: i64| Expr::rational(n, d).unwrap_or_else(Expr::one);
+    let (b, cc, d, e) = (expand(&b0.div(a))?, expand(&c0.div(a))?, expand(&d0.div(a))?, expand(&e0.div(a))?);
+    let sq = |x: &Expr| Expr::pow(x, &int(2));
+    // x = y - b/4 gives y^4 + p y^2 + q y + r
+    let p = expand(&Expr::add(vec![cc.clone(), Expr::mul(vec![frac(-3, 8), sq(&b)])]))?;
+    let q = expand(&Expr::add(vec![Expr::mul(vec![frac(1, 8), Expr::pow(&b, &int(3))]), Expr::mul(vec![frac(-1, 2), b.clone(), cc.clone()]), d.clone()]))?;
+    let r = expand(&Expr::add(vec![
+        Expr::mul(vec![frac(-3, 256), Expr::pow(&b, &int(4))]),
+        Expr::mul(vec![frac(1, 16), sq(&b), cc.clone()]),
+        Expr::mul(vec![frac(-1, 4), b.clone(), d]),
+        e,
+    ]))?;
+    let shift = Expr::mul(vec![frac(-1, 4), b]);
+    let back = |roots: Vec<Expr>| -> MathResult<Vec<Expr>> { roots.into_iter().map(|y| expand(&Expr::add(vec![y, shift.clone()]))).collect() };
+    if q.is_zero() {
+        // y^4 + p y^2 + r: solve as a quadratic in y^2
+        let ys = solve_polynomial(&crate::poly::from_poly(&[r, Expr::zero(), p, Expr::zero(), Expr::one()], &Expr::sym("_y")), &Expr::sym("_y"))?;
+        return back(ys).map(Some);
+    }
+    // resolvent: m^3 + p m^2 + (p^2/4 - r) m - q^2/8 = 0
+    let resolvent =
+        [expand(&Expr::mul(vec![frac(-1, 8), sq(&q)]))?, expand(&Expr::add(vec![Expr::mul(vec![frac(1, 4), sq(&p)]), r.neg()]))?, p.clone(), Expr::one()];
+    let Some(candidates) = cubic_roots(&resolvent)? else { return Ok(None) };
+    let Some(m) = candidates.into_iter().find(|m| eval_f64(m, &|_| None).is_ok_and(|v| v > 1e-12)) else { return Ok(None) };
+    let s = Expr::pow(&Expr::mul(vec![int(2), m.clone()]), &Expr::half());
+    let half_p_m = Expr::add(vec![Expr::mul(vec![Expr::half(), p]), m]);
+    let t = Expr::mul(vec![q, Expr::pow(&Expr::mul(vec![int(2), s.clone()]), &int(-1))]);
+    let first = [Expr::add(vec![half_p_m.clone(), t.neg()]), s.clone(), Expr::one()];
+    let second = [Expr::add(vec![half_p_m, t]), s.neg(), Expr::one()];
+    let mut ys = crate::poly::quadratic_roots(&first)?;
+    ys.extend(crate::poly::quadratic_roots(&second)?);
+    back(ys).map(Some)
+}
+
 // ---- inversion ---------------------------------------------------------------------------------------------------
 
 /// Solve `f == rhs` by undoing the outermost operation that involves `x`. `None` when `x` is spread over several terms.
@@ -385,6 +429,32 @@ mod tests {
     }
     fn x() -> Expr {
         Expr::sym("x")
+    }
+
+    #[test]
+    fn quartics_have_correct_real_roots() {
+        // x^4 - x - 1 has two real roots, about 1.2207 and -0.7245
+        let f = Expr::add(vec![Expr::pow(&x(), &Expr::int(4)), x().neg(), Expr::int(-1)]);
+        let roots = solve(&f, &x()).unwrap();
+        assert_eq!(roots.len(), 4);
+        let mut real: Vec<f64> = roots.iter().filter_map(|r| eval_f64(r, &|_| None).ok()).collect();
+        real.sort_by(f64::total_cmp);
+        assert!(real.len() >= 2, "{roots:?}");
+        let g = |v: f64| v.powi(4) - v - 1.0;
+        assert!(real.iter().all(|v| g(*v).abs() < 1e-9), "{real:?}");
+        assert!((real[0] + 0.7245).abs() < 1e-3 && (real[1] - 1.2207).abs() < 1e-3, "{real:?}");
+        // a quartic with q != 0 whose roots are all real: (x-1)(x-2)(x-3)(x-5) is found by rational roots, so use
+        // x^4 + 2x^3 - 7x^2 - 8x + 3 (no rational roots)
+        let h = Expr::add(vec![
+            Expr::pow(&x(), &Expr::int(4)),
+            Expr::mul(vec![Expr::int(2), Expr::pow(&x(), &Expr::int(3))]),
+            Expr::mul(vec![Expr::int(-7), Expr::pow(&x(), &Expr::int(2))]),
+            Expr::mul(vec![Expr::int(-8), x()]),
+            Expr::int(3),
+        ]);
+        let roots = solve(&h, &x()).unwrap();
+        let vals: Vec<f64> = roots.iter().filter_map(|r| eval_f64(r, &|_| None).ok()).collect();
+        assert!(vals.len() >= 2 && vals.iter().all(|v| (v.powi(4) + 2.0 * v.powi(3) - 7.0 * v * v - 8.0 * v + 3.0).abs() < 1e-8), "{vals:?}");
     }
 
     #[test]

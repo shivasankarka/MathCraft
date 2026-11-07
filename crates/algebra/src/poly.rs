@@ -295,6 +295,7 @@ pub fn solve_polynomial(f: &Expr, x: &Expr) -> MathResult<Vec<Expr>> {
         3 => roots.extend(quadratic_roots(&remaining)?),
         4 if let Some(cubic) = crate::solve::cubic_roots(&remaining)? => roots.extend(cubic),
         _ if let Some(found) = power_substitution(&remaining)? => roots.extend(found),
+        5 if let Some(found) = crate::solve::quartic_roots(&remaining)? => roots.extend(found),
         n => {
             return Err(MathError::unsupported(format!(
                 "cannot solve a degree-{} polynomial in closed form yet (rational roots were {})",
@@ -343,7 +344,7 @@ fn linear_root(c: &[Expr]) -> MathResult<Expr> {
     Ok(at(c, 0).neg().div(&at(c, 1)))
 }
 
-fn quadratic_roots(c: &[Expr]) -> MathResult<Vec<Expr>> {
+pub(crate) fn quadratic_roots(c: &[Expr]) -> MathResult<Vec<Expr>> {
     let (a, b, cc) = (at(c, 2), at(c, 1), at(c, 0));
     let disc = expand(&Expr::add(vec![Expr::pow(&b, &Expr::int(2)), Expr::mul(vec![Expr::int(-4), a.clone(), cc])]))?;
     let numeric = a.is_num() && b.is_num() && disc.is_num();
