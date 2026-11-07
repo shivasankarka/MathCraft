@@ -5,7 +5,32 @@ use mathcraft_core::{Expr, Kind, MathError};
 use mathcraft_syntax::ast::{Ex, Param, Stmt};
 use std::collections::HashMap;
 use std::fmt;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
+
+/// A fast, non-cryptographic hasher for variable names (FxHash). Names come from the user's own program, so there
+/// is nothing to defend against, and lookups are the hottest thing an interpreter does.
+#[derive(Default, Clone, Copy)]
+pub struct FxHasher {
+    hash: u64,
+}
+
+impl Hasher for FxHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let word = chunk.iter().enumerate().fold(0u64, |w, (i, b)| w | (u64::from(*b) << (8 * i)));
+            self.hash = (self.hash.rotate_left(5) ^ word).wrapping_mul(0x517c_c1b7_2722_0a95);
+        }
+    }
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+}
+
+/// Variables of a function call or closure; keys are shared strings so binding a parameter does not allocate.
+pub type FastMap = HashMap<Arc<str>, Value, BuildHasherDefault<FxHasher>>;
+/// Variables of a cell's top level.
+pub type TopMap = HashMap<String, Value, BuildHasherDefault<FxHasher>>;
 
 /// A runtime error with the source line it happened on, when known.
 #[derive(Debug, Clone, PartialEq)]
@@ -57,8 +82,11 @@ pub struct Function {
     pub params: Vec<Param>,
     pub defaults: Vec<Option<Value>>,
     pub body: FuncBody,
+    /// Parameter names as shared strings (same order as `params`), and the function's own name, bound once per call.
+    pub keys: Vec<Arc<str>>,
+    pub self_key: Arc<str>,
     /// Local variables of the enclosing function at definition time (closures).
-    pub captured: HashMap<String, Value>,
+    pub captured: Arc<FastMap>,
 }
 
 /// Curves ready to draw: each series is a list of polyline segments (a gap splits a segment).
