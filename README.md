@@ -5,7 +5,7 @@ language, and a reactive notebook where changing one cell updates every cell tha
 
 ![MathCraft notebook, dark theme](docs/images/notebook-dark.png)
 
-**Status: v0.1.0, first public release.** It works and is usable, but it is young: expect rough edges, and see
+**Status: v0.1.1, early but usable.** It works and is usable, but it is young: expect rough edges, and see
 [Limitations](#limitations). Built and tested mainly on macOS (Apple silicon); Windows and Linux builds come from CI
 and have had little hands-on use.
 
@@ -71,6 +71,8 @@ Use `**` for powers (`^` is XOR in Python and gives a helpful error). Declare sy
 
 ## Also included
 
+- Scattering amplitudes: Dirac traces and Lorentz-index contraction (`gamma_trace`, `slash`, `contract`, ...). `examples/amplitudes.py`
+  derives the e⁺e⁻ → μ⁺μ⁻ cross-section 4πα²/(3s). Four dimensions only, no `γ5` yet.
 - `mathcraft-cli mcp` runs an MCP server so AI tools can evaluate expressions and check notebooks.
 - Optional Vim keys (Settings), a Text view of the whole file, a command palette (⌘/Ctrl+P), tabs and a folder sidebar.
 - Right-click a result to copy it as text, LaTeX, Python, NumPy or Rust.
