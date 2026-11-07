@@ -220,7 +220,7 @@ system | solve([x**2-y, y-4], [x, y]) | [[x == 2, y == 4], [x == -2, y == 4]]
 system | solve([x**2+y**2-5, x*y-2], [x, y]) | [[x == 1, y == 2], [x == 2, y == 1], [x == -1, y == -2], [x == -2, y == -1]]
 system | solve([a*x+b*y-e, c*x+d*y-f], [x, y]) | [x == (d*e-b*f)/(a*d-b*c), y == (a*f-c*e)/(a*d-b*c)]
 system | solve([x+y+z-6, x*y+y*z+x*z-11, x*y*z-6], [x, y, z]) | [[x == 1, y == 2, z == 3], [x == 1, y == 3, z == 2], [x == 2, y == 1, z == 3], [x == 2, y == 3, z == 1], [x == 3, y == 1, z == 2], [x == 3, y == 2, z == 1]]
-system | solve([x**2+y-3, x+y**2-3], [x, y]) | [[x == 1, y == 1], [x == -2, y == -1]]
+system | solve([x**2+y-3, x+y**2-3], [x, y]) | [[x == 2, y == -1], [x == -1, y == 2], [x == -(1+sqrt(13))/2, y == -(1+sqrt(13))/2], [x == (-1+sqrt(13))/2, y == (-1+sqrt(13))/2]]
 system | solve([x-y, x**2-1], [x, y]) | [[x == 1, y == 1], [x == -1, y == -1]]
 
 # ---- linear algebra
