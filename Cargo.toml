@@ -25,6 +25,7 @@ mathcraft-mcp = { path = "crates/mcp" }
 dashu = "0.6"
 thiserror = "2"
 serde_json = "1"
+faer = "0.24"
 petgraph = "0.8"
 ruff_python_parser = "=0.0.21"
 ruff_python_ast = "=0.0.21"
