@@ -113,6 +113,15 @@ pub fn editor(ui: &mut egui::Ui, theme: &Theme, doc: &mut Doc, vim: bool, vim_st
         }
         ui.painter().set(bands, egui::Shape::Vec(marks));
         edited |= r.response.changed();
+        // Vim moves the cursor itself, so egui does not scroll to it: follow it when it changed.
+        if vim && let Some(cursor) = r.state.cursor.char_range().map(|c| c.primary) {
+            let seen = ctx.data_mut(|d| d.get_temp::<usize>(id).unwrap_or(usize::MAX));
+            if seen != usize::from(cursor.index) {
+                ctx.data_mut(|d| d.insert_temp(id, usize::from(cursor.index)));
+                let at = r.galley.pos_from_cursor(cursor).translate(r.galley_pos.to_vec2());
+                ui.scroll_to_rect(at.expand2(egui::vec2(0.0, row_height * 2.0)), None);
+            }
+        }
         if want_focus {
             r.response.request_focus();
         }
