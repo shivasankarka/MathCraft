@@ -12,8 +12,10 @@ mod highlight;
 mod icons;
 mod markdown;
 mod math_view;
+mod sidebar;
 mod tabs;
 mod theme;
+mod workspace;
 
 use doc::{Doc, file_name};
 use eframe::egui::{self, Color32, Key, Margin, Modifiers, RichText, Stroke, TextStyle, ThemePreference, vec2};
@@ -22,6 +24,7 @@ use icons::Icon;
 use math_view::MathCache;
 use mathcraft_eval::{DOCS, Value};
 use mathcraft_notebook::{Cell, CellId, CellKind, CellState, Notebook, RunMode, RunRequest};
+use sidebar::{OpenFile, SideAction};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -61,6 +64,11 @@ struct App {
     help_filter: String,
     status: String,
     last_title: String,
+    /// The opened folder and its notebooks (sidebar).
+    folder: Option<PathBuf>,
+    tree: Vec<workspace::Node>,
+    collapsed: HashSet<PathBuf>,
+    show_sidebar: bool,
     dark: Theme,
     light: Theme,
 }
@@ -71,6 +79,11 @@ impl App {
     }
 
     fn with_context(ctx: egui::Context, path: Option<PathBuf>) -> Self {
+        // a folder on the command line opens the sidebar instead of a file
+        let (path, folder) = match path {
+            Some(p) if p.is_dir() => (None, Some(p)),
+            other => (other, None),
+        };
         fonts::install(&ctx);
         let (dark, light) = (Theme::dark(), Theme::light());
         dark.apply(&ctx);
@@ -81,9 +94,12 @@ impl App {
                 Ok(t) => (Notebook::from_text(&t), format!("Opened {}", file_name(p))),
                 Err(e) => (Notebook::from_text(WELCOME), format!("Could not read {}: {e}", file_name(p))),
             },
+            None if folder.is_some() => (Notebook::from_text("# %%\n"), String::new()),
             None => (Notebook::from_text(WELCOME), String::new()),
         };
         let cur = Doc::new(0, &ctx, nb, path);
+        let tree = folder.as_deref().map(workspace::scan).unwrap_or_default();
+        let show_sidebar = folder.is_some();
         App {
             order: vec![cur.id],
             cur,
@@ -94,6 +110,10 @@ impl App {
             help_filter: String::new(),
             status,
             last_title: String::new(),
+            folder,
+            tree,
+            collapsed: HashSet::new(),
+            show_sidebar,
             dark,
             light,
         }
@@ -222,6 +242,47 @@ impl App {
         }
     }
 
+    fn open_folder(&mut self) {
+        if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+            self.set_folder(dir);
+        }
+    }
+
+    fn set_folder(&mut self, dir: PathBuf) {
+        self.tree = workspace::scan(&dir);
+        self.status = format!("Opened folder {}", file_name(&dir));
+        self.folder = Some(dir);
+        self.collapsed.clear();
+        self.show_sidebar = true;
+    }
+
+    fn rescan(&mut self) {
+        if let Some(dir) = &self.folder {
+            self.tree = workspace::scan(dir);
+        }
+    }
+
+    fn toggle_sidebar(&mut self) {
+        if self.folder.is_none() {
+            self.open_folder();
+        } else {
+            self.show_sidebar = !self.show_sidebar;
+        }
+    }
+
+    /// Create an empty notebook file in the opened folder and open it.
+    fn new_in_folder(&mut self) {
+        let Some(dir) = self.folder.clone() else { return };
+        let path = workspace::unused_name(&dir, "untitled");
+        match std::fs::write(&path, "# %%\n") {
+            Ok(()) => {
+                self.rescan();
+                self.open_path(path);
+            }
+            Err(e) => self.status = format!("Could not create a file: {e}"),
+        }
+    }
+
     fn save(&mut self, as_new: bool) {
         let target = match (&self.cur.path, as_new) {
             (Some(p), false) => p.clone(),
@@ -238,6 +299,7 @@ impl App {
                 self.status = format!("Saved {}", file_name(&target));
                 self.cur.path = Some(target);
                 self.cur.dirty = false;
+                self.rescan();
             }
             Err(e) => self.status = format!("Could not save: {e}"),
         }
@@ -288,7 +350,7 @@ impl App {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        let (save, open, new, run_all, interrupt, help, close, next, prev) = ctx.input_mut(|i| {
+        let (save, open, new, run_all, interrupt, help, close, next, prev, side) = ctx.input_mut(|i| {
             (
                 i.consume_key(Modifiers::COMMAND, Key::S),
                 i.consume_key(Modifiers::COMMAND, Key::O),
@@ -299,6 +361,7 @@ impl App {
                 i.consume_key(Modifiers::COMMAND, Key::W),
                 i.consume_key(Modifiers::CTRL, Key::Tab),
                 i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab),
+                i.consume_key(Modifiers::COMMAND, Key::B),
             )
         });
         if save {
@@ -318,6 +381,9 @@ impl App {
         }
         if help {
             self.show_help = !self.show_help;
+        }
+        if side {
+            self.toggle_sidebar();
         }
         if close {
             self.close_tab(self.cur.id);
@@ -356,6 +422,13 @@ impl App {
                 if Self::menu_item(ui, &ctx, "Open…", Some((Modifiers::COMMAND, Key::O))) {
                     self.open_file();
                 }
+                if Self::menu_item(ui, &ctx, "Open Folder…", None) {
+                    self.open_folder();
+                }
+                if Self::menu_item(ui, &ctx, "Show or hide sidebar", Some((Modifiers::COMMAND, Key::B))) {
+                    self.toggle_sidebar();
+                }
+                ui.separator();
                 if Self::menu_item(ui, &ctx, "Close tab", Some((Modifiers::COMMAND, Key::W))) {
                     self.close_tab(self.cur.id);
                 }
@@ -567,6 +640,32 @@ impl App {
             .frame(egui::Frame::new().fill(theme.chrome).inner_margin(Margin::symmetric(14, 4)))
             .show(root, |ui| self.status_bar(ui, &theme));
         hairline(root, &theme, bottom.response.rect.x_range(), bottom.response.rect.top() + 0.5);
+
+        if self.show_sidebar
+            && let Some(folder) = self.folder.clone()
+        {
+            let tree = std::mem::take(&mut self.tree);
+            let open: Vec<(PathBuf, bool, bool)> =
+                std::iter::once(&self.cur).chain(&self.others).filter_map(|d| d.path.clone().map(|p| (p, d.dirty, d.id == self.cur.id))).collect();
+            let open_files: Vec<OpenFile<'_>> = open.iter().map(|(p, dirty, active)| OpenFile { path: p, dirty: *dirty, active: *active }).collect();
+            let side = egui::Panel::left("sidebar")
+                .resizable(true)
+                .default_size(232.0)
+                .size_range(160.0..=420.0)
+                .show_separator_line(false)
+                .frame(egui::Frame::new().fill(theme.chrome).inner_margin(Margin::symmetric(4, 0)))
+                .show(root, |ui| sidebar::sidebar(ui, &theme, &folder, &tree, &mut self.collapsed, &open_files));
+            let r = side.response.rect;
+            root.painter().vline(r.right() - 0.5, r.y_range(), Stroke::new(1.0, theme.separator));
+            self.tree = tree;
+            match side.inner {
+                Some(SideAction::Open(p)) => self.open_path(p),
+                Some(SideAction::NewFile) => self.new_in_folder(),
+                Some(SideAction::Refresh) => self.rescan(),
+                Some(SideAction::OpenFolder) => self.open_folder(),
+                None => {}
+            }
+        }
 
         let mut actions: Vec<Action> = Vec::new();
         let focus = self.cur.focus.take();
@@ -1371,6 +1470,69 @@ mod tests {
         assert_eq!(app.order.len(), 1, "closing the last tab leaves a blank one");
         assert!(app.cur.is_pristine());
         frame(&ctx, &mut app);
+    }
+
+    fn sample_folder(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mathcraft-app-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lectures")).unwrap();
+        std::fs::write(dir.join("derivatives.py"), "# %%\nf = sin(x)**2\n# %%\ndiff(f, x)\n").unwrap();
+        std::fs::write(dir.join("solving.py"), "# %%\nsolve(x**3 - 3*x + 1, x)\n").unwrap();
+        std::fs::write(dir.join("lectures/week1.py"), "# %%\n1/3 + 1/6\n").unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_folder_fills_the_sidebar_and_files_open_in_tabs() {
+        let dir = sample_folder("open");
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+        assert!(app.show_sidebar);
+        let names: Vec<&str> = app.tree.iter().map(workspace::Node::name).collect();
+        assert_eq!(names, vec!["lectures", "derivatives.py", "solving.py"]);
+        frame(&ctx, &mut app);
+        app.open_path(dir.join("solving.py"));
+        app.open_path(dir.join("derivatives.py"));
+        app.open_path(dir.join("solving.py"));
+        assert_eq!(app.cur.name(), "solving.py");
+        assert_eq!(app.order.len(), 2, "the blank tab was reused and the repeat open only switched");
+        app.new_in_folder();
+        assert_eq!(app.cur.name(), "untitled.py");
+        assert!(app.tree.iter().any(|n| n.name() == "untitled.py"), "the list shows the new file");
+        frame(&ctx, &mut app);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
+    fn sidebar_screenshot() {
+        let Some(out) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&out).unwrap();
+        let dir = sample_folder("shot");
+        for (name, pref) in [("dark", ThemePreference::Dark), ("light", ThemePreference::Light)] {
+            let d = dir.clone();
+            let mut harness = egui_kittest::Harness::builder().wgpu().with_size(vec2(1000.0, 520.0)).build_ui_state(
+                move |ui, app: &mut Option<App>| {
+                    app.get_or_insert_with(|| {
+                        let mut app = App::with_context(ui.ctx().clone(), Some(d.clone()));
+                        app.open_path(d.join("derivatives.py"));
+                        app.open_path(d.join("solving.py"));
+                        app
+                    })
+                    .show(ui)
+                },
+                None,
+            );
+            harness.ctx.set_theme(pref);
+            let start = Instant::now();
+            while harness.state().as_ref().is_none_or(App::busy) && start.elapsed() < Duration::from_secs(30) {
+                harness.run_steps(3);
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            harness.run_steps(6);
+            harness.render().unwrap().save(out.join(format!("sidebar-{name}.png"))).unwrap();
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
