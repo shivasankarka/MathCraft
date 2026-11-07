@@ -21,7 +21,7 @@ mathcraft-vim = { path = "crates/vim" }
 mathcraft-engine = { path = "crates/engine" }
 mathcraft-mcp = { path = "crates/mcp" }
 
-# external (licences checked in docs/research/crate-survey.md)
+# external (licences checked in refs/research/crate-survey.md)
 dashu = "0.6"
 thiserror = "2"
 serde_json = "1"

@@ -1,7 +1,7 @@
 # CLAUDE.md
 
-Read `AGENTS.md` first; it is the source of truth for rules. Then `docs/PLAN.md` (plan and decision log) and
-`docs/STATUS.md` (what works). The ArtCraft rules we follow are under `reference/`.
+Read `AGENTS.md` first; it is the source of truth for rules. Then `refs/PLAN.md` (plan and decision log) and
+`refs/STATUS.md` (what works). The ArtCraft rules we follow are under `reference/`.
 
 Quick commands:
 

@@ -3,7 +3,7 @@
 A fast, friendly, open-source symbolic-computation notebook in pure Rust. Exact algebra and calculus, a Python-flavoured
 language, and a reactive notebook where changing one cell updates every cell that depends on it.
 
-**Status: working prototype (v0.0.1).** See `docs/STATUS.md` for what works and what does not yet.
+**Status: working prototype (v0.0.1).** See `refs/STATUS.md` for what works and what does not yet.
 
 ## Try it
 
@@ -47,7 +47,7 @@ Use `**` for powers (`^` is XOR in Python and gives a helpful error). Declare sy
 
 ## Develop
 
-Rules for contributors and agents: `AGENTS.md`. Plan and decisions: `docs/PLAN.md`.
+Rules for contributors and agents: `AGENTS.md`. Plan and decisions: `refs/PLAN.md`.
 
 ```sh
 cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && cargo deny check

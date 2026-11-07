@@ -6,8 +6,8 @@ follows their conventions. Their rules are copied under `reference/` (read-only 
 `reference/craft-anything/AGENTS.md` and the house-rules block in `reference/figcraft/AGENTS.md`. **Where this file is
 silent, those win. Where they disagree with this file, tell the user.**
 
-The plan and its decision log are in `docs/PLAN.md`; what works today and how it was checked is in `docs/STATUS.md`.
-Research notes are in `docs/research/`.
+The plan and its decision log are in `refs/PLAN.md`; what works today and how it was checked is in `refs/STATUS.md`.
+Research notes are in `refs/research/`.
 
 ## Workspace map (layers enforced by convention for now; an `xtask layers` check is planned, see PLAN R0)
 
@@ -34,11 +34,11 @@ A crate may depend only on lower layers. core, syntax and algebra must stay WASM
    algebra. Nothing may hang the UI; computation runs on the kernel thread.
 3. **Safe Rust only** (`unsafe_code = "forbid"`). Prefer pure-Rust crates.
 4. **Headless first.** Logic lives in the crates below the UI; the UI is a thin client that sends actions and renders state.
-5. **Licences:** permissive only (see `deny.toml`, `docs/PLAN.md`). Run `cargo deny check` after changing dependencies.
+5. **Licences:** permissive only (see `deny.toml`, `refs/PLAN.md`). Run `cargo deny check` after changing dependencies.
    Never link GPL/LGPL/AGPL code. Symbolica is source-available and must not be a core dependency.
 6. **Clean room:** behaviour comes from public documentation and our own design. Do not copy code, assets or strings from
    other products, and never reverse engineer Mathematica or any other incumbent. `reference/` is for reading rules, not code.
-7. **Original work, honest status.** Report what ran and what did not. Update `docs/STATUS.md` in the same change.
+7. **Original work, honest status.** Report what ran and what did not. Update `refs/STATUS.md` in the same change.
 8. **Deterministic results.** Canonical ordering and output must not depend on hash order or platform.
 9. **Versioned files.** The notebook format has a version header; migrate, don't break.
 10. **No secrets or personal data** in the repo.
@@ -60,4 +60,4 @@ All four must pass. New behaviour needs tests; a language or notebook-rule chang
 - Rust 2024, `rustfmt.toml` and `clippy.toml` as in ArtCraft (wide lines, compact items).
 - Errors are plain English with a hint on how to fix them, and carry the line number.
 - Names of language functions live only in `crates/eval/src/builtins.rs::DOCS` (help, suggestions and highlighting read it).
-- Add decisions and findings to `docs/PLAN.md` (decision log) as you go.
+- Add decisions and findings to `refs/PLAN.md` (decision log) as you go.

@@ -10,7 +10,7 @@ all-features = true
 yanked = "deny"
 ignore = [
     # `paste` (a proc-macro used at build time by faer, our optional fast linear algebra) is archived by its author;
-    # there is no known vulnerability. Needs maintainer sign-off before merging into ArtCraft (docs/PLAN.md, Q19).
+    # there is no known vulnerability. Needs maintainer sign-off before merging into ArtCraft (refs/PLAN.md, Q19).
     "RUSTSEC-2024-0436",
 ]
 
@@ -27,7 +27,7 @@ allow = [
     "Zlib",
     "0BSD",
     "Unicode-3.0",
-    "Unicode-DFS-2016", # Unicode data licence (permissive, OSI-approved), the older form of Unicode-3.0. Needed by ruff_unicode_names2 (via ruff_python_parser). NOT on the ArtCraft house allowlist: ask the maintainers before merging (docs/PLAN.md, Q10).
+    "Unicode-DFS-2016", # Unicode data licence (permissive, OSI-approved), the older form of Unicode-3.0. Needed by ruff_unicode_names2 (via ruff_python_parser). NOT on the ArtCraft house allowlist: ask the maintainers before merging (refs/PLAN.md, Q10).
     "BSL-1.0",
     "OFL-1.1",         # egui's embedded default fonts (epaint_default_fonts)
     "Ubuntu-font-1.0", # same crate
