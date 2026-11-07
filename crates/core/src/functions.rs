@@ -4,7 +4,7 @@ use crate::expr::{Expr, Kind, SYM_E, SYM_PI};
 use crate::number::Num;
 use dashu::integer::IBig;
 
-const UNARY: &[&str] = &["sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "erf", "log", "abs"];
+const UNARY: &[&str] = &["sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "erf", "Gamma", "log", "abs"];
 
 pub fn is_builtin_function(name: &str) -> bool {
     matches!(name, "sqrt" | "exp") || UNARY.contains(&name)
@@ -50,6 +50,7 @@ pub fn f64_unary(name: &str, v: f64) -> Option<f64> {
         "acosh" => v.acosh(),
         "atanh" => v.atanh(),
         "erf" => erf(v),
+        "Gamma" => gamma_fn(v),
         "log" => v.ln(),
         "abs" => v.abs(),
         _ => return None,
@@ -97,6 +98,54 @@ pub(crate) fn euler(exp: &Expr) -> Option<Expr> {
     let angle = Expr::mul(vec![Expr::num(c), Expr::pi()]);
     let (co, si) = (pi_multiple("cos", &angle)?, pi_multiple("sin", &angle)?);
     Some(Expr::add(vec![co, Expr::mul(vec![si, Expr::imag()])]))
+}
+
+/// The Gamma function: Lanczos approximation (g = 7) with the reflection formula for `x < 1/2`; `None` at the poles.
+fn gamma_fn(x: f64) -> f64 {
+    use std::f64::consts::PI;
+    const C: [f64; 9] = [
+        0.999_999_999_999_809_9,
+        676.520_368_121_885_1,
+        -1_259.139_216_722_402_8,
+        771.323_428_777_653_1,
+        -176.615_029_162_140_6,
+        12.507_343_278_686_905,
+        -0.138_571_095_265_720_12,
+        9.984_369_578_019_572e-6,
+        1.505_632_735_149_311_6e-7,
+    ];
+    if x < 0.5 {
+        return PI / ((PI * x).sin() * gamma_fn(1.0 - x));
+    }
+    let x = x - 1.0;
+    let t = x + 7.5;
+    let sum = C.iter().enumerate().skip(1).fold(C[0], |acc, (i, c)| acc + c / (x + i as f64));
+    (2.0 * PI).sqrt() * t.powf(x + 0.5) * (-t).exp() * sum
+}
+
+/// Exact `Gamma` of a positive integer (a factorial) and of a half-integer (a rational multiple of sqrt(pi)).
+fn gamma_exact(n: &Num) -> Option<Expr> {
+    let (p, q) = n.parts()?;
+    let p = i64::try_from(&p).ok()?;
+    let q = i64::try_from(&IBig::from(q)).ok()?;
+    let fact = |k: i64| (1..=k).fold(IBig::from(1), |a, b| a * IBig::from(b));
+    if q == 1 && (1..=2000).contains(&p) {
+        return Some(Expr::big(fact(p - 1)));
+    }
+    if q == 2 && p.abs() <= 400 {
+        // x = p/2 = 1/2 + k with k integer
+        let k = (p - 1) / 2;
+        let sqrt_pi = Expr::pow(&Expr::pi(), &Expr::half());
+        let coeff = if k >= 0 {
+            Expr::big(fact(2 * k)).div(&Expr::mul(vec![Expr::big(IBig::from(4).pow(usize::try_from(k).ok()?)), Expr::big(fact(k))]))
+        } else {
+            let m = -k;
+            let sign = if m % 2 == 0 { 1 } else { -1 };
+            Expr::mul(vec![Expr::int(sign), Expr::big(IBig::from(4).pow(usize::try_from(m).ok()?)), Expr::big(fact(m))]).div(&Expr::big(fact(2 * m)))
+        };
+        return Some(Expr::mul(vec![coeff, sqrt_pi]));
+    }
+    None
 }
 
 fn unary(name: &str, x: &Expr) -> Expr {
@@ -153,6 +202,7 @@ fn exact_value(name: &str, n: &Num) -> Option<Expr> {
             let s = if name == "asin" { sixths } else { 3 - sixths };
             Some(Expr::mul(vec![Expr::rational(s, 6)?, Expr::pi()]))
         }
+        "Gamma" => gamma_exact(n),
         "abs" => Some(Expr::num(if n.is_negative() { n.neg() } else { n.clone() })),
         // log of a negative number: log(|n|) + I*pi
         "log" if n.is_negative() => Some(Expr::add(vec![unary("log", &Expr::num(n.neg())), Expr::mul(vec![Expr::imag(), Expr::pi()])])),
