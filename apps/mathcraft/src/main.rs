@@ -12,6 +12,7 @@ mod highlight;
 mod icons;
 mod markdown;
 mod math_view;
+mod palette;
 mod sidebar;
 mod tabs;
 mod text_view;
@@ -26,6 +27,7 @@ use icons::Icon;
 use math_view::MathCache;
 use mathcraft_eval::{DOCS, Value};
 use mathcraft_notebook::{Cell, CellId, CellKind, CellState, Notebook, RunMode, RunRequest};
+use palette::{Item, PaletteState};
 use sidebar::{OpenFile, SideAction};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -42,6 +44,31 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native("MathCraft", options, Box::new(move |cc| Ok(Box::new(App::new(cc, path)))))
+}
+
+/// What a command-palette entry does.
+enum Cmd {
+    New,
+    Open,
+    OpenFolder,
+    Save,
+    SaveAs,
+    CloseTab,
+    RunAll,
+    RunStale,
+    Interrupt,
+    Mode(RunMode),
+    View(View),
+    ToggleSidebar,
+    Functions,
+    Theme(ThemePreference),
+    ToggleVim,
+    ToggleStrict,
+    AddCell(CellKind),
+    NewInFolder,
+    Tab(u64),
+    File(PathBuf),
+    Help(String),
 }
 
 enum Action {
@@ -76,6 +103,7 @@ struct App {
     /// Vim keys in editors (Settings), and the status text of the focused editor ("NORMAL", ":wq", ...).
     vim: bool,
     vim_status: String,
+    palette: PaletteState,
     dark: Theme,
     light: Theme,
 }
@@ -123,6 +151,7 @@ impl App {
             show_sidebar,
             vim: std::env::var_os("MATHCRAFT_VIM").is_some_and(|v| v == "1"),
             vim_status: String::new(),
+            palette: PaletteState::default(),
             dark,
             light,
         }
@@ -248,6 +277,95 @@ impl App {
                 self.open_in_tab(Notebook::from_text(&t), Some(p));
             }
             Err(e) => self.status = format!("Could not open {}: {e}", file_name(&p)),
+        }
+    }
+
+    /// Everything the command palette offers right now.
+    fn commands(&self, ctx: &egui::Context) -> Vec<Item<Cmd>> {
+        let key = |m: Modifiers, k: Key| Self::shortcut(ctx, m, k);
+        let item = |group: &'static str, title: &str, detail: String, cmd: Cmd| Item { title: title.to_owned(), detail, group, payload: cmd };
+        let on = |b: bool| if b { "on" } else { "off" };
+        let mut v = vec![
+            item("File", "New notebook", key(Modifiers::COMMAND, Key::N), Cmd::New),
+            item("File", "Open file…", key(Modifiers::COMMAND, Key::O), Cmd::Open),
+            item("File", "Open folder…", String::new(), Cmd::OpenFolder),
+            item("File", "Save", key(Modifiers::COMMAND, Key::S), Cmd::Save),
+            item("File", "Save as…", String::new(), Cmd::SaveAs),
+            item("File", "Close tab", key(Modifiers::COMMAND, Key::W), Cmd::CloseTab),
+            item("Run", "Run all cells", key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter), Cmd::RunAll),
+            item("Run", "Run stale cells", String::new(), Cmd::RunStale),
+            item("Run", "Interrupt the computation", key(Modifiers::COMMAND, Key::Period), Cmd::Interrupt),
+            item("Run", "Dependents run automatically", String::new(), Cmd::Mode(RunMode::Auto)),
+            item("Run", "Dependents only turn stale (lazy)", String::new(), Cmd::Mode(RunMode::Lazy)),
+            item("View", "Notebook view", String::new(), Cmd::View(View::Notebook)),
+            item("View", "Text view", key(Modifiers::COMMAND | Modifiers::SHIFT, Key::T), Cmd::View(View::Text)),
+            item("View", "Show or hide the sidebar", key(Modifiers::COMMAND, Key::B), Cmd::ToggleSidebar),
+            item("View", "Browse all functions", "F1".to_owned(), Cmd::Functions),
+            item("Theme", "Match the system", String::new(), Cmd::Theme(ThemePreference::System)),
+            item("Theme", "Light", String::new(), Cmd::Theme(ThemePreference::Light)),
+            item("Theme", "Dark", String::new(), Cmd::Theme(ThemePreference::Dark)),
+            item("Settings", &format!("Vim keys ({})", on(self.vim)), String::new(), Cmd::ToggleVim),
+            item("Settings", &format!("Strict names ({})", on(self.cur.nb.strict)), String::new(), Cmd::ToggleStrict),
+            item("Cell", "Add a code cell", String::new(), Cmd::AddCell(CellKind::Code)),
+            item("Cell", "Add a text cell", String::new(), Cmd::AddCell(CellKind::Markdown)),
+        ];
+        if self.folder.is_some() {
+            v.push(item("File", "New notebook in the folder", String::new(), Cmd::NewInFolder));
+        }
+        for id in &self.order {
+            if let Some(d) = self.doc(*id).filter(|d| d.id != self.cur.id) {
+                v.push(item("Tab", &format!("Go to {}", d.name()), String::new(), Cmd::Tab(d.id)));
+            }
+        }
+        fn files(nodes: &[workspace::Node], out: &mut Vec<PathBuf>) {
+            for n in nodes {
+                match n {
+                    workspace::Node::File { path, .. } => out.push(path.clone()),
+                    workspace::Node::Dir { children, .. } => files(children, out),
+                }
+            }
+        }
+        let mut paths = Vec::new();
+        files(&self.tree, &mut paths);
+        for p in paths {
+            let rel = self.folder.as_deref().and_then(|f| p.strip_prefix(f).ok()).unwrap_or(&p).display().to_string();
+            v.push(item("Open", &rel, String::new(), Cmd::File(p)));
+        }
+        for (name, sig, _) in DOCS {
+            v.push(item("Function", sig, String::new(), Cmd::Help((*name).to_owned())));
+        }
+        v
+    }
+
+    fn run_command(&mut self, cmd: Cmd, ctx: &egui::Context) {
+        match cmd {
+            Cmd::New => self.new_file(),
+            Cmd::Open => self.open_file(),
+            Cmd::OpenFolder => self.open_folder(),
+            Cmd::Save => self.save(false),
+            Cmd::SaveAs => self.save(true),
+            Cmd::CloseTab => self.close_tab(self.cur.id),
+            Cmd::RunAll => self.run(RunRequest::All),
+            Cmd::RunStale => self.run(RunRequest::Stale),
+            Cmd::Interrupt => self.cur.kernel.interrupt(),
+            Cmd::Mode(m) => self.cur.nb.mode = m,
+            Cmd::View(v) => self.cur.set_view(v),
+            Cmd::ToggleSidebar => self.toggle_sidebar(),
+            Cmd::Functions => self.show_help = true,
+            Cmd::Theme(t) => ctx.set_theme(t),
+            Cmd::ToggleVim => self.vim = !self.vim,
+            Cmd::ToggleStrict => self.cur.nb.strict = !self.cur.nb.strict,
+            Cmd::AddCell(kind) => {
+                let last = self.cur.nb.cells().last().map(|c| c.id);
+                self.apply(vec![Action::AddAfter(last, kind)]);
+            }
+            Cmd::NewInFolder => self.new_in_folder(),
+            Cmd::Tab(id) => self.select_tab(id),
+            Cmd::File(p) => self.open_path(p),
+            Cmd::Help(name) => {
+                self.help_filter = name;
+                self.show_help = true;
+            }
         }
     }
 
@@ -381,7 +499,7 @@ impl App {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        let (save, open, new, run_all, interrupt, help, close, next, prev, side, text_view) = ctx.input_mut(|i| {
+        let (save, open, new, run_all, interrupt, help, close, next, prev, side, text_view, palette) = ctx.input_mut(|i| {
             (
                 i.consume_key(Modifiers::COMMAND, Key::S),
                 i.consume_key(Modifiers::COMMAND, Key::O),
@@ -394,6 +512,7 @@ impl App {
                 i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab),
                 i.consume_key(Modifiers::COMMAND, Key::B),
                 i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::T),
+                i.consume_key(Modifiers::COMMAND, Key::P) || i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::P),
             )
         });
         if save {
@@ -413,6 +532,13 @@ impl App {
         }
         if help {
             self.show_help = !self.show_help;
+        }
+        if palette {
+            if self.palette.open {
+                self.palette.open = false;
+            } else {
+                self.palette.show();
+            }
         }
         if side {
             self.toggle_sidebar();
@@ -496,6 +622,9 @@ impl App {
                     ui.close();
                 }
             });
+            if ui.button("Commands").on_hover_text("Search every command (⌘P)").clicked() {
+                self.palette.show();
+            }
             ui.menu_button("Settings", |ui| {
                 menu_section(ui, theme, &format!("Appearance (now {})", theme.name));
                 let mut pref = ctx.options(|o| o.theme_preference);
@@ -794,6 +923,17 @@ impl App {
         }
         self.apply(actions);
         self.help_window(ctx, &theme);
+        if self.palette.open {
+            let items = self.commands(ctx);
+            let mut state = std::mem::take(&mut self.palette);
+            let chosen = palette::show(ctx, &theme, &mut state, &items);
+            self.palette = state;
+            if let Some(i) = chosen
+                && let Some(item) = items.into_iter().nth(i)
+            {
+                self.run_command(item.payload, ctx);
+            }
+        }
 
         if self.busy() {
             ctx.request_repaint_after(Duration::from_millis(120));
@@ -1799,6 +1939,47 @@ mod tests {
         }
         h.run();
         assert_eq!(code_cell(&h).map(|c| c.state), Some(CellState::Fresh));
+    }
+
+    #[test]
+    fn the_palette_runs_a_command() {
+        let mut harness = typing_harness();
+        harness.key_press_modifiers(Modifiers::COMMAND, Key::P);
+        harness.run();
+        assert!(harness.state().as_ref().is_some_and(|a| a.palette.open), "Cmd+P opens the palette");
+        harness.get_by_role(egui::accesskit::Role::TextInput).type_text("text vi");
+        harness.run();
+        harness.key_press(Key::Enter);
+        harness.run();
+        harness.run();
+        let app = harness.state().as_ref();
+        assert!(app.is_some_and(|a| !a.palette.open), "Enter closes it");
+        assert!(app.is_some_and(|a| a.cur.view == View::Text), "and ran Text view");
+        harness.key_press_modifiers(Modifiers::COMMAND, Key::P);
+        harness.run();
+        harness.key_press(Key::Escape);
+        harness.run();
+        assert!(harness.state().as_ref().is_some_and(|a| !a.palette.open), "Esc closes it");
+    }
+
+    #[test]
+    #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
+    fn palette_screenshot() {
+        let Some(out) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&out).unwrap();
+        for (name, pref) in [("dark", ThemePreference::Dark), ("light", ThemePreference::Light)] {
+            let mut harness = egui_kittest::Harness::builder()
+                .wgpu()
+                .with_size(vec2(1000.0, 560.0))
+                .build_ui_state(|ui, app: &mut Option<App>| app.get_or_insert_with(|| App::with_context(ui.ctx().clone(), None)).show(ui), None);
+            harness.ctx.set_theme(pref);
+            harness.run_steps(4);
+            harness.key_press_modifiers(Modifiers::COMMAND, Key::P);
+            harness.run_steps(3);
+            harness.get_by_role(egui::accesskit::Role::TextInput).type_text("sa");
+            harness.run_steps(4);
+            harness.render().unwrap().save(out.join(format!("palette-{name}.png"))).unwrap();
+        }
     }
 
     #[test]
