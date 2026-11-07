@@ -436,3 +436,27 @@ fn equations_with_square_roots() {
     assert_eq!(ev("solve(sqrt(x)+3, x)"), "[]");
     assert_eq!(ev("solve(x**(3/2)-8, x)"), "[4]");
 }
+
+#[test]
+fn eigen_number_theory_and_sums() {
+    assert_eq!(ev("eigenvals(matrix([[2,0],[0,3]]))"), "[2, 3]");
+    assert_eq!(ev("eigenvals(matrix([[0,1],[-1,0]]))"), "[-I, I]");
+    assert_eq!(ev("eigenvals(eye(3))"), "[1, 1, 1]");
+    assert_eq!(ev("eigenvects(matrix([[2,1],[1,2]]))"), "[(1, 1, [vec([-1, 1])]), (3, 1, [vec([1, 1])])]");
+    assert_eq!(ev("nullspace(matrix([[1,2],[2,4]]))"), "[vec([-2, 1])]");
+    assert_eq!(ev("charpoly(matrix([[1,2],[3,4]]), t)"), "t**2 - 5*t - 2");
+    assert!(ev("eigenvals(matrix([[1,2,3],[4,5,6]]))").contains("square"));
+    assert_eq!(ev("Gamma(5)"), "24");
+    assert_eq!(ev("Gamma(7/2)"), "15*sqrt(pi)/8");
+    assert_eq!(ev("Gamma(-1/2)"), "-2*sqrt(pi)");
+    assert_eq!(ev("isprime(97)"), "True");
+    assert_eq!(ev("factorint(360)"), "[(2, 3), (3, 2), (5, 1)]");
+    assert_eq!(ev("factorint(600851475143)"), "[(71, 1), (839, 1), (1471, 1), (6857, 1)]");
+    assert_eq!(ev("totient(36)"), "12");
+    assert_eq!(ev("nextprime(100)"), "101");
+    assert_eq!(ev("summation(k**2, (k, 1, n))"), "n**3/3 + n**2/2 + n/6");
+    assert_eq!(ev("summation(k**3, (k, 1, 10))"), "3025");
+    assert_eq!(ev("summation(1/2**k, (k, 0, oo))"), "2");
+    assert_eq!(ev("summation(x**k, (k, 0, oo))"), "1/(-x + 1)");
+    assert!(ev("summation(2**k, (k, 0, oo))").contains("does not converge"));
+}
