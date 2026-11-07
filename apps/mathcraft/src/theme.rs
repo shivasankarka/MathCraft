@@ -182,6 +182,32 @@ impl Theme {
         }
     }
 
+    /// Replace colours by name from a user's `theme.json` section; unknown names and invalid colours are ignored.
+    pub fn override_colors(&mut self, colors: &serde_json::Map<String, serde_json::Value>) {
+        for (name, value) in colors {
+            let Some(c) = value.as_str().and_then(crate::settings::parse_hex) else { continue };
+            match name.as_str() {
+                "bg" => self.bg = c,
+                "chrome" => self.chrome = c,
+                "separator" => self.separator = c,
+                "surface" => self.surface = c,
+                "surface_hover" => self.surface_hover = c,
+                "surface_pressed" => self.surface_pressed = c,
+                "code_bg" => self.code_bg = c,
+                "border" => self.border = c,
+                "border_strong" => self.border_strong = c,
+                "text" => self.text = c,
+                "text_dim" => self.text_dim = c,
+                "text_faint" => self.text_faint = c,
+                "accent" => self.accent = c,
+                "ok" => self.ok = c,
+                "warn" => self.warn = c,
+                "danger" => self.danger = c,
+                _ => {}
+            }
+        }
+    }
+
     /// A tinted background for banners: `color` at low strength over the document.
     pub fn tint(&self, color: Color32) -> Color32 {
         color.gamma_multiply(if self.dark { 0.13 } else { 0.08 })
