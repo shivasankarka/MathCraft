@@ -3,7 +3,22 @@
 A fast, friendly, open-source symbolic-computation notebook in pure Rust. Exact algebra and calculus, a Python-flavoured
 language, and a reactive notebook where changing one cell updates every cell that depends on it.
 
-**Status: working prototype (v0.0.1).** See `refs/STATUS.md` for what works and what does not yet.
+![MathCraft notebook, dark theme](docs/images/notebook-dark.png)
+
+**Status: v0.1.0, first public release.** It works and is usable, but it is young: expect rough edges, and see
+[Limitations](#limitations). Built and tested mainly on macOS (Apple silicon); Windows and Linux builds come from CI
+and have had little hands-on use.
+
+## Install
+
+Download a build for your system from the [Releases](../../releases) page, or build from source (Rust 1.97 or newer):
+
+```sh
+cargo install --path apps/mathcraft        # the desktop app
+cargo install --path apps/mathcraft-cli    # the command line tool
+```
+
+On Linux you also need the usual GUI development libraries (`libxkbcommon-dev`, `libwayland-dev`, `libgtk-3-dev`).
 
 ## Try it
 
@@ -45,12 +60,31 @@ Use `**` for powers (`^` is XOR in Python and gives a helpful error). Declare sy
 - Files are plain scripts with `# %%` markers, so they diff well in git and also run from the command line.
   Outputs are not stored in the file.
 
+## Limitations
+
+- No classes, imports, dicts, sets, slices or f-strings in the language yet (a clear message names the line).
+- `solve` handles polynomials up to degree 4 in closed form (`nroots` for any degree), simple log/exp/trig equations
+  and linear systems; no nonlinear systems or inequalities.
+- `integrate` has no special functions; an integral with no closed form stays as `integrate(...)`.
+- Outputs are not saved in the file; no cell-level undo; no interactive sliders yet.
+- The interpreter is a tree walker, about 3x slower than CPython on plain scalar loops. Algebra is the strength.
+
+## Also included
+
+- `mathcraft-cli mcp` runs an MCP server so AI tools can evaluate expressions and check notebooks.
+- Optional Vim keys (Settings), a Text view of the whole file, a command palette (⌘/Ctrl+P), tabs and a folder sidebar.
+- Right-click a result to copy it as text, LaTeX, Python, NumPy or Rust.
+
 ## Develop
 
-Rules for contributors and agents: `AGENTS.md`. Plan and decisions: `refs/PLAN.md`.
+Rules for contributors: `AGENTS.md`.
 
 ```sh
 cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && cargo deny check
 ```
 
-Licence: MIT OR Apache-2.0 (proposed; see PLAN Q8).
+Change history: [docs/CHANGELOG.md](docs/CHANGELOG.md).
+
+## Licence
+
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
