@@ -326,9 +326,15 @@ fn collect_inner(e: &Expr, x: &Expr, out: &mut Vec<Expr>) {
 pub fn integrate_definite(e: &Expr, x: &Expr, a: &Expr, b: &Expr) -> MathResult<Expr> {
     require_symbol(x)?;
     if let Some(f) = int(e, x, 0)? {
-        let hi = subs(&f, &[(x.clone(), b.clone())])?;
-        let lo = subs(&f, &[(x.clone(), a.clone())])?;
-        if !has_singularity(&hi) && !has_singularity(&lo) {
+        // An endpoint where the antiderivative is not defined (oo, or a pole) is replaced by a one-sided limit.
+        let end = |at: &Expr, side: crate::limits::Side| -> Option<Expr> {
+            let direct = subs(&f, &[(x.clone(), at.clone())]).ok()?;
+            if !has_singularity(&direct) {
+                return Some(direct);
+            }
+            crate::limits::limit_side(&f, x, at, side).ok().filter(|v| !has_singularity(v))
+        };
+        if let (Some(hi), Some(lo)) = (end(b, crate::limits::Side::Left), end(a, crate::limits::Side::Right)) {
             return Ok(Expr::add(vec![hi, lo.neg()]));
         }
     }
