@@ -36,13 +36,17 @@ use tabs::{TabAction, TabInfo};
 use theme::Theme;
 
 const WELCOME: &str = include_str!("welcome.py");
+/// The shimaenaga mark (`assets/icon/mathcraft.svg`) rendered at 256 px, for the window and Dock icon.
+const APP_ICON: &[u8] = include_bytes!("../../../assets/icon/mathcraft-256.png");
 
 fn main() -> eframe::Result {
     let path = std::env::args().nth(1).map(PathBuf::from);
+    let mut window = egui::ViewportBuilder::default().with_inner_size([1060.0, 840.0]).with_min_inner_size([520.0, 380.0]).with_title("MathCraft");
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(APP_ICON) {
+        window = window.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: unified_title_bar(
-            egui::ViewportBuilder::default().with_inner_size([1060.0, 840.0]).with_min_inner_size([520.0, 380.0]).with_title("MathCraft"),
-        ),
+        viewport: unified_title_bar(window),
         ..Default::default()
     };
     eframe::run_native("MathCraft", options, Box::new(move |cc| Ok(Box::new(App::new(cc, path)))))
