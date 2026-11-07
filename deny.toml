@@ -8,7 +8,11 @@ all-features = true
 [advisories]
 # RustSec advisories: vulnerable, unmaintained or yanked crates are reported.
 yanked = "deny"
-ignore = []
+ignore = [
+    # `paste` (a proc-macro used at build time by faer, our optional fast linear algebra) is archived by its author;
+    # there is no known vulnerability. Needs maintainer sign-off before merging into ArtCraft (docs/PLAN.md, Q19).
+    "RUSTSEC-2024-0436",
+]
 
 [licenses]
 # Permissive licences only. Dual-licensed crates (e.g. self_cell, r-efi) pass through their
