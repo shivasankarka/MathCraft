@@ -14,11 +14,12 @@ mod markdown;
 mod math_view;
 mod sidebar;
 mod tabs;
+mod text_view;
 mod theme;
 mod vim_edit;
 mod workspace;
 
-use doc::{Doc, file_name};
+use doc::{Doc, View, file_name};
 use eframe::egui::{self, Color32, Key, Margin, Modifiers, RichText, Stroke, TextStyle, ThemePreference, vec2};
 use egui::text_selection::CCursorRange;
 use icons::Icon;
@@ -380,7 +381,7 @@ impl App {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        let (save, open, new, run_all, interrupt, help, close, next, prev, side) = ctx.input_mut(|i| {
+        let (save, open, new, run_all, interrupt, help, close, next, prev, side, text_view) = ctx.input_mut(|i| {
             (
                 i.consume_key(Modifiers::COMMAND, Key::S),
                 i.consume_key(Modifiers::COMMAND, Key::O),
@@ -392,6 +393,7 @@ impl App {
                 i.consume_key(Modifiers::CTRL, Key::Tab),
                 i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab),
                 i.consume_key(Modifiers::COMMAND, Key::B),
+                i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::T),
             )
         });
         if save {
@@ -414,6 +416,10 @@ impl App {
         }
         if side {
             self.toggle_sidebar();
+        }
+        if text_view {
+            let to = if self.cur.view == View::Text { View::Notebook } else { View::Text };
+            self.cur.set_view(to);
         }
         if close {
             self.close_tab(self.cur.id);
@@ -479,6 +485,15 @@ impl App {
                 }
                 if Self::menu_item(ui, &ctx, "Interrupt", Some((Modifiers::COMMAND, Key::Period))) {
                     self.cur.kernel.interrupt();
+                }
+            });
+            ui.menu_button("View", |ui| {
+                let mut view = self.cur.view;
+                ui.radio_value(&mut view, View::Notebook, "Notebook: one block per cell");
+                ui.radio_value(&mut view, View::Text, "Text: the whole file in one editor");
+                if view != self.cur.view {
+                    self.cur.set_view(view);
+                    ui.close();
                 }
             });
             ui.menu_button("Settings", |ui| {
@@ -706,42 +721,77 @@ impl App {
 
         let mut actions: Vec<Action> = Vec::new();
         let focus = self.cur.focus.take();
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme.bg)).show(root, |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                let side = ((ui.available_width() - COLUMN) / 2.0).max(16.0);
-                ui.add_space(14.0);
-                ui.horizontal_top(|ui| {
-                    ui.add_space(side);
-                    let width = (ui.available_width() - side).clamp(240.0, COLUMN);
-                    ui.vertical(|ui| {
-                        ui.set_width(width);
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        let names: Vec<String> = self.cur.nb.cells().iter().flat_map(|c| c.defs().cloned()).collect();
-                        let mut env = Env {
-                            theme: &theme,
-                            math: &mut self.cur.math,
-                            generations: &self.cur.generations,
-                            focus,
-                            editing_md: &mut self.cur.editing_md,
-                            names: &names,
-                            actions: &mut actions,
-                            vim: self.vim,
-                            vim_status: &mut self.vim_status,
-                        };
-                        for (i, cell) in self.cur.nb.cells().iter().enumerate() {
-                            cell_ui(ui, &mut env, cell, i, &self.cur.nb);
-                            add_row(ui, &mut env, cell.id);
-                        }
-                        if let [only] = self.cur.nb.cells()
-                            && only.source.trim().is_empty()
-                        {
-                            empty_state(ui, &theme);
-                        }
-                        ui.add_space(140.0);
+        if self.cur.view == View::Text {
+            let active = text_view::active_cell(ctx, &self.cur);
+            let names: Vec<String> = self.cur.nb.cells().iter().flat_map(|c| c.defs().cloned()).collect();
+            let panel = egui::Panel::right("results")
+                .resizable(true)
+                .default_size(400.0)
+                .size_range(240.0..=800.0)
+                .show_separator_line(false)
+                .frame(egui::Frame::new().fill(theme.bg))
+                .show(root, |ui| {
+                    let mut env = Env {
+                        theme: &theme,
+                        math: &mut self.cur.math,
+                        generations: &self.cur.generations,
+                        focus: None,
+                        editing_md: &mut self.cur.editing_md,
+                        names: &names,
+                        actions: &mut actions,
+                        vim: self.vim,
+                        vim_status: &mut self.vim_status,
+                    };
+                    text_view::results(ui, &mut env, &self.cur.nb, active);
+                });
+            let r = panel.response.rect;
+            root.painter().vline(r.left() + 0.5, r.y_range(), Stroke::new(1.0, theme.separator));
+            let want_focus = ctx.memory(|m| m.focused().is_none());
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(theme.bg)).show(root, |ui| {
+                let out = text_view::editor(ui, &theme, &mut self.cur, self.vim, &mut self.vim_status, want_focus);
+                if let Some(id) = out.run_cell {
+                    actions.push(Action::Run(id));
+                }
+                actions.extend(out.commands.into_iter().map(Action::Command));
+            });
+        } else {
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(theme.bg)).show(root, |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    let side = ((ui.available_width() - COLUMN) / 2.0).max(16.0);
+                    ui.add_space(14.0);
+                    ui.horizontal_top(|ui| {
+                        ui.add_space(side);
+                        let width = (ui.available_width() - side).clamp(240.0, COLUMN);
+                        ui.vertical(|ui| {
+                            ui.set_width(width);
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let names: Vec<String> = self.cur.nb.cells().iter().flat_map(|c| c.defs().cloned()).collect();
+                            let mut env = Env {
+                                theme: &theme,
+                                math: &mut self.cur.math,
+                                generations: &self.cur.generations,
+                                focus,
+                                editing_md: &mut self.cur.editing_md,
+                                names: &names,
+                                actions: &mut actions,
+                                vim: self.vim,
+                                vim_status: &mut self.vim_status,
+                            };
+                            for (i, cell) in self.cur.nb.cells().iter().enumerate() {
+                                cell_ui(ui, &mut env, cell, i, &self.cur.nb);
+                                add_row(ui, &mut env, cell.id);
+                            }
+                            if let [only] = self.cur.nb.cells()
+                                && only.source.trim().is_empty()
+                            {
+                                empty_state(ui, &theme);
+                            }
+                            ui.add_space(140.0);
+                        });
                     });
                 });
             });
-        });
+        }
         self.apply(actions);
         self.help_window(ctx, &theme);
 
@@ -1584,6 +1634,71 @@ mod tests {
             harness.render().unwrap().save(out.join(format!("sidebar-{name}.png"))).unwrap();
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn text_view_keeps_the_notebook_in_step() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        app.replace_notebook(Notebook::from_text("# %%\na = 1\n# %%\nb = a + 1\n"), None);
+        let ids: Vec<CellId> = app.cur.nb.cells().iter().map(|c| c.id).collect();
+        app.cur.set_view(View::Text);
+        assert!(app.cur.text.contains("b = a + 1"));
+        frame(&ctx, &mut app);
+        // edit the first cell
+        app.cur.text = app.cur.text.replace("a = 1", "a = 5");
+        app.cur.sync_from_text();
+        let now: Vec<CellId> = app.cur.nb.cells().iter().map(|c| c.id).collect();
+        assert_eq!(now, ids, "editing keeps every cell's identity");
+        assert_eq!(app.cur.nb.cells().first().map(|c| c.source.trim()), Some("a = 5"));
+        // insert a cell in the middle: the last cell keeps its identity
+        app.cur.text = app.cur.text.replace("# %%\nb = a + 1", "# %%\nc = 3\n# %%\nb = a + 1");
+        app.cur.sync_from_text();
+        let now: Vec<CellId> = app.cur.nb.cells().iter().map(|c| c.id).collect();
+        assert_eq!(now.len(), 3);
+        assert_eq!((now.first(), now.last()), (ids.first(), ids.last()));
+        // the cursor decides which cell Shift+Enter runs
+        let at = app.cur.text.find("c = 3").unwrap_or(0);
+        assert_eq!(app.cur.cell_at(at), now.get(1).copied());
+        // deleting text down to one cell
+        app.cur.text = "# %%\nz = 1\n".into();
+        app.cur.sync_from_text();
+        assert_eq!(app.cur.nb.cells().len(), 1);
+        frame(&ctx, &mut app);
+        app.cur.set_view(View::Notebook);
+        frame(&ctx, &mut app);
+    }
+
+    #[test]
+    #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
+    fn text_view_screenshot() {
+        let Some(out) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&out).unwrap();
+        for (name, pref) in [("dark", ThemePreference::Dark), ("light", ThemePreference::Light)] {
+            let mut harness = egui_kittest::Harness::builder().wgpu().with_size(vec2(1100.0, 600.0)).build_ui_state(
+                |ui, app: &mut Option<App>| {
+                    app.get_or_insert_with(|| {
+                        let mut app = App::with_context(ui.ctx().clone(), None);
+                        app.replace_notebook(
+                            Notebook::from_text("# %% [markdown]\n# # Derivatives\n# %%\nf = sin(x)**2\n# %%\ndiff(f, x)\n# %%\nsolve(x**3 - 3*x + 1, x)\n# %%\nplot(f, (x, 0, 6))\n"),
+                            None,
+                        );
+                        app.cur.set_view(View::Text);
+                        app
+                    })
+                    .show(ui)
+                },
+                None,
+            );
+            harness.ctx.set_theme(pref);
+            let start = Instant::now();
+            while harness.state().as_ref().is_none_or(App::busy) && start.elapsed() < Duration::from_secs(30) {
+                harness.run_steps(3);
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            harness.run_steps(6);
+            harness.render().unwrap().save(out.join(format!("text-{name}.png"))).unwrap();
+        }
     }
 
     #[test]
