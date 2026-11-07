@@ -13,6 +13,7 @@ mod builtins;
 mod fastla;
 mod format;
 mod interp;
+mod numtheory;
 mod value;
 
 pub use array::{Array, DType};
