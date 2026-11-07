@@ -369,3 +369,19 @@ fn improper_integrals_take_limits_at_the_ends() {
     assert_eq!(ev("integrate(1/x**2, (x, 1, oo))"), "1");
     assert_eq!(ev("integrate(1/sqrt(x), (x, 0, 4))"), "4");
 }
+
+#[test]
+fn nonlinear_systems_by_elimination() {
+    assert_eq!(ev("solve([x**2+y**2-25, x-y-1])"), "[[x == -3, y == -4], [x == 4, y == 3]]");
+    assert_eq!(ev("solve([x*y-6, x+y-5], [x, y])"), "[[x == 2, y == 3], [x == 3, y == 2]]");
+    assert_eq!(ev("solve([x**2-1, y**2-4], [x, y])"), "[[x == -1, y == -2], [x == -1, y == 2], [x == 1, y == -2], [x == 1, y == 2]]");
+    assert_eq!(ev("solve([x**2+y**2-1, x**2+y**2-2], [x, y])"), "[]");
+    assert_eq!(
+        ev("solve([x**2+y**2-1, x+y-5], [x, y])"),
+        "[[x == 5/2 - I*sqrt(23)/2, y == 5/2 + I*sqrt(23)/2], [x == 5/2 + I*sqrt(23)/2, y == 5/2 - I*sqrt(23)/2]]"
+    );
+    assert!(ev("solve([x**2+y**2-1], [x, y])").contains("not determined"));
+    assert!(ev("solve([sin(x)-y, y-1/2], [x, y])").contains("polynomial"));
+    // linear systems keep their flat form
+    assert_eq!(ev("solve([x+y-3, x-y-1], [x, y])"), "[x == 2, y == 1]");
+}
