@@ -9,6 +9,7 @@ description = "Symbolic algebra and calculus for MathCraft (L1, WASM-safe, no I/
 
 [dependencies]
 mathcraft-core.workspace = true
+mathcraft-poly.workspace = true
 dashu.workspace = true
 
 [lints]

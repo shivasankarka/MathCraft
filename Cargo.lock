@@ -1989,6 +1989,7 @@ version = "0.0.1"
 dependencies = [
  "dashu",
  "mathcraft-core",
+ "mathcraft-poly",
 ]
 
 [[package]]
@@ -2047,6 +2048,13 @@ dependencies = [
  "mathcraft-eval",
  "mathcraft-syntax",
  "petgraph",
+]
+
+[[package]]
+name = "mathcraft-poly"
+version = "0.0.1"
+dependencies = [
+ "dashu",
 ]
 
 [[package]]
