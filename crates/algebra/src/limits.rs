@@ -71,7 +71,7 @@ fn finite(e: &Expr, x: &Expr, a: &Expr, side: Side) -> MathResult<Expr> {
         let n0 = expand(&at(&num)?)?;
         let d0 = expand(&at(&den)?)?;
         if has_singularity(&n0) || has_singularity(&d0) {
-            break;
+            return via_infinity(e, x, a, side);
         }
         if !d0.is_zero() {
             return Ok(n0.div(&d0));
@@ -82,7 +82,29 @@ fn finite(e: &Expr, x: &Expr, a: &Expr, side: Side) -> MathResult<Expr> {
         num = diff(&num, x)?;
         den = diff(&den, x)?;
     }
-    Err(unsupported())
+    via_infinity(e, x, a, side)
+}
+
+/// Last resort at a finite point: put `x = a + 1/t` and take `t -> +-oo`, where the growth rules (exp, log, powers,
+/// `0 * oo`) are stronger than L'Hôpital's rule on the original expression.
+fn via_infinity(e: &Expr, x: &Expr, a: &Expr, side: Side) -> MathResult<Expr> {
+    let t = Expr::sym("t_limit");
+    let go = |s: i8| -> MathResult<Expr> {
+        let inv = Expr::pow(&t, &Expr::int(-1));
+        let moved = subs(e, &[(x.clone(), Expr::add(vec![a.clone(), inv]))])?;
+        Ok(lim_expr(at_infinity(&moved, &t, s, 0)?))
+    };
+    if e.contains(&t) {
+        return Err(unsupported());
+    }
+    match side {
+        Side::Right => go(1),
+        Side::Left => go(-1),
+        Side::Both => {
+            let (r, l) = (go(1)?, go(-1)?);
+            if r == l { Ok(r) } else { Err(MathError::domain("the limit differs on the two sides; give a side, e.g. dir='+'")) }
+        }
+    }
 }
 
 /// The numerator is a non-zero `n0` at `a` and the denominator vanishes there: the result is `+oo` or `-oo`, decided by
@@ -134,6 +156,13 @@ fn at_infinity(e: &Expr, x: &Expr, s: i8, depth: u32) -> MathResult<Lim> {
                     Lim::Inf(d) => match inf {
                         None => inf = Some(d),
                         Some(p) if p == d => {}
+                        // oo - oo with radicals: factor the dominant power out of each root, then out of the sum.
+                        Some(_) if s > 0 && depth < MAX_DEPTH / 2 && factor_out_x(e, x)?.is_some() => {
+                            return match factor_out_x(e, x)? {
+                                Some(f) => at_infinity(&f, x, s, depth + 8),
+                                None => Err(unsupported()),
+                            };
+                        }
                         // oo - oo: combine into one fraction and use L'Hôpital.
                         Some(_) => {
                             let (n, d) = crate::rational::together(e)?;
@@ -223,6 +252,36 @@ fn at_infinity(e: &Expr, x: &Expr, s: i8, depth: u32) -> MathResult<Lim> {
     }
 }
 
+/// For `x -> +oo`: rewrite every root `b ** (p/q)` of a polynomial `b` of degree `n` as `x ** (n*p/q) * (b / x**n) ** (p/q)`,
+/// then, if every term of the resulting sum carries a factor `x`, pull it out: `sqrt(x**2 + x) - x` becomes
+/// `x * (sqrt(1 + 1/x) - 1)`, a `oo * 0` form the rest of the machinery can handle.
+fn factor_out_x(e: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
+    fn pull(e: &Expr, x: &Expr) -> MathResult<Expr> {
+        if let Kind::Pow(b, k) = e.kind()
+            && b.contains(x)
+            && !k.contains(x)
+            && k.as_num().is_some_and(|n| !n.is_integer())
+            && let Some(coeffs) = crate::poly::to_poly(b, x)?
+            && coeffs.len() > 1
+        {
+            let n = Expr::int(i64::try_from(coeffs.len() - 1).unwrap_or(1));
+            let inner = expand(&b.div(&Expr::pow(x, &n)))?;
+            return Ok(Expr::mul(vec![Expr::pow(x, &Expr::mul(vec![n, k.clone()])), Expr::pow(&inner, k)]));
+        }
+        e.map_children(|c| pull(c, x))
+    }
+    let pulled = pull(e, x)?;
+    let Kind::Add(terms) = pulled.kind() else { return Ok(None) };
+    let divided: Vec<Expr> = terms.iter().map(|t| t.div(x)).collect();
+    let has_x = |t: &Expr| t.contains(x);
+    // every term must have shed an x (no term left with a bare 1/x it cannot absorb), and something must have changed
+    if divided.iter().any(|t| matches!(t.kind(), Kind::Num(_)) && !has_x(t)) && !divided.iter().any(has_x) {
+        return Ok(None);
+    }
+    let sum = Expr::add(divided);
+    Ok((&pulled != e).then(|| Expr::mul(vec![x.clone(), sum])))
+}
+
 /// `num / den` at infinity: compare the limits of both, using L'Hôpital's rule for `oo/oo` and `0/0`.
 fn ratio(num: &Expr, den: &Expr, x: &Expr, s: i8, depth: u32) -> MathResult<Lim> {
     let (mut n, mut d) = (num.clone(), den.clone());
@@ -245,8 +304,12 @@ fn ratio(num: &Expr, den: &Expr, x: &Expr, s: i8, depth: u32) -> MathResult<Lim>
             }
             (Lim::Inf(_), Lim::Inf(_)) => {}
         }
-        n = diff(&n, x)?;
-        d = diff(&d, x)?;
+        let (dn, dd) = (diff(&n, x)?, diff(&d, x)?);
+        // Cancel the new quotient so common factors (like -1/x**2 in both) do not keep it indeterminate.
+        (n, d) = match crate::rational::cancel(&dn.div(&dd)) {
+            Ok(q) if !q.divides_by_zero() => split_fraction(&q),
+            _ => (dn, dd),
+        };
     }
     Err(unsupported())
 }
