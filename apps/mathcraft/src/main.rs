@@ -859,8 +859,11 @@ impl App {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let mode = if self.cur.nb.mode == RunMode::Auto { "Dependents run automatically" } else { "Dependents wait (lazy)" };
-                ui.label(dim(mode.into())).on_hover_text("Change in Settings");
-                if !self.status.is_empty() {
+                // what is left of the bar after the counts on the left: drop the wordy parts first
+                if ui.available_width() > 300.0 {
+                    ui.label(dim(mode.into())).on_hover_text("Change in Settings");
+                }
+                if !self.status.is_empty() && ui.available_width() > 120.0 {
                     ui.add_space(10.0);
                     ui.add(egui::Label::new(RichText::new(self.status.clone()).size(11.5).color(theme.text_faint)).truncate());
                 }
