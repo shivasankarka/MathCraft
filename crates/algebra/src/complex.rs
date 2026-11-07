@@ -52,6 +52,29 @@ pub fn abs(e: &Expr) -> MathResult<Expr> {
     Ok(Expr::pow(&sum, &Expr::half()))
 }
 
+/// The angle of the point `(x, y)` in `(-pi, pi]`, for numeric arguments: exact multiples of pi/4 come out exact.
+pub fn atan2(y: &Expr, x: &Expr) -> MathResult<Expr> {
+    let (Some(yn), Some(xn)) = (y.as_num(), x.as_num()) else {
+        return Err(MathError::unsupported("atan2 needs numeric arguments"));
+    };
+    let pi = Expr::pi();
+    let frac = |p: i64, q: i64| Expr::rational(p, q).map(|r| Expr::mul(vec![r, pi.clone()])).unwrap_or_else(Expr::zero);
+    if xn.is_zero() {
+        return match (yn.is_zero(), yn.is_negative()) {
+            (true, _) => Err(MathError::domain("atan2(0, 0) is undefined")),
+            (false, false) => Ok(frac(1, 2)),
+            (false, true) => Ok(frac(-1, 2)),
+        };
+    }
+    let base = Expr::call("atan", vec![y.div(x)]);
+    Ok(match (xn.is_negative(), yn.is_negative(), yn.is_zero()) {
+        (false, _, _) => base,
+        (true, _, true) => pi,
+        (true, false, _) => Expr::add(vec![base, pi]),
+        (true, true, _) => Expr::add(vec![base, pi.neg()]),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
