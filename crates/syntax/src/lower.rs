@@ -13,10 +13,65 @@ pub fn parse(source: &str) -> Result<Vec<Stmt>, SyntaxError> {
     if let Some(offset) = too_deep(source) {
         return Err(SyntaxError { line: line_of(source, offset), message: "this code is nested too deeply".into() });
     }
+    // `^` is a power, as in maths (Python's XOR is not useful here); it must bind like `**`, so rewrite it up front.
+    let rewritten = caret_to_pow(source);
+    let source = rewritten.as_str();
     let parsed = ruff_python_parser::parse_module(source)
         .map_err(|e| SyntaxError { line: line_of(source, e.location.start().to_usize()), message: format!("invalid syntax: {}", e.error) })?;
     let lower = Lower { source };
     lower.suite(&parsed.syntax().body, 0)
+}
+
+/// `x^2` as `x**2`: every `^` outside strings and comments becomes `**`. Line numbers do not change.
+fn caret_to_pow(source: &str) -> String {
+    if !source.contains('^') {
+        return source.to_owned();
+    }
+    let chars: Vec<char> = source.chars().collect();
+    let mut out = String::with_capacity(source.len() + 8);
+    let mut i = 0;
+    while let Some(&c) = chars.get(i) {
+        match c {
+            '#' => {
+                while let Some(&d) = chars.get(i).filter(|d| **d != '\n') {
+                    out.push(d);
+                    i += 1;
+                }
+                continue;
+            }
+            '\'' | '"' => {
+                let triple = chars.get(i + 1) == Some(&c) && chars.get(i + 2) == Some(&c);
+                let width = if triple { 3 } else { 1 };
+                out.extend(std::iter::repeat_n(c, width));
+                i += width;
+                while let Some(&d) = chars.get(i) {
+                    if d == '\\' {
+                        out.push(d);
+                        if let Some(&n) = chars.get(i + 1) {
+                            out.push(n);
+                        }
+                        i += 2;
+                        continue;
+                    }
+                    if d == c && (!triple || (chars.get(i + 1) == Some(&c) && chars.get(i + 2) == Some(&c))) {
+                        out.extend(std::iter::repeat_n(c, width));
+                        i += width;
+                        break;
+                    }
+                    if d == '\n' && !triple {
+                        break;
+                    }
+                    out.push(d);
+                    i += 1;
+                }
+                continue;
+            }
+            '^' => out.push_str("**"),
+            other => out.push(other),
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Cheap guard run before parsing: the byte offset where brackets nest deeper than allowed, if any.
@@ -293,9 +348,13 @@ mod tests {
     }
 
     #[test]
-    fn caret_gets_a_helpful_message() {
-        let e = parse("x ^ 2").unwrap_err();
-        assert!(e.message.contains("**"), "{e}");
+    fn caret_is_a_power() {
+        assert_eq!(caret_to_pow("x^2 + 1"), "x**2 + 1");
+        assert_eq!(caret_to_pow("s = 'a^b' # c^d\ny^3"), "s = 'a^b' # c^d\ny**3");
+        assert_eq!(caret_to_pow("\"\"\"a^b\"\"\"; x^2"), "\"\"\"a^b\"\"\"; x**2");
+        assert_eq!(first("x^2 + 1"), first("x**2 + 1"), "binds tighter than +");
+        assert_eq!(first("2^3^2"), first("2**3**2"), "right associative");
+        assert_eq!(first("-x^2"), first("-x**2"));
     }
 
     #[test]
