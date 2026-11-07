@@ -8,6 +8,7 @@
 
 mod array;
 mod builtins;
+mod fastla;
 mod interp;
 mod value;
 
