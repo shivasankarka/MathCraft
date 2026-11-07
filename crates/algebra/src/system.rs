@@ -47,7 +47,7 @@ fn degree_in(f: &Expr, v: &Expr) -> MathResult<Option<usize>> {
 }
 
 /// Resultant of `f` and `g` with respect to `v`: the determinant of their Sylvester matrix.
-fn resultant(f: &Expr, g: &Expr, v: &Expr) -> MathResult<Expr> {
+pub(crate) fn resultant(f: &Expr, g: &Expr, v: &Expr) -> MathResult<Expr> {
     let (Some(mut a), Some(mut b)) = (to_poly(f, v)?, to_poly(g, v)?) else { return Err(unsupported("only polynomial equations")) };
     a.reverse();
     b.reverse();
