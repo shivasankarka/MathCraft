@@ -1617,6 +1617,7 @@ dependencies = [
  "mathcraft-eval",
  "mathcraft-notebook",
  "mathcraft-typeset",
+ "mathcraft-vim",
  "rfd",
 ]
 
