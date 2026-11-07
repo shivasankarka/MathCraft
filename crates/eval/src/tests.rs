@@ -262,3 +262,12 @@ fn solves_cubics_and_transcendental_equations() {
     assert_eq!(v("abs(N(subs(x**3 + x + 1, x, solve(x**3 + x + 1, x)[0]))) < 1e-9"), "True");
     assert!(v("nsolve(cos(x) == x, x, 1)").starts_with("0.73908513"));
 }
+
+#[test]
+fn exports_functions_as_python_and_rust() {
+    assert_eq!(ev("pycode(x**2 + 1, x)"), "'import math\n\n\ndef f(x):\n    return x**2 + 1\n'");
+    assert!(ev("pycode(solve(x**2 - a, x), a, 'roots')").contains("def roots(a):"));
+    assert!(ev("pycode(sin(x), x, numpy=True)").contains("np.sin(x)"));
+    assert!(ev("rustcode(x**2 + 1, x)").contains("x.powi(2) + 1.0"));
+    assert!(ev("pycode(sin(x)*y)").contains("def f(x, y)"), "arguments default to the free symbols, sorted");
+}
