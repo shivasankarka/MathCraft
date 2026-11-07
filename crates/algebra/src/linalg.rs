@@ -108,6 +108,66 @@ fn rref(m: &mut Matrix, ncols: usize) -> MathResult<Vec<usize>> {
     Ok(pivots)
 }
 
+/// A basis of the null space: vectors `v` with `m * v == 0`.
+pub fn nullspace(m: &Matrix) -> MathResult<Vec<Vec<Expr>>> {
+    let cols = m.first().map_or(0, Vec::len);
+    let mut work = m.clone();
+    let pivots = rref(&mut work, cols)?;
+    let mut basis = Vec::new();
+    for free in (0..cols).filter(|c| !pivots.contains(c)) {
+        let mut v = vec![Expr::zero(); cols];
+        if let Some(slot) = v.get_mut(free) {
+            *slot = Expr::one();
+        }
+        for (row, &p) in pivots.iter().enumerate() {
+            if let Some(slot) = v.get_mut(p) {
+                *slot = cell(&work, row, free).neg();
+            }
+        }
+        basis.push(v);
+    }
+    Ok(basis)
+}
+
+/// `det(m - x*I)` expanded: the characteristic polynomial in `x` (up to a sign of `(-1)**n` relative to `det(x*I - m)`).
+pub fn charpoly(m: &Matrix, x: &Expr) -> MathResult<Expr> {
+    let n = m.len();
+    if m.iter().any(|r| r.len() != n) {
+        return Err(MathError::domain("only a square matrix has eigenvalues"));
+    }
+    let shifted: Matrix = m
+        .iter()
+        .enumerate()
+        .map(|(i, row)| row.iter().enumerate().map(|(j, v)| if i == j { Expr::add(vec![v.clone(), x.neg()]) } else { v.clone() }).collect())
+        .collect();
+    expand(&det(&shifted)?)
+}
+
+/// Eigenvalues with multiplicity (a repeated root appears as many times as it repeats).
+pub fn eigenvalues(m: &Matrix) -> MathResult<Vec<Expr>> {
+    let x = Expr::sym("_lambda");
+    let p = charpoly(m, &x)?;
+    let roots = crate::solve(&p, &x)?;
+    let mut out = Vec::new();
+    for r in roots {
+        let (mut d, mut k) = (p.clone(), 0);
+        loop {
+            if !is_zero_expr(&subs(&d, &[(x.clone(), r.clone())])?)? || k > m.len() {
+                break;
+            }
+            k += 1;
+            d = diff(&d, &x)?;
+        }
+        for _ in 0..k.max(1) {
+            out.push(r.clone());
+        }
+    }
+    if out.len() != m.len() {
+        return Err(MathError::unsupported("could not find all the eigenvalues in closed form (try nroots on charpoly)"));
+    }
+    Ok(out)
+}
+
 pub fn rank(m: &Matrix) -> MathResult<usize> {
     let mut work = m.clone();
     let cols = work.first().map_or(0, Vec::len);
