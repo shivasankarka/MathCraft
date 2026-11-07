@@ -1,0 +1,17 @@
+[package]
+name = "mathcraft-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "MathCraft tool registry (layer L2): every capability as a named tool with a JSON schema, shared by the CLI, the MCP server and the app"
+
+[dependencies]
+mathcraft-core.workspace = true
+mathcraft-eval.workspace = true
+mathcraft-notebook.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
