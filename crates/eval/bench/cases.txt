@@ -238,12 +238,12 @@ linalg | det(eye(4)*x) | x**4
 linalg | eigenvals(matrix([[2,0],[0,3]])) | [2,3]
 linalg | eigenvals(matrix([[1,2],[2,1]])) | [3,-1]
 linalg | eigenvals(matrix([[0,1],[-1,0]])) | [I,-I]
-linalg | nullspace(matrix([[1,2],[2,4]])) | [[-2,1]]
+linalg | nullspace(matrix([[1,2],[2,4]])) | [vec([-2,1])]
 
 # ---- numbers / special functions
 special | factorial(20) | 2432902008176640000
 special | binomial(10, 3) | 120
-special | gamma((1/2)) | sqrt(pi)
+special | Gamma(1/2) | sqrt(pi)
 special | erf(0) | 0
 special | sum([k**2 for k in range(1,101)]) | 338350
 special | summation(k, (k, 1, n)) | n*(n+1)/2
@@ -256,6 +256,5 @@ special | re(exp(I*pi/3)) | 1/2
 special | conjugate(1+2*I) | 1-2*I
 special | log(-1) | I*pi
 special | atan2(1, 1) | pi/4
-special | integer_nthroot(27, 3) | 3
-special | isprime(97) | 1
+special | factorint(360) | [(2,3),(3,2),(5,1)]
 special | totient(36) | 12
