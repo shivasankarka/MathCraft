@@ -413,3 +413,16 @@ fn new_functions() {
     assert_eq!(ev("atan2(-1, 0)"), "-pi/2");
     assert_eq!(ev("cot(pi/4)"), "1");
 }
+
+#[test]
+fn euler_identity_and_logs_of_negatives() {
+    assert_eq!(ev("exp(I*pi)"), "-1");
+    assert_eq!(ev("exp(I*pi/3)"), "1/2 + I*sqrt(3)/2");
+    assert_eq!(ev("re(exp(I*pi/3))"), "1/2");
+    assert_eq!(ev("exp(I*pi/7)"), "exp(I*pi/7)");
+    assert_eq!(ev("log(-1)"), "I*pi");
+    assert_eq!(ev("log(-3)"), "log(3) + I*pi");
+    // trigonometric polynomial identities reduce to zero
+    assert_eq!(ev("simplify(cos(x)**4 - sin(x)**4 - cos(x)**2 + sin(x)**2)"), "0");
+    assert_eq!(ev("simplify(sin(x)**2*cos(x)**2 + sin(x)**4 - sin(x)**2)"), "0");
+}
