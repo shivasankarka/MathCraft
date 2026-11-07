@@ -389,6 +389,60 @@ impl Array {
         Ok(Array { dtype: self.dtype, rows: n, cols: rhs.cols, data: Data::Float(data) })
     }
 
+    /// The exact matrix for eigen-computations (exact dtype, square when `square`).
+    fn symbolic(&self, what: &str, square: bool) -> R<linalg::Matrix> {
+        if self.dtype != DType::Exact {
+            return err(format!("{what} is computed on exact matrices; convert with astype(a, exact)"));
+        }
+        if square {
+            self.require_square(what)?;
+        }
+        Ok(self.exact_matrix())
+    }
+
+    fn vector_value(items: &[Expr]) -> R<Value> {
+        Ok(Value::Array(std::sync::Arc::new(Array::from_exprs(DType::Exact, items.len(), None, items)?)))
+    }
+
+    /// Eigenvalues with multiplicity, exactly.
+    pub fn eigenvals(&self) -> R<Value> {
+        let m = self.symbolic("eigenvals", true)?;
+        Ok(Value::list(linalg::eigenvalues(&m)?.into_iter().map(Value::from_expr).collect()))
+    }
+
+    /// `[(eigenvalue, multiplicity, [eigenvectors])]`, exactly.
+    pub fn eigenvects(&self) -> R<Value> {
+        let m = self.symbolic("eigenvects", true)?;
+        let values = linalg::eigenvalues(&m)?;
+        let mut distinct: Vec<(Expr, i64)> = Vec::new();
+        for v in values {
+            match distinct.iter_mut().find(|(d, _)| *d == v) {
+                Some((_, k)) => *k += 1,
+                None => distinct.push((v, 1)),
+            }
+        }
+        let mut out = Vec::new();
+        for (lambda, k) in distinct {
+            let shifted: linalg::Matrix =
+                m.iter().enumerate().map(|(i, row)| row.iter().enumerate().map(|(j, v)| if i == j { v.sub(&lambda) } else { v.clone() }).collect()).collect();
+            let vectors = linalg::nullspace(&shifted)?.iter().map(|v| Array::vector_value(v)).collect::<R<Vec<_>>>()?;
+            out.push(Value::Tuple(std::sync::Arc::new(vec![Value::from_expr(lambda), Value::int(k), Value::list(vectors)])));
+        }
+        Ok(Value::list(out))
+    }
+
+    /// A basis of the null space, as a list of vectors.
+    pub fn nullspace(&self) -> R<Value> {
+        let m = self.symbolic("nullspace", false)?;
+        Ok(Value::list(linalg::nullspace(&m)?.iter().map(|v| Array::vector_value(v)).collect::<R<Vec<_>>>()?))
+    }
+
+    /// `det(A - x*I)`.
+    pub fn charpoly(&self, x: &Expr) -> R<Value> {
+        let m = self.symbolic("charpoly", true)?;
+        Ok(Value::from_expr(linalg::charpoly(&m, x)?))
+    }
+
     pub fn rank(&self) -> R<usize> {
         if self.dtype != DType::Exact {
             return err("rank is computed on exact matrices; convert with astype(a, exact)");
