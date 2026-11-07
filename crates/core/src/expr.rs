@@ -105,6 +105,11 @@ impl Ord for Expr {
     }
 }
 
+/// Integers in this range are cached by [`Expr::num`].
+const SMALL_MIN: i64 = -64;
+const SMALL_MAX: i64 = 4096;
+static SMALL: std::sync::OnceLock<Vec<Expr>> = std::sync::OnceLock::new();
+
 impl Expr {
     fn raw(kind: Kind) -> Expr {
         let child_depth = match &kind {
@@ -126,7 +131,18 @@ impl Expr {
 
     // ---- atoms -------------------------------------------------------------------------------------------------
 
+    /// A number. Small integers are shared (a table built on first use), so the loop counters and literals of a
+    /// program do not allocate a node each time.
     pub fn num(n: Num) -> Expr {
+        if let Num::Int(i) = &n
+            && let Ok(v) = i64::try_from(i)
+            && (SMALL_MIN..=SMALL_MAX).contains(&v)
+        {
+            let table = SMALL.get_or_init(|| (SMALL_MIN..=SMALL_MAX).map(|k| Expr::raw(Kind::Num(Num::int(k)))).collect());
+            if let Some(e) = usize::try_from(v - SMALL_MIN).ok().and_then(|at| table.get(at)) {
+                return e.clone();
+            }
+        }
         Expr::raw(Kind::Num(n))
     }
     pub fn int(v: i64) -> Expr {
