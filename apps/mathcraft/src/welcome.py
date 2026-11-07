@@ -69,6 +69,12 @@ solve(2*sin(x) + 1, x)
 # %%
 nsolve(cos(x) == x, x, 1)
 
+# %% [markdown]
+# **Take a result into Python.** `pycode` writes a function for an expression or a list of them (`numpy=True` for NumPy, `rustcode` for Rust). Copy it into your own script.
+
+# %%
+print(pycode(solve(x**2 - 5*x + 6 == a, x), [a]))
+
 # %%
 solve([x + y == 3, x - y == 1], [x, y])
 
