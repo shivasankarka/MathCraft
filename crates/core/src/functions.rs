@@ -82,6 +82,23 @@ fn erf(x: f64) -> f64 {
     r.copysign(x)
 }
 
+/// `E ** (I*r*pi)` as `cos(r*pi) + I*sin(r*pi)` when both have closed forms (multiples of pi/6 and pi/4).
+pub(crate) fn euler(exp: &Expr) -> Option<Expr> {
+    let (c, rest) = exp.split_coeff();
+    if !c.is_exact() {
+        return None;
+    }
+    let Kind::Mul(fs) = rest.kind() else { return None };
+    let [a, b] = fs.as_slice() else { return None };
+    let ok = (a.as_sym() == Some(SYM_PI) && b.as_sym() == Some("I")) || (b.as_sym() == Some(SYM_PI) && a.as_sym() == Some("I"));
+    if !ok {
+        return None;
+    }
+    let angle = Expr::mul(vec![Expr::num(c), Expr::pi()]);
+    let (co, si) = (pi_multiple("cos", &angle)?, pi_multiple("sin", &angle)?);
+    Some(Expr::add(vec![co, Expr::mul(vec![si, Expr::imag()])]))
+}
+
 fn unary(name: &str, x: &Expr) -> Expr {
     let raw = || Expr::raw_call(name, vec![x.clone()]);
     if let Some(n) = x.as_num() {
@@ -137,6 +154,8 @@ fn exact_value(name: &str, n: &Num) -> Option<Expr> {
             Some(Expr::mul(vec![Expr::rational(s, 6)?, Expr::pi()]))
         }
         "abs" => Some(Expr::num(if n.is_negative() { n.neg() } else { n.clone() })),
+        // log of a negative number: log(|n|) + I*pi
+        "log" if n.is_negative() => Some(Expr::add(vec![unary("log", &Expr::num(n.neg())), Expr::mul(vec![Expr::imag(), Expr::pi()])])),
         _ => None,
     }
 }
