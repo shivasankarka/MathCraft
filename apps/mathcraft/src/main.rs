@@ -40,10 +40,18 @@ const WELCOME: &str = include_str!("welcome.py");
 fn main() -> eframe::Result {
     let path = std::env::args().nth(1).map(PathBuf::from);
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1060.0, 840.0]).with_min_inner_size([520.0, 380.0]).with_title("MathCraft"),
+        viewport: unified_title_bar(
+            egui::ViewportBuilder::default().with_inner_size([1060.0, 840.0]).with_min_inner_size([520.0, 380.0]).with_title("MathCraft"),
+        ),
         ..Default::default()
     };
     eframe::run_native("MathCraft", options, Box::new(move |cc| Ok(Box::new(App::new(cc, path)))))
+}
+
+/// On macOS the toolbar doubles as the title bar: the content runs under a transparent title bar, the window buttons
+/// sit inside the toolbar, and the toolbar's empty space drags the window (see [`App::toolbar`]).
+fn unified_title_bar(builder: egui::ViewportBuilder) -> egui::ViewportBuilder {
+    if cfg!(target_os = "macos") { builder.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false) } else { builder }
 }
 
 /// What a command-palette entry does.
@@ -104,13 +112,19 @@ struct App {
     vim: bool,
     vim_status: String,
     palette: PaletteState,
+    /// The toolbar is also the window's title bar (macOS, real window only): leave room for the window buttons.
+    unified_title_bar: bool,
+    /// Height of the toolbar last frame, to centre the window buttons in it.
+    toolbar_height: f32,
     dark: Theme,
     light: Theme,
 }
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, path: Option<PathBuf>) -> Self {
-        Self::with_context(cc.egui_ctx.clone(), path)
+        let mut app = Self::with_context(cc.egui_ctx.clone(), path);
+        app.unified_title_bar = cfg!(target_os = "macos");
+        app
     }
 
     fn with_context(ctx: egui::Context, path: Option<PathBuf>) -> Self {
@@ -152,6 +166,8 @@ impl App {
             vim: std::env::var_os("MATHCRAFT_VIM").is_some_and(|v| v == "1"),
             vim_status: String::new(),
             palette: PaletteState::default(),
+            unified_title_bar: false,
+            toolbar_height: 40.0,
             dark,
             light,
         }
@@ -576,7 +592,20 @@ impl App {
 
     fn toolbar(&mut self, ui: &mut egui::Ui, theme: &Theme) {
         let ctx = ui.ctx().clone();
+        if self.unified_title_bar {
+            // The empty part of the toolbar behaves like a title bar. Registered first, so every control on top wins.
+            let bar = ui.interact(ui.max_rect().expand2(vec2(12.0, 7.0)), egui::Id::unique("toolbar-drag"), egui::Sense::click_and_drag());
+            if bar.double_clicked() {
+                let zoomed = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!zoomed));
+            } else if bar.drag_started_by(egui::PointerButton::Primary) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
+        }
         egui::MenuBar::new().ui(ui, |ui| {
+            if self.unified_title_bar {
+                ui.add_space(theme::TRAFFIC_LIGHTS_INSET);
+            }
             ui.menu_button("File", |ui| {
                 if Self::menu_item(ui, &ctx, "New", Some((Modifiers::COMMAND, Key::N))) {
                     self.new_file();
@@ -672,21 +701,40 @@ impl App {
     }
 
     fn help_window(&mut self, ctx: &egui::Context, theme: &Theme) {
-        let mut open = self.show_help;
-        egui::Window::new(RichText::new("Functions").font(egui::FontId::new(14.0, fonts::strong_family())))
-            .open(&mut open)
+        if !self.show_help {
+            return;
+        }
+        let mut open = true;
+        // Our own header instead of egui's title bar, so the whole window is one surface (no second grey band).
+        egui::Window::new("Functions")
+            .title_bar(false)
             .default_rect(egui::Rect::from_min_size(ctx.content_rect().center_top() + vec2(-320.0, 64.0), vec2(640.0, 500.0)))
             .max_width(720.0)
             .collapsible(false)
             .show(ctx, |ui| {
-                ui.add(
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Functions").font(egui::FontId::new(theme::TEXT_TITLE, fonts::strong_family())).color(theme.text));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if icons::button(ui, theme, Icon::Close, "Close (F1)").clicked() {
+                            open = false;
+                        }
+                    });
+                });
+                ui.add_space(6.0);
+                let search = ui.add(
                     egui::TextEdit::singleline(&mut self.help_filter)
                         .hint_text(RichText::new("Search by name or description").color(theme.text_faint))
-                        .margin(Margin::symmetric(8, 5))
+                        .margin(Margin { left: 28, right: 8, top: 5, bottom: 5 })
                         .desired_width(f32::INFINITY),
                 );
+                let glass = egui::Rect::from_center_size(egui::pos2(search.rect.left() + 15.0, search.rect.center().y), vec2(13.0, 13.0));
+                icons::paint(ui.painter(), Icon::Search, glass, theme.text_faint);
                 ui.add_space(4.0);
-                ui.label(RichText::new("⇧↵ runs a cell and moves on   ⌘↵ runs it in place   ⌘⇧↵ runs all   ⌘. stops").size(11.5).color(theme.text_faint));
+                ui.label(
+                    RichText::new("⇧↵ runs a cell and moves on   ⌘↵ runs it in place   ⇧⌘↵ runs all   ⌘. stops")
+                        .size(theme::TEXT_CAPTION)
+                        .color(theme.text_faint),
+                );
                 ui.add_space(4.0);
                 ui.separator();
                 let needle = self.help_filter.trim().to_lowercase();
@@ -725,7 +773,11 @@ impl App {
                 CellState::Error | CellState::Blocked => (f, s, e + 1),
                 _ => (f, s, e),
             });
-            let dim = |t: String| RichText::new(t).size(11.5).color(theme.text_dim);
+            let dim = |t: String| RichText::new(t).size(theme::TEXT_CAPTION).color(theme.text_dim);
+            if self.vim && !self.vim_status.is_empty() {
+                vim_segment(ui, theme, &self.vim_status);
+                ui.add_space(8.0);
+            }
             let cells = self.cur.nb.cells().len();
             ui.label(dim(format!("{cells} {}", if cells == 1 { "cell" } else { "cells" })));
             for (n, label, color) in [(fresh, "up to date", theme.ok), (stale, "stale", theme.warn), (errors, "with problems", theme.danger)] {
@@ -734,10 +786,6 @@ impl App {
                     dot(ui, color);
                     ui.label(dim(format!("{n} {label}")));
                 }
-            }
-            if self.vim && !self.vim_status.is_empty() {
-                ui.add_space(10.0);
-                ui.label(RichText::new(self.vim_status.clone()).monospace().size(11.5).color(theme.accent));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let mode = if self.cur.nb.mode == RunMode::Auto { "Dependents run automatically" } else { "Dependents wait (lazy)" };
@@ -752,8 +800,12 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, root: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.show(root);
+        if self.unified_title_bar {
+            // AppKit moves the buttons back on every layout pass, so this runs each frame.
+            frame.set_traffic_lights_position(root.ctx(), egui::Rangef::new(0.0, self.toolbar_height), 14.0);
+        }
     }
 }
 
@@ -791,6 +843,7 @@ impl App {
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(theme.chrome).inner_margin(Margin { left: 10, right: 12, top: 7, bottom: 7 }))
             .show(root, |ui| self.toolbar(ui, &theme));
+        self.toolbar_height = top.response.rect.height();
         hairline(root, &theme, top.response.rect.x_range(), top.response.rect.bottom() - 0.5);
         if self.order.len() > 1 {
             let tabs: Vec<TabInfo> = self
@@ -808,7 +861,6 @@ impl App {
                 .show_separator_line(false)
                 .frame(egui::Frame::new().fill(theme.chrome))
                 .show(root, |ui| tabs::tab_strip(ui, &theme, &tabs, self.cur.id));
-            hairline(root, &theme, strip.response.rect.x_range(), strip.response.rect.bottom() - 0.5);
             match strip.inner {
                 Some(TabAction::Select(id)) => self.select_tab(id),
                 Some(TabAction::Close(id)) => self.close_tab(id),
@@ -997,6 +1049,31 @@ fn state_label(state: CellState) -> &'static str {
     }
 }
 
+/// The Vim mode as a status-bar segment: a coloured pill with the mode name, then any keys typed so far
+/// (`2d`, `:wq`, `/foo`) in monospace. Insert is the accent, visual the warning colour, normal and command quiet.
+fn vim_segment(ui: &mut egui::Ui, theme: &Theme, status: &str) {
+    let (mode, pending) = if status.starts_with(':') || status.starts_with('/') {
+        ("COMMAND", status)
+    } else {
+        let mut parts = status.splitn(2, char::is_whitespace);
+        (parts.next().unwrap_or(""), parts.next().unwrap_or("").trim())
+    };
+    let color = match mode {
+        "INSERT" => theme.accent,
+        "VISUAL" | "V-LINE" => theme.warn,
+        _ => theme.text_dim,
+    };
+    let font = egui::FontId::new(10.5, fonts::strong_family());
+    let galley = ui.painter().layout_no_wrap(mode.to_owned(), font, color);
+    let (r, resp) = ui.allocate_exact_size(vec2(galley.size().x + 14.0, 17.0), egui::Sense::hover());
+    ui.painter().rect_filled(r, theme::RADIUS_SMALL, theme.pill(color));
+    ui.painter().galley(r.center() - galley.size() / 2.0, galley, color);
+    resp.on_hover_text("Vim keys are on (Settings > Editing)");
+    if !pending.is_empty() {
+        ui.label(RichText::new(pending).monospace().size(theme::TEXT_CAPTION).color(theme.text));
+    }
+}
+
 fn dot(ui: &mut egui::Ui, color: Color32) {
     let (r, _) = ui.allocate_exact_size(vec2(8.0, 8.0), egui::Sense::hover());
     ui.painter().circle_filled(r.center(), 3.5, color);
@@ -1014,9 +1091,9 @@ fn empty_state(ui: &mut egui::Ui, theme: &Theme) {
             ui.add_space(4.0);
             egui::Grid::new("empty-keys").num_columns(2).spacing([14.0, 8.0]).show(ui, |ui| {
                 for (keys, what) in [
-                    ("⇧ ↵", "Run the cell and move to the next one"),
-                    ("⌘ ↵", "Run the cell and stay"),
-                    ("⌘ ⇧ ↵", "Run every cell"),
+                    ("⇧↵", "Run the cell and move to the next one"),
+                    ("⌘↵", "Run the cell and stay"),
+                    ("⇧⌘↵", "Run every cell"),
                     ("F1", "Browse all functions"),
                 ] {
                     keycap(ui, theme, keys);
@@ -1030,10 +1107,10 @@ fn empty_state(ui: &mut egui::Ui, theme: &Theme) {
 
 /// A key or key combination drawn as a small cap.
 fn keycap(ui: &mut egui::Ui, theme: &Theme, keys: &str) {
-    let galley = ui.painter().layout_no_wrap(keys.to_string(), egui::FontId::proportional(12.0), theme.text_dim);
-    let (r, _) = ui.allocate_exact_size(vec2(galley.size().x + 12.0, 20.0), egui::Sense::hover());
-    ui.painter().rect(r, 5.0, theme.code_bg, Stroke::new(1.0, theme.border_strong), egui::StrokeKind::Inside);
-    ui.painter().galley(r.center() - galley.size() / 2.0, galley, theme.text_dim);
+    // measure on a throwaway painter first, then paint into the allocated space, left-aligned in the column
+    let width = icons::keycaps(&ui.painter().with_clip_rect(egui::Rect::NOTHING), theme, egui::Pos2::ZERO, keys);
+    let (r, _) = ui.allocate_exact_size(vec2(width.max(54.0), 20.0), egui::Sense::hover());
+    icons::keycaps(ui.painter(), theme, egui::pos2(r.left() + width, r.center().y), keys);
 }
 
 /// A one-pixel line across the window at `y`, between chrome and document.
@@ -1070,13 +1147,19 @@ fn banner(ui: &mut egui::Ui, theme: &Theme, icon: Icon, color: Color32, code: Op
         ui,
         |ui| {
             ui.set_min_width(ui.available_width());
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                if let Some(code) = code {
-                    ui.label(RichText::new(code).monospace().size(11.5).color(color));
-                }
-                ui.add(egui::Label::new(RichText::new(message).size(13.5).color(theme.text)).selectable(true));
-            });
+            // One paragraph (code, then message) so long messages wrap under themselves instead of leaving the code
+            // stranded on a line of its own.
+            let mut job = egui::text::LayoutJob::default();
+            if let Some(code) = code {
+                job.append(
+                    code,
+                    0.0,
+                    egui::TextFormat { valign: egui::Align::Center, ..egui::TextFormat::simple(egui::FontId::monospace(theme::TEXT_CAPTION), color) },
+                );
+                job.append("  ", 0.0, egui::TextFormat::simple(egui::FontId::proportional(13.5), theme.text));
+            }
+            job.append(message, 0.0, egui::TextFormat { line_height: Some(20.0), ..egui::TextFormat::simple(egui::FontId::proportional(13.5), theme.text) });
+            ui.add(egui::Label::new(job).wrap().selectable(true));
         },
     );
     let r = inner.response.rect;
@@ -1449,7 +1532,7 @@ fn completion_popup(ctx: &egui::Context, theme: &Theme, id: egui::Id, text: &mut
                     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), egui::Sense::click());
                     let selected = i == row;
                     if selected {
-                        ui.painter().rect_filled(rect, theme::RADIUS, theme.accent.gamma_multiply(if theme.dark { 0.32 } else { 0.14 }));
+                        ui.painter().rect_filled(rect, theme::RADIUS, theme.selected_row());
                     } else if resp.hovered() {
                         ui.painter().rect_filled(rect, theme::RADIUS, theme.surface_hover);
                     }
@@ -1607,6 +1690,10 @@ fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::Plo
         let mut plot = egui_plot::Plot::new(egui::Id::unique(("plot", id)))
             .height(280.0)
             .grid_spacing(80.0..=400.0)
+            .x_grid_spacer(nice_grid(1.0))
+            .y_grid_spacer(nice_grid(0.25))
+            .x_axis_formatter(|m, _| tick_label(m.value))
+            .y_axis_formatter(|m, _| tick_label(m.value))
             .allow_scroll(false)
             .show_grid(false)
             .x_axis_label(p.x_label.clone());
@@ -1624,11 +1711,39 @@ fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::Plo
     });
 }
 
+/// Axis ticks at 1, 2 or 5 times a power of ten, about `fraction` of the plot's minimum grid spacing apart, so an axis
+/// carries several labels (the default base-10 spacer often leaves a short y axis with a single `0`).
+fn nice_grid(fraction: f64) -> Box<dyn Fn(egui_plot::GridInput) -> Vec<egui_plot::GridMark>> {
+    egui_plot::uniform_grid_spacer(move |input| {
+        let want = (input.base_step_size * fraction).abs().max(f64::MIN_POSITIVE);
+        let power = 10f64.powf(want.log10().floor());
+        let step = [1.0, 2.0, 5.0, 10.0].into_iter().map(|m| m * power).find(|s| *s >= want).unwrap_or(power * 10.0);
+        [step, step * 10.0, step * 100.0]
+    })
+}
+
+/// An axis tick: the shortest decimal for the value (ticks are 1, 2 or 5 times a power of ten), `0` not `-0`.
+fn tick_label(v: f64) -> String {
+    let s = format!("{v:.6}");
+    let s = if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.') } else { s.as_str() };
+    if s == "-0" { "0".to_owned() } else { s.to_owned() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use egui_kittest::kittest::Queryable;
     use std::time::Instant;
+
+    #[test]
+    fn tick_labels_are_short() {
+        assert_eq!(tick_label(0.0), "0");
+        assert_eq!(tick_label(-0.0), "0");
+        assert_eq!(tick_label(0.2), "0.2");
+        assert_eq!(tick_label(2.5), "2.5");
+        assert_eq!(tick_label(10.0), "10");
+        assert_eq!(tick_label(-0.30000000000000004), "-0.3");
+    }
 
     fn frame(ctx: &egui::Context, app: &mut App) {
         ctx.run_ui(egui::RawInput::default(), |ui| app.show(ui)).drop_without_applying_deltas();
@@ -1820,10 +1935,12 @@ mod tests {
                     app.get_or_insert_with(|| {
                         let mut app = App::with_context(ui.ctx().clone(), None);
                         app.replace_notebook(
-                            Notebook::from_text("# %% [markdown]\n# # Derivatives\n# %%\nf = sin(x)**2\n# %%\ndiff(f, x)\n# %%\nsolve(x**3 - 3*x + 1, x)\n# %%\nplot(f, (x, 0, 6))\n"),
+                            Notebook::from_text("# %% [markdown]\n# # Derivatives\n# %%\nf = sin(x)**2\n# %%\ndiff(f, x)\n# %%\nsolve(x**3 - 3*x + 1, x)\n# %%\nf = 1/0\n# %%\nplot(sin(x)**2, (x, 0, 6))\n"),
                             None,
                         );
                         app.cur.set_view(View::Text);
+                        // the Vim mode segment shows in the status bar
+                        app.vim = true;
                         app
                     })
                     .show(ui)
@@ -1835,6 +1952,14 @@ mod tests {
             while harness.state().as_ref().is_none_or(App::busy) && start.elapsed() < Duration::from_secs(30) {
                 harness.run_steps(3);
                 std::thread::sleep(Duration::from_millis(30));
+            }
+            // put the cursor in the `solve` cell so the results panel marks it
+            if let Some(app) = harness.state() {
+                let id = text_view::editor_id(app.cur.id);
+                let at = app.cur.text.find("solve").unwrap_or(0) + 2;
+                let mut st = egui::TextEdit::load_state(&harness.ctx, id).unwrap_or_default();
+                st.cursor.set_char_range(Some(CCursorRange::one(egui::text::CCursor::new(at))));
+                st.store(&harness.ctx, id);
             }
             harness.run_steps(6);
             harness.render().unwrap().save(out.join(format!("text-{name}.png"))).unwrap();
@@ -2106,6 +2231,8 @@ mod tests {
                         app.open_in_tab(Notebook::from_text("# %%\nf = sin(x)**2\n# %%\ndiff(f, x)\n"), Some(PathBuf::from("/tmp/derivatives.py")));
                         app.open_in_tab(Notebook::from_text("# %%\nsolve(x**2 - 2, x)\n"), Some(PathBuf::from("/tmp/a_rather_long_notebook_name_here.py")));
                         app.cur.dirty = true;
+                        // lay the toolbar out as the macOS title bar (the window buttons themselves are native, not drawn)
+                        app.unified_title_bar = true;
                         app
                     })
                     .show(ui)
