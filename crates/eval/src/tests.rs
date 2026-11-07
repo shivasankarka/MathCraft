@@ -265,6 +265,8 @@ fn solves_cubics_and_transcendental_equations() {
 
 #[test]
 fn exports_functions_as_python_and_rust() {
+    assert_eq!(ev("latex(x**2/3)"), "'\\frac{x^{2}}{3}'");
+    assert!(ev("latex([[1, 2], [3, x]])").contains("\\begin{bmatrix}\n  1 & 2 \\\\\n  3 & x\n\\end{bmatrix}"));
     assert_eq!(ev("pycode(x**2 + 1, x)"), "'import math\n\n\ndef f(x):\n    return x**2 + 1\n'");
     assert!(ev("pycode(solve(x**2 - a, x), a, 'roots')").contains("def roots(a):"));
     assert!(ev("pycode(sin(x), x, numpy=True)").contains("np.sin(x)"));

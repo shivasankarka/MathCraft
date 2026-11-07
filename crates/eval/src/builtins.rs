@@ -102,6 +102,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("diff", "diff(f, x[, n])", "derivative with respect to x (n times)"),
     ("integrate", "integrate(f, x) | integrate(f, (x, a, b))", "antiderivative, or definite integral (numeric if no closed form)"),
     ("limit", "limit(f, x, a, dir='+-')", "limit as x approaches a (a may be oo or -oo; dir='+' or '-' for one side)"),
+    ("latex", "latex(value)", "LaTeX source of an expression, list or matrix"),
     ("pycode", "pycode(expr, args=None, name='f', numpy=False)", "Python source of a function computing expr (a list gives a tuple)"),
     ("rustcode", "rustcode(expr, args=None, name='f')", "Rust source of an f64 function computing expr"),
     ("nsolve", "nsolve(eq, x, guess)", "numeric root near a starting guess (Newton's method)"),
@@ -139,6 +140,7 @@ const METHODS: &[&str] = &[
     "limit",
     "apart",
     "nsolve",
+    "latex",
     "pycode",
     "rustcode",
     "series",
@@ -718,6 +720,13 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
                 Some(_) => return err("dir must be the string '+', '-' or '+-'"),
             };
             it.checked(alg::limit_side(&a.expr(0)?, &as_symbol(a.get(1)?)?, &a.expr(2)?, side)?)
+        }
+        "latex" => {
+            a.limits(name, 1, 1)?;
+            match a.get(0)?.latex() {
+                Some(s) => Ok(Value::Str(s.into())),
+                None => err("latex() takes an expression, a list or a matrix"),
+            }
         }
         "pycode" | "rustcode" => {
             if a.pos.is_empty() || a.pos.len() > 4 {
