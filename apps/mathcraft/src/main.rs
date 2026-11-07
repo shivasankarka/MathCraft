@@ -15,6 +15,7 @@ mod math_view;
 mod sidebar;
 mod tabs;
 mod theme;
+mod vim_edit;
 mod workspace;
 
 use doc::{Doc, file_name};
@@ -50,6 +51,8 @@ enum Action {
     AddAfter(Option<CellId>, CellKind),
     Delete(CellId),
     Move(CellId, isize),
+    /// A Vim `:` command line (`w`, `q`, `wq`, ...).
+    Command(String),
 }
 
 struct App {
@@ -69,6 +72,9 @@ struct App {
     tree: Vec<workspace::Node>,
     collapsed: HashSet<PathBuf>,
     show_sidebar: bool,
+    /// Vim keys in editors (Settings), and the status text of the focused editor ("NORMAL", ":wq", ...).
+    vim: bool,
+    vim_status: String,
     dark: Theme,
     light: Theme,
 }
@@ -114,6 +120,8 @@ impl App {
             tree,
             collapsed: HashSet::new(),
             show_sidebar,
+            vim: std::env::var_os("MATHCRAFT_VIM").is_some_and(|v| v == "1"),
+            vim_status: String::new(),
             dark,
             light,
         }
@@ -242,6 +250,27 @@ impl App {
         }
     }
 
+    /// A Vim `:` command.
+    fn ex_command(&mut self, line: &str) {
+        match line {
+            "w" => self.save(false),
+            "wq" | "x" => {
+                self.save(false);
+                if !self.cur.dirty {
+                    self.close_tab(self.cur.id);
+                }
+            }
+            "q" => self.close_tab(self.cur.id),
+            "q!" => {
+                self.cur.dirty = false;
+                self.close_tab(self.cur.id);
+            }
+            "run" | "r" => self.run(RunRequest::All),
+            "" => {}
+            other => self.status = format!("Not a command: {other}  (try :w, :q, :wq, :q!, :run)"),
+        }
+    }
+
     fn open_folder(&mut self) {
         if let Some(dir) = rfd::FileDialog::new().pick_folder() {
             self.set_folder(dir);
@@ -345,6 +374,7 @@ impl App {
                     self.cur.nb.move_cell(id, delta);
                     self.cur.dirty = true;
                 }
+                Action::Command(line) => self.ex_command(line.trim()),
             }
         }
     }
@@ -465,6 +495,9 @@ impl App {
                 ui.separator();
                 menu_section(ui, theme, "Names");
                 ui.checkbox(&mut self.cur.nb.strict, "Strict: declare symbols with symbols()");
+                ui.separator();
+                menu_section(ui, theme, "Editing");
+                ui.checkbox(&mut self.vim, "Vim keys");
             });
             if ui.button("Functions").on_hover_text("List every function (F1)").clicked() {
                 self.show_help = !self.show_help;
@@ -557,6 +590,10 @@ impl App {
                     dot(ui, color);
                     ui.label(dim(format!("{n} {label}")));
                 }
+            }
+            if self.vim && !self.vim_status.is_empty() {
+                ui.add_space(10.0);
+                ui.label(RichText::new(self.vim_status.clone()).monospace().size(11.5).color(theme.accent));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let mode = if self.cur.nb.mode == RunMode::Auto { "Dependents run automatically" } else { "Dependents wait (lazy)" };
@@ -688,6 +725,8 @@ impl App {
                             editing_md: &mut self.cur.editing_md,
                             names: &names,
                             actions: &mut actions,
+                            vim: self.vim,
+                            vim_status: &mut self.vim_status,
                         };
                         for (i, cell) in self.cur.nb.cells().iter().enumerate() {
                             cell_ui(ui, &mut env, cell, i, &self.cur.nb);
@@ -741,6 +780,9 @@ struct Env<'a> {
     /// Names defined by the notebook's cells, offered by autocompletion.
     names: &'a [String],
     actions: &'a mut Vec<Action>,
+    /// Vim keys are on; the focused editor writes its mode here for the status bar.
+    vim: bool,
+    vim_status: &'a mut String,
 }
 
 fn state_color(theme: &Theme, state: CellState) -> Color32 {
@@ -1021,8 +1063,16 @@ fn editor(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, code: bool) -> bool {
     let mut run_advance = false;
     let mut run_stay = false;
 
+    let mut insertish = true;
     if ctx.memory(|m| m.has_focus(id)) {
-        if code {
+        if env.vim {
+            let r = vim_edit::drive(&ctx, id, &mut text);
+            edited |= r.edited;
+            env.actions.extend(r.commands.into_iter().map(Action::Command));
+            *env.vim_status = r.status;
+            insertish = r.mode == mathcraft_vim::Mode::Insert;
+        }
+        if code && insertish {
             edited |= handle_completion_keys(&ctx, id, &mut text, env.names);
         }
         let (shift_enter, cmd_enter, tab, enter) = ctx.input_mut(|i| {
@@ -1052,8 +1102,8 @@ fn editor(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, code: bool) -> bool {
     }
 
     // While the completion list is open, Escape closes it instead of leaving the editor.
-    let list_open = code && ctx.memory(|m| m.has_focus(id)) && suggest(&ctx, id, &text, env.names).is_some();
-    let keys = egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: list_open };
+    let list_open = code && insertish && ctx.memory(|m| m.has_focus(id)) && suggest(&ctx, id, &text, env.names).is_some();
+    let keys = egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: list_open || env.vim };
     let font = TextStyle::Monospace.resolve(ui.style());
     let syntax = theme.syntax.clone();
     let plain = theme.text;
@@ -1097,6 +1147,7 @@ fn editor(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, code: bool) -> bool {
         out.response.request_focus();
     }
     if code
+        && insertish
         && out.response.has_focus()
         && let Some(range) = out.cursor_range
     {
@@ -1633,6 +1684,43 @@ mod tests {
         }
         h.run();
         assert_eq!(code_cell(&h).map(|c| c.state), Some(CellState::Fresh));
+    }
+
+    #[test]
+    fn vim_keys_edit_a_cell() {
+        let mut harness = typing_harness();
+        if let Some(app) = harness.state_mut() {
+            app.vim = true;
+        }
+        let mode = |h: &egui_kittest::Harness<'_, Option<App>>| h.state().as_ref().map(|a| a.vim_status.clone()).unwrap_or_default();
+        harness.run();
+        harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("i");
+        harness.run();
+        assert_eq!(mode(&harness), "INSERT");
+        harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("abc def");
+        harness.run();
+        assert_eq!(source(&harness), "abc def", "insert mode types normally");
+        harness.key_press(Key::Escape);
+        harness.run();
+        assert_eq!(mode(&harness), "NORMAL");
+        assert!(code_cell(&harness).is_some());
+        harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("0dw");
+        harness.run();
+        assert_eq!(source(&harness), "def", "0 then dw removes the first word");
+        harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("xu");
+        harness.run();
+        assert_eq!(source(&harness), "def", "x then u restores it");
+        harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("Ax");
+        harness.run();
+        harness.key_press(Key::Escape);
+        harness.run();
+        assert_eq!(source(&harness), "defx", "A appends");
+        harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text(":q");
+        harness.run();
+        assert_eq!(mode(&harness), ":q");
+        harness.key_press(Key::Escape);
+        harness.run();
+        assert_eq!(mode(&harness), "NORMAL");
     }
 
     #[test]
