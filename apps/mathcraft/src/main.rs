@@ -2180,6 +2180,28 @@ mod tests {
     }
 
     #[test]
+    fn vim_j_scrolls_the_text_view_to_follow_the_cursor() {
+        let mut h = egui_kittest::Harness::builder()
+            .with_size(vec2(900.0, 400.0))
+            .build_ui_state(|ui, app: &mut Option<App>| app.get_or_insert_with(|| App::with_context(ui.ctx().clone(), None)).show(ui), None);
+        h.run();
+        if let Some(app) = h.state_mut() {
+            app.vim = true;
+            let text: String = (0..150).map(|i| format!("# %%\nx{i} = {i}\n")).collect();
+            app.replace_notebook(Notebook::from_text(&text), None);
+            app.cur.set_view(View::Text);
+        }
+        h.run();
+        let editor = |h: &egui_kittest::Harness<'_, Option<App>>| h.get_by_role(egui::accesskit::Role::MultilineTextInput).rect().top();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).focus();
+        h.run();
+        let before = editor(&h);
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text(&"j".repeat(120));
+        h.run_steps(4);
+        assert!(editor(&h) < before - 200.0, "the view followed the cursor down: {before} -> {}", editor(&h));
+    }
+
+    #[test]
     fn undo_and_redo_work_in_a_cell() {
         let mut h = typing_harness();
         h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("abc");
