@@ -761,8 +761,11 @@ impl App {
                 if icons::button(ui, theme, Icon::Contrast, label).clicked() {
                     ctx.set_theme(next);
                 }
-                vertical_rule(ui, theme);
-                document_title(ui, theme, self.cur.path.as_ref(), self.cur.dirty);
+                // the file name gives way when the window is too narrow to hold it beside the menus
+                if ui.available_width() > 190.0 {
+                    vertical_rule(ui, theme);
+                    document_title(ui, theme, self.cur.path.as_ref(), self.cur.dirty);
+                }
             });
         });
     }
@@ -2341,6 +2344,24 @@ mod tests {
 
     #[test]
     #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
+    fn narrow_screenshot() {
+        let Some(dir) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = egui_kittest::Harness::builder()
+            .wgpu()
+            .with_size(vec2(480.0, 600.0))
+            .build_ui_state(|ui, app: &mut Option<App>| app.get_or_insert_with(|| App::with_context(ui.ctx().clone(), None)).show(ui), None);
+        h.ctx.set_theme(ThemePreference::Light);
+        h.run_steps(4);
+        if let Some(app) = h.state_mut() {
+            app.show_help = true;
+        }
+        h.run_steps(6);
+        h.render().unwrap().save(dir.join("narrow-help.png")).unwrap();
+    }
+
+    #[test]
+    #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
     fn powers_screenshot() {
         let Some(dir) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
         std::fs::create_dir_all(&dir).unwrap();
@@ -2370,7 +2391,10 @@ mod tests {
                 ("top", vec2(1060.0, 900.0), 2.0),
                 (
                     "full",
-                    vec2(std::env::var("MATHCRAFT_WIDTH").ok().and_then(|w| w.parse().ok()).unwrap_or(1060.0), if file.is_some() { 1100.0 } else { 3000.0 }),
+                    vec2(
+                        std::env::var("MATHCRAFT_WIDTH").ok().and_then(|w| w.parse().ok()).unwrap_or(1060.0),
+                        std::env::var("MATHCRAFT_HEIGHT").ok().and_then(|h| h.parse().ok()).unwrap_or(if file.is_some() { 1100.0 } else { 3000.0 }),
+                    ),
                     1.0,
                 ),
             ] {
