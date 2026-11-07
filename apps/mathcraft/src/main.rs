@@ -2270,16 +2270,29 @@ mod tests {
     }
 
     /// Renders the notebook with the GPU, in both themes, to PNG files for a visual check. Skipped unless
+    /// Step the harness until no cell is running (at most about ten seconds).
+    fn settle(harness: &mut egui_kittest::Harness<'_, Option<App>>) {
+        for _ in 0..500 {
+            harness.run_steps(2);
+            if !harness.state().as_ref().is_some_and(App::busy) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// A headless harness around one empty code cell, with the editor focused.
     fn typing_harness() -> egui_kittest::Harness<'static, Option<App>> {
         let mut harness = egui_kittest::Harness::builder()
             .with_size(vec2(900.0, 600.0))
             .build_ui_state(|ui, app: &mut Option<App>| app.get_or_insert_with(|| App::with_context(ui.ctx().clone(), None)).show(ui), None);
-        // the welcome notebook is still running (a spinner repaints), so do not wait for the UI to settle
-        harness.run_steps(4);
+        // the welcome notebook is still running (a spinner repaints), so step until the kernel is idle instead of
+        // waiting for the UI to settle; a slow machine needs more than a few frames
+        settle(&mut harness);
         if let Some(app) = harness.state_mut() {
             app.replace_notebook(Notebook::from_text("# %%\n"), None);
         }
+        settle(&mut harness);
         harness.run();
         harness.get_by_role(egui::accesskit::Role::MultilineTextInput).focus();
         harness.run();
