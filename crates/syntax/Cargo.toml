@@ -1,0 +1,17 @@
+[package]
+name = "mathcraft-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "MathCraft's Python-flavoured language front end: parse with ruff's parser, lower to our own AST (L0, WASM-safe)"
+
+[dependencies]
+ruff_python_parser.workspace = true
+ruff_python_ast.workspace = true
+ruff_text_size.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
