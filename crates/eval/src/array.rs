@@ -323,6 +323,9 @@ impl Array {
             return Ok(Value::from_expr(linalg::det(&self.exact_matrix())?));
         }
         let mut m = self.float_rows();
+        if let Some(d) = crate::fastla::det(&m) {
+            return Ok(Value::Expr(Expr::float(self.dtype.round(d))));
+        }
         let n = m.len();
         let mut det = 1.0;
         for k in 0..n {
@@ -354,6 +357,9 @@ impl Array {
             return Ok(Array::from_exact_matrix(&linalg::inverse(&self.exact_matrix())?));
         }
         let mut a = self.float_rows();
+        if let Some(inv) = crate::fastla::inverse(&a) {
+            return Ok(Array::from_float_rows(self.dtype, &inv));
+        }
         let mut b: Vec<Vec<f64>> = (0..n).map(|i| (0..n).map(|j| f64::from(u8::from(i == j))).collect()).collect();
         gauss_jordan(&mut a, &mut b)?;
         Ok(Array::from_float_rows(self.dtype, &b))
@@ -374,7 +380,11 @@ impl Array {
             Data::Float(v) => v.chunks(cols.max(1)).map(<[f64]>::to_vec).collect(),
             _ => Vec::new(),
         };
-        gauss_jordan(&mut a, &mut b)?;
+        if let Some(x) = crate::fastla::solve(&a, &b) {
+            b = x;
+        } else {
+            gauss_jordan(&mut a, &mut b)?;
+        }
         let data: Vec<f64> = b.iter().flatten().map(|v| self.dtype.round(*v)).collect();
         Ok(Array { dtype: self.dtype, rows: n, cols: rhs.cols, data: Data::Float(data) })
     }
@@ -429,6 +439,10 @@ impl Array {
                     }
                 }
                 Data::Int(out)
+            }
+            (Data::Float(a), Data::Float(b)) if let Some(fast) = crate::fastla::matmul(a, b, lr, lc, rc) => {
+                tick()?;
+                Data::Float(fast.into_iter().map(|v| self.dtype.round(v)).collect())
             }
             (Data::Float(a), Data::Float(b)) => {
                 let mut out = Vec::with_capacity(lr * rc);
