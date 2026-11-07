@@ -128,6 +128,8 @@ pub enum Ex {
     },
     Attr(Box<Ex>, String),
     Index(Box<Ex>, Box<Ex>),
+    /// `lower:upper:step`, only ever the second operand of an `Index`.
+    Slice(Option<Box<Ex>>, Option<Box<Ex>>, Option<Box<Ex>>),
     List(Vec<Ex>),
     Tuple(Vec<Ex>),
     Lambda {
