@@ -15,6 +15,9 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - New functions: `erf`, `asinh`, `acosh`, `atanh`, `sec`, `csc`, `cot`, `atan2`.
 - Exact complex values: `exp(I*pi)` is -1, `exp(I*pi/3)` is `1/2 + I*sqrt(3)/2`, `log(-1)` is `I*pi`. `simplify` now proves any trigonometric polynomial identity in sin and cos (it reduces modulo sin² + cos² = 1).
 - `solve` handles equations with square roots (`solve(sqrt(x+1) - x, x)`), removing extra roots from squaring.
+- Linear algebra: `eigenvals`, `eigenvects`, `nullspace` and `charpoly` for exact matrices.
+- Number theory: `isprime`, `nextprime`, `totient`, `factorint`. Special functions: `Gamma` (exact for integers and half-integers; `gamma` stays the Dirac matrix).
+- `summation(f, (k, a, b))`: sums with numeric bounds, polynomials in k (symbolic upper limit), geometric series (also to `oo`).
 
 ## 0.1.1 (2026-11-08)
 
