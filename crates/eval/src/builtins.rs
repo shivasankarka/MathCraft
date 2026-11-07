@@ -102,6 +102,8 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("diff", "diff(f, x[, n])", "derivative with respect to x (n times)"),
     ("integrate", "integrate(f, x) | integrate(f, (x, a, b))", "antiderivative, or definite integral (numeric if no closed form)"),
     ("limit", "limit(f, x, a, dir='+-')", "limit as x approaches a (a may be oo or -oo; dir='+' or '-' for one side)"),
+    ("pycode", "pycode(expr, args=None, name='f', numpy=False)", "Python source of a function computing expr (a list gives a tuple)"),
+    ("rustcode", "rustcode(expr, args=None, name='f')", "Rust source of an f64 function computing expr"),
     ("nsolve", "nsolve(eq, x, guess)", "numeric root near a starting guess (Newton's method)"),
     ("apart", "apart(f, x)", "partial fractions of a rational function"),
     ("series", "series(f, x, x0=0, n=6)", "Taylor polynomial up to order n"),
@@ -137,6 +139,8 @@ const METHODS: &[&str] = &[
     "limit",
     "apart",
     "nsolve",
+    "pycode",
+    "rustcode",
     "series",
     "solve",
     "coeffs",
@@ -714,6 +718,36 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
                 Some(_) => return err("dir must be the string '+', '-' or '+-'"),
             };
             it.checked(alg::limit_side(&a.expr(0)?, &as_symbol(a.get(1)?)?, &a.expr(2)?, side)?)
+        }
+        "pycode" | "rustcode" => {
+            if a.pos.is_empty() || a.pos.len() > 4 {
+                return err(format!("{name}(expr, args=None, name='f'{})", if name == "pycode" { ", numpy=False" } else { "" }));
+            }
+            let body = a.expr(0)?;
+            let args: Vec<Expr> = match a.opt(1, "args") {
+                None | Some(Value::None) => {
+                    let mut all: Vec<Expr> = body.free_symbols().iter().map(|s| Expr::sym(s)).filter(|s| !s.is_constant_symbol()).collect();
+                    all.sort();
+                    all
+                }
+                Some(Value::List(v) | Value::Tuple(v)) => v.iter().map(as_symbol).collect::<R<_>>()?,
+                Some(single) => vec![as_symbol(single)?],
+            };
+            let fname = match a.opt(2, "name") {
+                None => "f".to_owned(),
+                Some(Value::Str(s)) => s.to_string(),
+                Some(_) => return err("name must be a string"),
+            };
+            let numpy = matches!(a.opt(3, "numpy"), Some(Value::Bool(true)));
+            let target = if name == "rustcode" {
+                mathcraft_core::codegen::Target::Rust
+            } else if numpy {
+                mathcraft_core::codegen::Target::NumPy
+            } else {
+                mathcraft_core::codegen::Target::Python
+            };
+            let code = mathcraft_core::codegen::function(&body, &args, &fname, target)?;
+            Ok(Value::Str(code.into()))
         }
         "nsolve" => {
             a.limits(name, 3, 3)?;
