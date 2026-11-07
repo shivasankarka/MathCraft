@@ -2,6 +2,10 @@
 
 User-facing changes per version. Planning notes and status live in `refs/` (not tracked).
 
+## Unreleased
+
+- Scattering amplitudes (first step): `gamma_trace`, `slash`, `gamma`, `metric`, `comp`, `pdot` and `contract` compute Dirac traces and sum over Lorentz indices. `examples/amplitudes.py` derives the e⁺e⁻ → μ⁺μ⁻ cross-section 4πα²/(3s).
+
 ## 0.1.0 (2026-11-07)
 
 First public release.

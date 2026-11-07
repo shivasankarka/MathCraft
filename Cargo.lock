@@ -1993,6 +1993,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mathcraft-amplitude"
+version = "0.1.0"
+dependencies = [
+ "mathcraft-algebra",
+ "mathcraft-core",
+]
+
+[[package]]
 name = "mathcraft-cli"
 version = "0.1.0"
 dependencies = [
@@ -2028,6 +2036,7 @@ dependencies = [
  "dashu",
  "faer",
  "mathcraft-algebra",
+ "mathcraft-amplitude",
  "mathcraft-core",
  "mathcraft-syntax",
 ]
