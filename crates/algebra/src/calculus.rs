@@ -2,7 +2,7 @@
 
 use crate::expand::expand;
 use crate::poly::linear_in;
-use crate::util::{guard, has_singularity, require_symbol, split_fraction, subs};
+use crate::util::{guard, has_singularity, require_symbol, sign_of, split_fraction, subs};
 use mathcraft_core::numeric::eval_f64;
 use mathcraft_core::{Expr, Kind, MathError, MathResult};
 
@@ -89,6 +89,10 @@ fn derivative_of(name: &str, u: &Expr) -> Option<Expr> {
         "sinh" => c("cosh"),
         "cosh" => c("sinh"),
         "tanh" => Expr::pow(&c("cosh"), &Expr::int(-2)),
+        "asinh" => Expr::pow(&Expr::add(vec![one, Expr::pow(u, &two)]), &Expr::rational(-1, 2)?),
+        "acosh" => Expr::pow(&Expr::add(vec![Expr::pow(u, &two), Expr::int(-1)]), &Expr::rational(-1, 2)?),
+        "atanh" => Expr::pow(&one_minus_u2(), &Expr::int(-1)),
+        "erf" => Expr::mul(vec![Expr::int(2), Expr::pow(&Expr::pi(), &Expr::rational(-1, 2)?), Expr::pow(&Expr::e(), &Expr::pow(u, &two).neg())]),
         "log" => Expr::pow(u, &Expr::int(-1)),
         "abs" => u.div(&c("abs")),
         _ => return None,
@@ -135,6 +139,11 @@ fn int(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
     };
     if direct.is_some() {
         return Ok(direct);
+    }
+    if depth < MAX_INT_DEPTH
+        && let Some(r) = families(e, x, depth)?
+    {
+        return Ok(Some(r));
     }
     if depth < MAX_INT_DEPTH
         && let Some(r) = crate::rational::integrate_rational(e, x, &mut |t| int(t, x, depth + 1))?
@@ -226,6 +235,206 @@ fn elementary(e: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
         },
         _ => None,
     })
+}
+
+// ---- recognised families -----------------------------------------------------------------------------------------
+
+/// Integrals of whole families: powers of sin and cos, exp times sin or cos, `|u|`, hyperbolic functions (through
+/// exponentials), square roots of quadratics (inverse trigonometric and hyperbolic results) and Gaussians (erf).
+fn families(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
+    if let Some(r) = trig_powers(e, x)? {
+        return Ok(Some(r));
+    }
+    if let Some(r) = exp_trig(e, x)? {
+        return Ok(Some(r));
+    }
+    if let Some(r) = quadratic_root(e, x)? {
+        return Ok(Some(r));
+    }
+    if let Some(r) = gaussian(e, x)? {
+        return Ok(Some(r));
+    }
+    if let Kind::Call(name, args) = e.kind()
+        && name.as_ref() == "abs"
+        && let [u] = args.as_slice()
+        && let Some((a, _)) = linear_in(u, x)?
+    {
+        return Ok(Some(Expr::mul(vec![u.clone(), e.clone()]).div(&Expr::mul(vec![Expr::int(2), a]))));
+    }
+    if has_call(e, &["sinh", "cosh"]) && !has_call(e, &["tanh"]) {
+        let rewritten = expand(&hyperbolic_to_exp(e)?)?;
+        if &rewritten != e {
+            return int(&rewritten, x, depth + 1);
+        }
+    }
+    Ok(None)
+}
+
+fn has_call(e: &Expr, names: &[&str]) -> bool {
+    match e.kind() {
+        Kind::Call(n, _) if names.contains(&n.as_ref()) => true,
+        _ => e.children().iter().any(|c| has_call(c, names)),
+    }
+}
+
+fn hyperbolic_to_exp(e: &Expr) -> MathResult<Expr> {
+    if let Kind::Call(name, args) = e.kind()
+        && let [u] = args.as_slice()
+        && matches!(name.as_ref(), "sinh" | "cosh")
+    {
+        let (p, m) = (Expr::pow(&Expr::e(), u), Expr::pow(&Expr::e(), &u.neg()));
+        let second = if name.as_ref() == "sinh" { m.neg() } else { m };
+        return Ok(Expr::add(vec![p, second]).div(&Expr::int(2)));
+    }
+    e.map_children(hyperbolic_to_exp)
+}
+
+/// `sin(u)**m * cos(u)**n` for a linear `u` and whole `m, n >= 0` with `m + n >= 2` (and `1/cos**2`, `1/sin**2`).
+fn trig_powers(e: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
+    let factors: Vec<Expr> = match e.kind() {
+        Kind::Mul(fs) => fs.clone(),
+        _ => vec![e.clone()],
+    };
+    let (mut m, mut n, mut arg) = (0i64, 0i64, None::<Expr>);
+    for f in &factors {
+        let (base, k) = match f.kind() {
+            Kind::Pow(b, k) => (b.clone(), k.as_i64()),
+            _ => (f.clone(), Some(1)),
+        };
+        let (Some((is_sin, u)), Some(k)) = (trig_arg(&base), k) else { return Ok(None) };
+        if arg.get_or_insert_with(|| u.clone()) != &u {
+            return Ok(None);
+        }
+        if k == -2 && factors.len() == 1 {
+            let Some((a, _)) = linear_in(&u, x)? else { return Ok(None) };
+            let anti = if is_sin { Expr::call("cos", vec![u.clone()]).div(&Expr::call("sin", vec![u])).neg() } else { Expr::call("tan", vec![u]) };
+            return Ok(Some(anti.div(&a)));
+        }
+        if k < 1 {
+            return Ok(None);
+        }
+        if is_sin { m += k } else { n += k }
+    }
+    let Some(u) = arg else { return Ok(None) };
+    if m + n < 2 || m + n > 40 {
+        return Ok(None);
+    }
+    let Some((a, _)) = linear_in(&u, x)? else { return Ok(None) };
+    Ok(Some(trig_antiderivative(m, n, &u)?.div(&a)))
+}
+
+/// An antiderivative with respect to `u` of `sin(u)**m * cos(u)**n`.
+fn trig_antiderivative(m: i64, n: i64, u: &Expr) -> MathResult<Expr> {
+    guard(u)?;
+    let (s, c) = (Expr::call("sin", vec![u.clone()]), Expr::call("cos", vec![u.clone()]));
+    let frac = |p: i64, q: i64| Expr::rational(p, q).unwrap_or_else(Expr::one);
+    if m == 0 && n == 0 {
+        return Ok(u.clone());
+    }
+    // an odd power peels one factor off: substitute w = the other function and integrate a polynomial in w
+    let poly_in = |w_power: i64, k: i64, at: &Expr, sign: i64| -> MathResult<Expr> {
+        let w = Expr::sym("_w");
+        let p = expand(&Expr::mul(vec![
+            Expr::pow(&w, &Expr::int(w_power)),
+            Expr::pow(&Expr::add(vec![Expr::one(), Expr::pow(&w, &Expr::int(2)).neg()]), &Expr::int(k)),
+        ]))?;
+        let coeffs = crate::poly::to_poly(&p, &w)?.unwrap_or_default();
+        let anti = Expr::add(
+            coeffs.iter().enumerate().map(|(j, cj)| Expr::mul(vec![cj.clone(), Expr::pow(&w, &Expr::int(j as i64 + 1)), frac(1, j as i64 + 1)])).collect(),
+        );
+        Ok(Expr::mul(vec![Expr::int(sign), subs(&anti, &[(w, at.clone())])?]))
+    };
+    if n % 2 == 1 {
+        return poly_in(m, (n - 1) / 2, &s, 1);
+    }
+    if m % 2 == 1 {
+        return poly_in(n, (m - 1) / 2, &c, -1);
+    }
+    if n == 0 {
+        let first = Expr::mul(vec![Expr::pow(&s, &Expr::int(m - 1)), c, frac(-1, m)]);
+        return Ok(Expr::add(vec![first, Expr::mul(vec![frac(m - 1, m), trig_antiderivative(m - 2, 0, u)?])]));
+    }
+    if m == 0 {
+        let first = Expr::mul(vec![Expr::pow(&c, &Expr::int(n - 1)), s, frac(1, n)]);
+        return Ok(Expr::add(vec![first, Expr::mul(vec![frac(n - 1, n), trig_antiderivative(0, n - 2, u)?])]));
+    }
+    // both even, both positive: sin^m cos^n = sin^m cos^(n-2) - sin^(m+2) cos^(n-2)
+    Ok(Expr::add(vec![trig_antiderivative(m, n - 2, u)?, trig_antiderivative(m + 2, n - 2, u)?.neg()]))
+}
+
+/// `exp(p) * sin(q)` and `exp(p) * cos(q)` with linear `p` and `q`.
+fn exp_trig(e: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
+    let Kind::Mul(fs) = e.kind() else { return Ok(None) };
+    let [f, g] = fs.as_slice() else { return Ok(None) };
+    let (ex, tr) = if matches!(f.kind(), Kind::Pow(b, _) if b.as_sym() == Some(mathcraft_core::expr::SYM_E)) { (f, g) } else { (g, f) };
+    let (Kind::Pow(b, p), Some((is_sin, q))) = (ex.kind(), trig_arg(tr)) else { return Ok(None) };
+    if b.as_sym() != Some(mathcraft_core::expr::SYM_E) {
+        return Ok(None);
+    }
+    let (Some((a, _)), Some((bb, _))) = (linear_in(p, x)?, linear_in(&q, x)?) else { return Ok(None) };
+    let (s, c) = (Expr::call("sin", vec![q.clone()]), Expr::call("cos", vec![q]));
+    let inner = if is_sin {
+        Expr::add(vec![Expr::mul(vec![a.clone(), s]), Expr::mul(vec![bb.clone(), c]).neg()])
+    } else {
+        Expr::add(vec![Expr::mul(vec![a.clone(), c]), Expr::mul(vec![bb.clone(), s])])
+    };
+    let norm = Expr::add(vec![Expr::pow(&a, &Expr::int(2)), Expr::pow(&bb, &Expr::int(2))]);
+    Ok(Some(Expr::mul(vec![ex.clone(), inner]).div(&norm)))
+}
+
+/// A quadratic `A*x**2 + B*x + C` with rational coefficients, as `(A, h, D)` with `q = A*(x + h)**2 + D`.
+fn complete_square(q: &Expr, x: &Expr) -> MathResult<Option<(Expr, Expr, Expr)>> {
+    let Some(c) = crate::poly::to_poly(q, x)? else { return Ok(None) };
+    let [c0, c1, c2] = c.as_slice() else { return Ok(None) };
+    if [c0, c1, c2].iter().any(|t| t.as_num().is_none_or(|n| !n.is_exact())) || c2.is_zero() {
+        return Ok(None);
+    }
+    let h = c1.div(&Expr::mul(vec![Expr::int(2), c2.clone()]));
+    let d = expand(&Expr::add(vec![c0.clone(), Expr::mul(vec![c2.clone(), Expr::pow(&h, &Expr::int(2))]).neg()]))?;
+    Ok(Some((c2.clone(), h, d)))
+}
+
+/// `1/sqrt(q)` and `sqrt(q)` for a quadratic `q`.
+fn quadratic_root(e: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
+    let Kind::Pow(q, k) = e.kind() else { return Ok(None) };
+    let inverse = if *k == Expr::rational(-1, 2).unwrap_or_else(Expr::zero) {
+        true
+    } else if *k == Expr::half() {
+        false
+    } else {
+        return Ok(None);
+    };
+    let Some((a, h, d)) = complete_square(q, x)? else { return Ok(None) };
+    let (Some(sa), Some(sd)) = (sign_of(&a), sign_of(&d)) else { return Ok(None) };
+    let v = Expr::add(vec![x.clone(), h]);
+    let sqrt = |t: &Expr| Expr::pow(t, &Expr::half());
+    let inv = match (sa, sd) {
+        (1, 1) => Expr::call("asinh", vec![Expr::mul(vec![v.clone(), sqrt(&a.div(&d))])]).div(&sqrt(&a)),
+        (1, -1) => Expr::call("log", vec![Expr::add(vec![Expr::mul(vec![sqrt(&a), v.clone()]), sqrt(q)])]).div(&sqrt(&a)),
+        (-1, 1) => Expr::call("asin", vec![Expr::mul(vec![v.clone(), sqrt(&a.neg().div(&d))])]).div(&sqrt(&a.neg())),
+        _ => return Ok(None),
+    };
+    if inverse {
+        return Ok(Some(inv));
+    }
+    // ∫ sqrt(q) = v*sqrt(q)/2 + D/2 * ∫ 1/sqrt(q)
+    Ok(Some(Expr::add(vec![Expr::mul(vec![v, sqrt(q), Expr::half()]), Expr::mul(vec![d, Expr::half(), inv])])))
+}
+
+/// `exp(-a*(x + h)**2 + D)` with a positive rational `a`: a multiple of `erf`.
+fn gaussian(e: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
+    let Kind::Pow(b, k) = e.kind() else { return Ok(None) };
+    if b.as_sym() != Some(mathcraft_core::expr::SYM_E) {
+        return Ok(None);
+    }
+    let Some((a, h, d)) = complete_square(k, x)? else { return Ok(None) };
+    if sign_of(&a) != Some(-1) {
+        return Ok(None);
+    }
+    let r = Expr::pow(&a.neg(), &Expr::half());
+    let v = Expr::add(vec![x.clone(), h]);
+    let scale = Expr::mul(vec![Expr::pow(&Expr::e(), &d), Expr::pow(&Expr::pi(), &Expr::half()), Expr::half()]).div(&r);
+    Ok(Some(Expr::mul(vec![scale, Expr::call("erf", vec![Expr::mul(vec![r, v])])])))
 }
 
 /// `(is_sin, u)` when `e` is `sin(u)` or `cos(u)`.
@@ -512,7 +721,8 @@ mod tests {
         let sin = integrate_definite(&f("sin", x()), &x(), &i(0), &Expr::pi()).unwrap();
         assert_eq!(sin, i(2));
         let gauss = integrate_definite(&f("exp", p(&x(), 2).neg()), &x(), &i(0), &i(1)).unwrap();
-        assert!((gauss.as_num().unwrap().to_f64() - 0.746_824_132_812_427).abs() < 1e-8);
+        // exact now: sqrt(pi)*erf(1)/2
+        assert!((eval_f64(&gauss, &|_| None).unwrap() - 0.746_824_132_812_427).abs() < 1e-8);
     }
 
     #[test]
