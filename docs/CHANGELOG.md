@@ -4,4 +4,9 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
-- Working prototype: notebook and text views, tabs, folder sidebar, command palette, optional Vim mode, solver, MCP server.
+- Notebook and Text views, tabs, folder sidebar, command palette (Cmd+P), optional Vim mode.
+- Solver: polynomials to degree 4 in closed form, log and exponential equations, `nroots` for any degree.
+- Right-click a result to copy it as text, LaTeX, Python, NumPy or Rust. `latex()`, `pycode()`, `rustcode()`.
+- `x^2` is accepted as a power.
+- Settings are remembered (Vim keys, appearance, accent colour); `theme.json` can override colours.
+- New app icon.
