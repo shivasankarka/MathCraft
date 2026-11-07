@@ -2366,7 +2366,14 @@ mod tests {
         // `MATHCRAFT_NOTEBOOK=<file>` renders that notebook instead of the welcome one.
         let file = std::env::var_os("MATHCRAFT_NOTEBOOK").map(PathBuf::from);
         for (name, pref) in [("dark", ThemePreference::Dark), ("light", ThemePreference::Light)] {
-            for (suffix, size, ppp) in [("top", vec2(1060.0, 900.0), 2.0), ("full", vec2(1060.0, if file.is_some() { 1100.0 } else { 3000.0 }), 1.0)] {
+            for (suffix, size, ppp) in [
+                ("top", vec2(1060.0, 900.0), 2.0),
+                (
+                    "full",
+                    vec2(std::env::var("MATHCRAFT_WIDTH").ok().and_then(|w| w.parse().ok()).unwrap_or(1060.0), if file.is_some() { 1100.0 } else { 3000.0 }),
+                    1.0,
+                ),
+            ] {
                 let mut harness = egui_kittest::Harness::builder()
                     .wgpu()
                     .with_size(size)
