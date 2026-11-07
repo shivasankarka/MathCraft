@@ -273,3 +273,31 @@ mod tests {
         assert!(r.is_some(), "the cancel flag is noticed");
     }
 }
+
+#[cfg(test)]
+mod timing {
+    use super::*;
+    use std::time::Instant;
+
+    fn poly(k: i64, sign: i64, shift: i64) -> Expr {
+        let mut terms = vec![Expr::one()];
+        for (i, c) in [3, 5, 7, 9, 11, 13, 15].iter().enumerate() {
+            terms.push(Expr::mul(vec![Expr::int(if i == 6 { sign * c } else { *c }), Expr::sym(&format!("x{}", i + 1))]));
+        }
+        Expr::add(vec![Expr::pow(&Expr::add(terms), &Expr::int(7)), Expr::int(k + shift)])
+    }
+
+    #[test]
+    #[ignore = "timing; run with --release --ignored --nocapture"]
+    fn stages_of_a_large_expansion() {
+        let (a, g) = (poly(-1, 1, 0), poly(3, -1, 0));
+        let e = Expr::mul(vec![a, g]);
+        let t = Instant::now();
+        let mut conv = Converter::for_expr(&e).unwrap();
+        let p = conv.convert(&e).unwrap().unwrap();
+        println!("to poly: {} terms in {:?}", p.len(), t.elapsed());
+        let t = Instant::now();
+        let out = conv.to_expr(&p).unwrap();
+        println!("to expr: {:?} ({} terms)", t.elapsed(), out.args().len());
+    }
+}
