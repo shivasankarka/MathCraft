@@ -1,0 +1,15 @@
+[package]
+name = "mathcraft-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Expressions, exact numbers and symbolic algebra for MathCraft (L0, WASM-safe, no I/O)"
+
+[dependencies]
+dashu.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
