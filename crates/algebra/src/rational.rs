@@ -84,6 +84,10 @@ pub fn cancel(e: &Expr) -> MathResult<Expr> {
     if d.is_one() {
         return Ok(n);
     }
+    // integer polynomials in any number of symbols: the sparse gcd
+    if let Some((qn, qd)) = crate::sparse::cancel_pair(&n, &d)? {
+        return Ok(qn.div(&qd));
+    }
     for name in e.free_symbols() {
         let x = Expr::sym(&name);
         let (Some(nc), Some(dc)) = (to_poly(&n, &x)?, to_poly(&d, &x)?) else { continue };
