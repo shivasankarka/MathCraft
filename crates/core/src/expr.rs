@@ -405,6 +405,13 @@ impl Expr {
                 if let Some(r) = num_pow(bn, en) {
                     return r;
                 }
+                // sqrt of a negative float is imaginary: sqrt(-4.0) = 2.0*I
+                if let Num::Float(f) = bn
+                    && *f < 0.0
+                    && exp == &Expr::half()
+                {
+                    return Expr::mul(vec![Expr::float((-f).sqrt()), Expr::imag()]);
+                }
             } else if base.as_sym() == Some(SYM_I)
                 && en.is_exact()
                 && let Some(n) = en.as_i64()
