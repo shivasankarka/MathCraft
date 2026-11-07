@@ -1,0 +1,17 @@
+[package]
+name = "mathcraft-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "MathCraft interpreter: values, evaluation of the Python-flavoured language, builtin functions (L1)"
+
+[dependencies]
+mathcraft-core.workspace = true
+mathcraft-algebra.workspace = true
+mathcraft-syntax.workspace = true
+dashu.workspace = true
+
+[lints]
+workspace = true
