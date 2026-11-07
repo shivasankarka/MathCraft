@@ -105,6 +105,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("latex", "latex(value)", "LaTeX source of an expression, list or matrix"),
     ("pycode", "pycode(expr, args=None, name='f', numpy=False)", "Python source of a function computing expr (a list gives a tuple)"),
     ("rustcode", "rustcode(expr, args=None, name='f')", "Rust source of an f64 function computing expr"),
+    ("nroots", "nroots(poly, x)", "every complex root of a polynomial, numerically (for equations solve cannot do)"),
     ("nsolve", "nsolve(eq, x, guess)", "numeric root near a starting guess (Newton's method)"),
     ("apart", "apart(f, x)", "partial fractions of a rational function"),
     ("series", "series(f, x, x0=0, n=6)", "Taylor polynomial up to order n"),
@@ -139,6 +140,7 @@ const METHODS: &[&str] = &[
     "integrate",
     "limit",
     "apart",
+    "nroots",
     "nsolve",
     "latex",
     "pycode",
@@ -803,6 +805,15 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             it.checked(alg::expand(&s)?)
         }
         "solve" => solve(it, &a),
+        "nroots" => {
+            a.limits(name, 1, 2)?;
+            let f = eq_to_zero_form(&a.expr(0)?);
+            let x = match a.pos.get(1) {
+                Some(v) => as_symbol(v)?,
+                None => only_symbol(&f, name)?,
+            };
+            Ok(Value::list(alg::nroots(&f, &x)?.into_iter().map(Value::from_expr).collect()))
+        }
         "coeffs" | "degree" => {
             a.limits(name, 1, 2)?;
             let f = a.expr(0)?;

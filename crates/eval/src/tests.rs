@@ -265,6 +265,10 @@ fn solves_cubics_and_transcendental_equations() {
 
 #[test]
 fn exports_functions_as_python_and_rust() {
+    assert!(ev("nroots(x**5 - x - 1, x)").starts_with("[-0.7"), "five numeric roots, sorted");
+    assert_eq!(ev("len(nroots(x**5 - x - 1))"), "5");
+    assert_eq!(ev("solve(log(x) + log(x - 1) - log(2), x)"), "[2]");
+    assert_eq!(ev("solve(2**x - 8, x)"), "[3]");
     assert_eq!(ev("diff(x^3 + x^2, x)"), ev("diff(x**3 + x**2, x)"), "^ is a power");
     assert_eq!(ev("latex(x**2/3)"), "'\\frac{x^{2}}{3}'");
     assert!(ev("latex([[1, 2], [3, x]])").contains("\\begin{bmatrix}\n  1 & 2 \\\\\n  3 & x\n\\end{bmatrix}"));
