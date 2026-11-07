@@ -125,3 +125,4 @@ IDs follow Craft Anything's style (`R<milestone>.<n>`).
 - 2026-11-07: Design pass 1 reviewed (agent; gates green). Git initialised, file-by-file history. Tabs and the multi-document model built (`Doc`, tab strip). Next: folder panel, then Vim wiring + Text view, then palette.
 - 2026-11-07: Folder sidebar built. Next: Vim wiring + Text view, then the Cmd+P palette, then design pass 2.
 - 2026-11-07: Vim wired into editors (Settings > Vim keys) and Text view built (Q18 done apart from persistence of the setting, dot repeat and text objects). Next: Cmd+P command palette, then design pass 2, then `pycode`/copy-as.
+- 2026-11-07: Command palette built (Cmd+P). All three Q17 pieces exist; design pass 2 over tabs, sidebar, palette, Text view is next, then `pycode`/copy-as.
