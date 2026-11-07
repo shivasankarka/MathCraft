@@ -16,6 +16,7 @@ crates/
   core       L0  Expr (immutable, canonical), exact numbers (dashu), elementary functions, numeric eval, printer, budget
   syntax     L0  Python parser (ruff) lowered to our own AST; friendly "not supported yet" errors
   algebra    L1  expand, diff, integrate, solve, factor, simplify, series, limit, linear algebra
+  amplitude  L1  Dirac traces and Lorentz-index contraction for scattering amplitudes (kept separate: may become its own package)
   eval       L1  interpreter (Python subset), values, builtin function library (DOCS is the single list of names)
   notebook   L2  # %% file format, static analysis, dependency graph, rules, run planning, runner, kernel thread
 apps/
