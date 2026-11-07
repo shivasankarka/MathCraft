@@ -385,3 +385,31 @@ fn nonlinear_systems_by_elimination() {
     // linear systems keep their flat form
     assert_eq!(ev("solve([x+y-3, x-y-1], [x, y])"), "[x == 2, y == 1]");
 }
+
+#[test]
+fn integral_families() {
+    assert_eq!(ev("simplify(diff(integrate(cos(x)**3, x), x) - cos(x)**3)"), "0");
+    assert_eq!(ev("abs(round(float(subs(diff(integrate(sin(x)**2*cos(x)**2, x), x) - sin(x)**2*cos(x)**2, x, 0.7)), 9))"), "0.0");
+    assert_eq!(ev("abs(round(float(subs(diff(integrate(sin(x)**4, x), x) - sin(x)**4, x, 0.7)), 9))"), "0.0");
+    assert_eq!(ev("abs(round(float(subs(diff(integrate(exp(2*x)*cos(3*x), x), x) - exp(2*x)*cos(3*x), x, 0.7)), 9))"), "0.0");
+    assert_eq!(ev("integrate(exp(x)*sin(x), x)"), "exp(x)*(-cos(x) + sin(x))/2");
+    assert_eq!(ev("integrate(1/sqrt(1-x**2), x)"), "asin(x)");
+    assert_eq!(ev("integrate(1/sqrt(x**2+1), x)"), "asinh(x)");
+    assert_eq!(ev("integrate(exp(-x**2), x)"), "sqrt(pi)*erf(x)/2");
+    assert_eq!(ev("integrate(exp(-x**2), (x, -oo, oo))"), "sqrt(pi)");
+    assert_eq!(ev("integrate(sec(x)**2, x)"), "tan(x)");
+    assert_eq!(ev("integrate(abs(x), x)"), "x*abs(x)/2");
+}
+
+#[test]
+fn new_functions() {
+    assert_eq!(ev("erf(0)"), "0");
+    assert_eq!(ev("round(erf(1.0), 10)"), "0.8427007929");
+    assert_eq!(ev("round(float(asinh(2)), 6)"), "1.443635");
+    assert_eq!(ev("diff(erf(x), x)"), "2*exp(-x**2)/sqrt(pi)");
+    assert_eq!(ev("limit(erf(x), x, oo)"), "1");
+    assert_eq!(ev("atan2(1, 1)"), "pi/4");
+    assert_eq!(ev("atan2(1, -1)"), "3*pi/4");
+    assert_eq!(ev("atan2(-1, 0)"), "-pi/2");
+    assert_eq!(ev("cot(pi/4)"), "1");
+}
