@@ -35,6 +35,7 @@ pub fn has_singularity(e: &Expr) -> bool {
     match e.kind() {
         Kind::Pow(b, x) => (b.is_zero() && x.as_num().is_some_and(|n| n.is_negative())) || has_singularity(b) || has_singularity(x),
         Kind::Num(n) => !n.to_f64().is_finite(),
+        Kind::Sym(s) => &**s == mathcraft_core::expr::SYM_OO,
         _ => e.children().iter().any(has_singularity),
     }
 }
