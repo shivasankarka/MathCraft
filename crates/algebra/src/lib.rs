@@ -22,5 +22,5 @@ pub use limits::{Side, limit, limit_side};
 pub use poly::{factor, from_poly, linear_in, solve_polynomial, to_poly};
 pub use rational::{apart, cancel};
 pub use simplify::simplify;
-pub use solve::solve;
+pub use solve::{nroots, solve};
 pub use util::{has_singularity, is_zero_expr, subs};

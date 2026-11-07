@@ -24,17 +24,128 @@ pub fn solve(f: &Expr, x: &Expr) -> MathResult<Vec<Expr>> {
         let roots = solve_polynomial(&target, x)?;
         return Ok(filter(f, x, roots));
     }
+    if let Some(g) = combine_logs(&target, x) {
+        let roots = solve(&g, x)?;
+        return Ok(filter(f, x, roots));
+    }
     let mut roots = match isolate(&target, &Expr::zero(), x, 0)? {
         Some(r) => r,
         None => match substitute(&target, x)? {
             Some(r) => r,
-            None => return Err(MathError::unsupported("solve could not find a closed form for this equation (try nsolve for a numeric answer)")),
+            None => {
+                return Err(MathError::unsupported(
+                    "solve could not find a closed form for this equation (try nsolve, or nroots for all roots of a polynomial)",
+                ));
+            }
         },
     };
     roots = filter(f, x, roots);
     sort_roots(&mut roots);
     roots.dedup();
     Ok(roots)
+}
+
+/// `log(a) + log(b) - log(c) == 0` as the equation `a*b/c - 1 == 0`: several logarithms (with integer weights) and
+/// terms without the unknown become one logarithm, `log(P) == k` is `P == exp(k)`. Roots that make an argument
+/// negative are removed by the caller's check.
+fn combine_logs(f: &Expr, x: &Expr) -> Option<Expr> {
+    let Kind::Add(terms) = f.kind() else { return None };
+    let (mut product, mut count, mut rest) = (Vec::new(), 0, Vec::new());
+    for t in terms {
+        let (c, body) = t.split_coeff();
+        match body.kind() {
+            Kind::Call(name, args) if &**name == "log" && args.len() == 1 && c.is_integer() => {
+                let arg = args.first()?;
+                product.push(Expr::pow(arg, &Expr::num(c)));
+                count += 1;
+            }
+            _ => rest.push(t.clone()),
+        }
+    }
+    if count < 2 || rest.iter().any(|t| t.contains(x)) || !product.iter().any(|p| p.contains(x)) {
+        return None;
+    }
+    let target = Expr::call("exp", vec![Expr::add(rest).neg()]);
+    Some(Expr::add(vec![Expr::mul(product), target.neg()]))
+}
+
+/// All complex roots of a polynomial with numeric coefficients, as floats (`a + b*I`), for equations that have no
+/// closed form (a general quintic). Aberth's method; the roots come back sorted by real, then imaginary part.
+pub fn nroots(f: &Expr, x: &Expr) -> MathResult<Vec<Expr>> {
+    guard(f)?;
+    let Some(coeffs) = to_poly(f, x)? else { return Err(MathError::unsupported("nroots needs a polynomial in the unknown")) };
+    let mut c: Vec<f64> = Vec::new();
+    for k in &coeffs {
+        c.push(eval_f64(k, &|_| None).map_err(|_| MathError::unsupported("nroots needs numeric coefficients"))?);
+    }
+    while c.last().is_some_and(|v| *v == 0.0) {
+        c.pop();
+    }
+    let n = c.len().saturating_sub(1);
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    // c is lowest degree first; evaluate p and p' by Horner
+    let eval = |z: (f64, f64)| -> ((f64, f64), (f64, f64)) {
+        let (mut p, mut dp) = ((0.0, 0.0), (0.0, 0.0));
+        for a in c.iter().rev() {
+            dp = (dp.0 * z.0 - dp.1 * z.1 + p.0, dp.0 * z.1 + dp.1 * z.0 + p.1);
+            p = (p.0 * z.0 - p.1 * z.1 + a, p.0 * z.1 + p.1 * z.0);
+        }
+        (p, dp)
+    };
+    let div = |a: (f64, f64), b: (f64, f64)| {
+        let d = b.0 * b.0 + b.1 * b.1;
+        ((a.0 * b.0 + a.1 * b.1) / d, (a.1 * b.0 - a.0 * b.1) / d)
+    };
+    // start on a circle whose radius bounds the roots (Cauchy), at an irregular angle so no root is symmetric to it
+    let lead = c.last().copied().unwrap_or(1.0).abs();
+    let radius = 1.0 + c.iter().take(n).map(|v| v.abs() / lead).fold(0.0, f64::max);
+    let mut z: Vec<(f64, f64)> = (0..n)
+        .map(|k| {
+            let t = 2.0 * std::f64::consts::PI * (k as f64) / (n as f64) + 0.4;
+            (radius * 0.5 * t.cos(), radius * 0.5 * t.sin())
+        })
+        .collect();
+    for _ in 0..500 {
+        let mut moved = 0.0f64;
+        for i in 0..n {
+            let Some(&zi) = z.get(i) else { continue };
+            let (p, dp) = eval(zi);
+            if p == (0.0, 0.0) {
+                continue;
+            }
+            let ratio = div(p, dp);
+            let mut s = (0.0, 0.0);
+            for (j, zj) in z.iter().enumerate() {
+                if j != i {
+                    let d = (zi.0 - zj.0, zi.1 - zj.1);
+                    let inv = div((1.0, 0.0), d);
+                    s = (s.0 + inv.0, s.1 + inv.1);
+                }
+            }
+            // w = ratio / (1 - ratio * s)
+            let denom = (1.0 - (ratio.0 * s.0 - ratio.1 * s.1), -(ratio.0 * s.1 + ratio.1 * s.0));
+            let w = div(ratio, denom);
+            if !w.0.is_finite() || !w.1.is_finite() {
+                continue;
+            }
+            if let Some(slot) = z.get_mut(i) {
+                *slot = (zi.0 - w.0, zi.1 - w.1);
+            }
+            moved = moved.max(w.0.abs() + w.1.abs());
+        }
+        if moved < 1e-14 * radius {
+            break;
+        }
+    }
+    let tidy = |v: f64| if v.abs() < 1e-12 { 0.0 } else { v };
+    let mut out: Vec<(f64, f64)> = z.into_iter().map(|(a, b)| (tidy(a), tidy(b))).collect();
+    out.sort_by(|p, q| p.0.total_cmp(&q.0).then(p.1.total_cmp(&q.1)));
+    Ok(out
+        .into_iter()
+        .map(|(a, b)| if b == 0.0 { Expr::float(a) } else { Expr::add(vec![Expr::float(a), Expr::mul(vec![Expr::float(b), Expr::imag()])]) })
+        .collect())
 }
 
 /// Drop candidates that do not satisfy the equation (extra roots from squaring, poles, wrong branches).
@@ -44,7 +155,7 @@ fn filter(f: &Expr, x: &Expr, roots: Vec<Expr>) -> Vec<Expr> {
 
 fn satisfies(f: &Expr, x: &Expr, r: &Expr) -> bool {
     let Ok(v) = subs(f, &[(x.clone(), r.clone())]) else { return true };
-    if has_singularity(&v) {
+    if has_singularity(&v) || !logs_positive(&v) {
         return false;
     }
     match eval_f64(&v, &|_| None) {
@@ -52,6 +163,18 @@ fn satisfies(f: &Expr, x: &Expr, r: &Expr) -> bool {
         Ok(_) => r.free_symbols().contains("I"),
         Err(_) => true,
     }
+}
+
+/// Every logarithm in `e` has a positive real argument (when the argument is a real number we can evaluate).
+fn logs_positive(e: &Expr) -> bool {
+    if let Kind::Call(name, args) = e.kind()
+        && &**name == "log"
+        && let [a] = args.as_slice()
+        && eval_f64(a, &|_| None).is_ok_and(|v| v <= 0.0)
+    {
+        return false;
+    }
+    e.children().iter().all(logs_positive)
 }
 
 fn is_negative(e: &Expr) -> Option<bool> {
@@ -216,7 +339,14 @@ fn isolate(f: &Expr, rhs: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Vec<
                     _ => Expr::call("log", vec![rhs.clone()]),
                 };
                 let target = if b.as_sym() == Some(mathcraft_core::expr::SYM_E) { lg } else { lg.div(&Expr::call("log", vec![b.clone()])) };
-                rec(e, &target)
+                // 2**x == 8 is exactly 3, not log(8)/log(2)
+                let exact = eval_f64(&target, &|_| None)
+                    .ok()
+                    .map(f64::round)
+                    .filter(|k| k.abs() < 1e6)
+                    .map(|k| Expr::int(k as i64))
+                    .filter(|k| &Expr::pow(b, k) == rhs);
+                rec(e, &exact.unwrap_or(target))
             }
             (true, false) => {
                 let Some(n) = e.as_num().filter(|n| n.is_exact()) else { return Ok(None) };
@@ -429,6 +559,38 @@ mod tests {
     }
     fn x() -> Expr {
         Expr::sym("x")
+    }
+
+    #[test]
+    fn logarithm_rules_combine_and_domains_are_checked() {
+        let lg = |e: Expr| Expr::call("log", vec![e]);
+        let x1 = Expr::add(vec![x(), Expr::int(-1)]);
+        // log(x) + log(x - 1) = log(2): x = 2 (x = -1 would need the log of a negative number)
+        let f = Expr::add(vec![lg(x()), lg(x1), lg(Expr::int(2)).neg()]);
+        assert_eq!(run(f), ["2"]);
+        // 2 log(x) = log(4x - 3): x = 1 or 3
+        let g = Expr::add(vec![Expr::mul(vec![Expr::int(2), lg(x())]), lg(Expr::add(vec![Expr::mul(vec![Expr::int(4), x()]), Expr::int(-3)])).neg()]);
+        assert_eq!(run(g), ["1", "3"]);
+    }
+
+    #[test]
+    fn nroots_finds_every_root_of_a_quintic() {
+        // x^5 - x - 1 has no closed form: one real root near 1.1673 and four complex ones
+        let f = Expr::add(vec![Expr::pow(&x(), &Expr::int(5)), x().neg(), Expr::int(-1)]);
+        let roots = nroots(&f, &x()).unwrap();
+        assert_eq!(roots.len(), 5);
+        for r in &roots {
+            let v = subs(&f, &[(x(), r.clone())]).unwrap();
+            let (re, im) = complex_parts(&v);
+            assert!(re.abs() < 1e-9 && im.abs() < 1e-9, "{r} gives {v}");
+        }
+        assert!(roots.iter().any(|r| (eval_f64(r, &|_| None).unwrap_or(0.0) - 1.1673).abs() < 1e-3));
+        assert!(solve(&f, &x()).is_err(), "no closed form, so solve says so");
+    }
+
+    fn complex_parts(e: &Expr) -> (f64, f64) {
+        let (re, im) = crate::complex::parts(e).unwrap();
+        (eval_f64(&re, &|_| None).unwrap_or(f64::NAN), eval_f64(&im, &|_| None).unwrap_or(f64::NAN))
     }
 
     #[test]
