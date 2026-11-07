@@ -13,6 +13,7 @@ mod icons;
 mod markdown;
 mod math_view;
 mod palette;
+mod settings;
 mod sidebar;
 mod tabs;
 mod text_view;
@@ -72,6 +73,8 @@ enum Cmd {
     Functions,
     Theme(ThemePreference),
     ToggleVim,
+    Accent(Option<&'static str>),
+    ReloadTheme,
     ToggleStrict,
     AddCell(CellKind),
     NewInFolder,
@@ -119,13 +122,54 @@ struct App {
     toolbar_height: f32,
     dark: Theme,
     light: Theme,
+    /// Where settings are saved (`None` in tests), what was last saved, and the accent colour in use.
+    config: Option<PathBuf>,
+    saved: settings::Settings,
+    accent: Option<String>,
 }
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, path: Option<PathBuf>) -> Self {
         let mut app = Self::with_context(cc.egui_ctx.clone(), path);
         app.unified_title_bar = cfg!(target_os = "macos");
+        app.load_settings(settings::config_dir());
         app
+    }
+
+    /// Adopt the saved settings and start saving changes to `dir`.
+    fn load_settings(&mut self, dir: Option<PathBuf>) {
+        let s = dir.as_deref().map(settings::Settings::load).unwrap_or_default();
+        self.vim = self.vim || s.vim;
+        self.ctx.set_theme(s.appearance);
+        self.accent = s.accent.clone();
+        self.config = dir;
+        self.rebuild_themes();
+        self.saved = self.current_settings();
+    }
+
+    /// The themes again from the config folder's `theme.json` and the chosen accent.
+    fn rebuild_themes(&mut self) {
+        (self.dark, self.light) = settings::themes(self.config.as_deref(), self.accent.as_deref());
+        self.dark.apply(&self.ctx);
+        self.light.apply(&self.ctx);
+        configure_style(&self.ctx);
+    }
+
+    fn current_settings(&self) -> settings::Settings {
+        settings::Settings { vim: self.vim, appearance: self.ctx.options(|o| o.theme_preference), accent: self.accent.clone() }
+    }
+
+    /// Save the settings when one changed since the last save.
+    fn persist_settings(&mut self) {
+        let now = self.current_settings();
+        if now != self.saved {
+            if let Some(dir) = &self.config
+                && let Err(e) = now.save(dir)
+            {
+                self.status = format!("Could not save settings: {e}");
+            }
+            self.saved = now;
+        }
     }
 
     fn with_context(ctx: egui::Context, path: Option<PathBuf>) -> Self {
@@ -171,6 +215,9 @@ impl App {
             toolbar_height: 40.0,
             dark,
             light,
+            config: None,
+            saved: settings::Settings::default(),
+            accent: None,
         }
     }
 
@@ -321,11 +368,16 @@ impl App {
             item("Theme", "Match the system", String::new(), Cmd::Theme(ThemePreference::System)),
             item("Theme", "Light", String::new(), Cmd::Theme(ThemePreference::Light)),
             item("Theme", "Dark", String::new(), Cmd::Theme(ThemePreference::Dark)),
+            item("Accent colour", "Blue (default)", String::new(), Cmd::Accent(None)),
             item("Settings", &format!("Vim keys ({})", on(self.vim)), String::new(), Cmd::ToggleVim),
             item("Settings", &format!("Strict names ({})", on(self.cur.nb.strict)), String::new(), Cmd::ToggleStrict),
             item("Cell", "Add a code cell", String::new(), Cmd::AddCell(CellKind::Code)),
             item("Cell", "Add a text cell", String::new(), Cmd::AddCell(CellKind::Markdown)),
         ];
+        for (name, ..) in settings::ACCENTS.iter().skip(1) {
+            v.push(item("Accent colour", &format!("Accent: {name}"), String::new(), Cmd::Accent(Some(name))));
+        }
+        v.push(item("Theme", "Reload theme.json", String::new(), Cmd::ReloadTheme));
         if self.folder.is_some() {
             v.push(item("File", "New notebook in the folder", String::new(), Cmd::NewInFolder));
         }
@@ -371,6 +423,14 @@ impl App {
             Cmd::Functions => self.show_help = true,
             Cmd::Theme(t) => ctx.set_theme(t),
             Cmd::ToggleVim => self.vim = !self.vim,
+            Cmd::Accent(name) => {
+                self.accent = name.map(str::to_owned);
+                self.rebuild_themes();
+            }
+            Cmd::ReloadTheme => {
+                self.rebuild_themes();
+                self.status = "Reloaded theme.json".into();
+            }
             Cmd::ToggleStrict => self.cur.nb.strict = !self.cur.nb.strict,
             Cmd::AddCell(kind) => {
                 let last = self.cur.nb.cells().last().map(|c| c.id);
@@ -823,6 +883,7 @@ impl App {
         let ctx = root.ctx().clone();
         let ctx = &ctx;
         self.poll_kernel();
+        self.persist_settings();
         self.shortcuts(ctx);
         let theme = self.theme(ctx);
 
@@ -1768,6 +1829,31 @@ mod tests {
         assert_eq!(get("Rust").as_deref(), Some("x.powi(2)"));
         // a string has no LaTeX or code form
         assert!(copy_formats(&Value::Str("hi".into())).iter().filter(|(n, _)| *n != "Text").all(|(_, t)| t.is_none()));
+    }
+
+    #[test]
+    fn settings_are_saved_and_restored() {
+        let dir = std::env::temp_dir().join(format!("mathcraft-app-settings-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        app.load_settings(Some(dir.clone()));
+        app.run_command(Cmd::ToggleVim, &ctx);
+        app.run_command(Cmd::Theme(ThemePreference::Dark), &ctx);
+        app.run_command(Cmd::Accent(Some("purple")), &ctx);
+        frame(&ctx, &mut app);
+        let saved = settings::Settings::load(&dir);
+        assert!(saved.vim);
+        assert_eq!(saved.appearance, ThemePreference::Dark);
+        assert_eq!(saved.accent.as_deref(), Some("purple"));
+        // a fresh app picks them up
+        let ctx2 = egui::Context::default();
+        let mut again = App::with_context(ctx2.clone(), None);
+        again.load_settings(Some(dir.clone()));
+        assert!(again.vim);
+        assert_eq!(ctx2.options(|o| o.theme_preference), ThemePreference::Dark);
+        assert_eq!(again.dark.accent, egui::Color32::from_rgb(168, 128, 255));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
