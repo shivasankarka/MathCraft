@@ -73,9 +73,23 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
-/// Corner radius of controls (buttons, rows); cells and popups use [`RADIUS_LARGE`].
+/// Corner radius of controls (buttons, rows); cells and popups use [`RADIUS_LARGE`]; keycaps and badges [`RADIUS_SMALL`].
 pub const RADIUS: u8 = 6;
 pub const RADIUS_LARGE: u8 = 8;
+pub const RADIUS_SMALL: u8 = 4;
+
+/// The interface type scale (points). Document text and code sizes live in `configure_style`.
+pub const TEXT_CAPTION: f32 = 11.5;
+pub const TEXT_SMALL: f32 = 12.0;
+pub const TEXT_UI: f32 = 13.0;
+pub const TEXT_TITLE: f32 = 14.0;
+
+/// Height of a row in lists (sidebar, palette uses [`ROW_LARGE`]).
+pub const ROW: f32 = 26.0;
+pub const ROW_LARGE: f32 = 32.0;
+
+/// Space kept free at the left of the toolbar for the macOS window buttons when the title bar is unified.
+pub const TRAFFIC_LIGHTS_INSET: f32 = 76.0;
 
 impl Theme {
     pub fn dark() -> Theme {
@@ -173,6 +187,16 @@ impl Theme {
         color.gamma_multiply(if self.dark { 0.13 } else { 0.08 })
     }
 
+    /// The fill of the chosen row in a list (palette, completion, sidebar): the accent, quietly.
+    pub fn selected_row(&self) -> Color32 {
+        self.accent.gamma_multiply(if self.dark { 0.30 } else { 0.13 })
+    }
+
+    /// A filled marker such as a status pill: `color` strong enough to read as a shape, text stays legible on it.
+    pub fn pill(&self, color: Color32) -> Color32 {
+        color.gamma_multiply(if self.dark { 0.24 } else { 0.14 })
+    }
+
     /// The soft halo drawn around a focused field, as macOS does.
     pub fn focus_ring(&self) -> Color32 {
         self.accent.gamma_multiply(if self.dark { 0.35 } else { 0.25 })
@@ -180,6 +204,11 @@ impl Theme {
 
     pub fn popup_shadow(&self) -> Shadow {
         Shadow { offset: [0, 6], blur: 18, spread: 0, color: self.shadow }
+    }
+
+    /// The deep shadow under windows and the command palette.
+    pub fn window_shadow(&self) -> Shadow {
+        Shadow { offset: [0, 12], blur: 36, spread: 0, color: self.shadow }
     }
 
     /// A tighter shadow for small floating strips (the cell tools).
@@ -199,7 +228,7 @@ impl Theme {
         v.code_bg_color = self.code_bg;
         v.window_stroke = Stroke::new(1.0, if self.dark { self.border_strong } else { self.border });
         v.window_corner_radius = CornerRadius::same(12);
-        v.window_shadow = Shadow { offset: [0, 12], blur: 36, spread: 0, color: self.shadow };
+        v.window_shadow = self.window_shadow();
         v.window_highlight_topmost = false;
         v.popup_shadow = self.popup_shadow();
         v.menu_corner_radius = CornerRadius::same(RADIUS_LARGE);
