@@ -304,3 +304,48 @@ M2c = simplify(subs(M2, [(t, -s*(1 - c)/2), (u, -s*(1 + c)/2)]))
 simplify(subs(2*pi*integrate(M2c/(64*pi**2*s), (c, -1, 1)), g, sqrt(4*pi*a)))";
     assert_eq!(ev(src), "4*a**2*pi/(3*s)");
 }
+
+#[test]
+fn slices_follow_python() {
+    assert_eq!(ev("[0,1,2,3,4][1:3]"), "[1, 2]");
+    assert_eq!(ev("[0,1,2,3,4][:2]"), "[0, 1]");
+    assert_eq!(ev("[0,1,2,3,4][-2:]"), "[3, 4]");
+    assert_eq!(ev("[0,1,2,3,4][::2]"), "[0, 2, 4]");
+    assert_eq!(ev("[0,1,2,3,4][::-1]"), "[4, 3, 2, 1, 0]");
+    assert_eq!(ev("[0,1,2,3,4][3:0:-2]"), "[3, 1]");
+    assert_eq!(ev("[0,1,2][1:99]"), "[1, 2]");
+    assert_eq!(ev("[0,1,2][5:9]"), "[]");
+    assert_eq!(ev("(1,2,3)[1:]"), "(2, 3)");
+    assert_eq!(ev("'hello'[1:4]"), "'ell'");
+    assert_eq!(ev("'hello'[::-1]"), "'olleh'");
+    assert_eq!(ev("range(10)[2:5]"), "[2, 3, 4]");
+    assert!(ev("[1,2][::0]").contains("cannot be zero"));
+    assert!(ev("5[1:2]").contains("cannot be sliced"));
+    assert!(ev("[1,2][1.5:]").contains("integers"));
+    assert_eq!(ev("n = 2\n[0,1,2,3][n:n+1]"), "[2]");
+}
+
+#[test]
+fn f_strings_format_values() {
+    assert_eq!(ev("x = 3\nf'x is {x}'"), "'x is 3'");
+    assert_eq!(ev("f'{1/3}'"), "'1/3'");
+    assert_eq!(ev("f'{1/3:.3f}'"), "'0.333'");
+    assert_eq!(ev("f'{pi:.5f}'"), "'3.14159'");
+    assert_eq!(ev("f'{12345.6789:,.2f}'"), "'12,345.68'");
+    assert_eq!(ev("f'{1234567:,d}'"), "'1,234,567'");
+    assert_eq!(ev("f'{5:03d}|{5:>4}|{5:<4}|{5:^4}|{5:*^5}'"), "'005|   5|5   | 5  |**5**'");
+    assert_eq!(ev("f'{-2.5:+.1f} {2:+d} {1500:.2e}'"), "'-2.5 +2 1.50e+03'");
+    assert_eq!(ev("f'{0.25:.1%}'"), "'25.0%'");
+    assert_eq!(ev("f'{'abc':>5}|{'abcdef':.3}'"), "'  abc|abc'");
+    assert_eq!(ev("w = 6\nf'{7:{w}}'"), "'     7'");
+    assert_eq!(ev("f'{'a'!r}'"), "''a''");
+    assert_eq!(ev("f'a' 'b' f'{1+1}'"), "'ab2'");
+    assert_eq!(ev("f''"), "''");
+    assert_eq!(ev("f'{{x}}'"), "'{x}'");
+    assert_eq!(ev("f'{x**2 + 1}'"), "'x**2 + 1'");
+    assert!(ev("f'{x=}'").contains("not supported"));
+    assert!(ev("f'{1.5:d}'").contains("integer"));
+    assert!(ev("f'{1:q}'").contains("unsupported format spec"));
+    assert!(ev("f'{[1]:.2f}'").contains("cannot format"));
+    assert!(ev("f'{1:99999}'").contains("unsupported format spec"));
+}
