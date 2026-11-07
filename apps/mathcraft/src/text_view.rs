@@ -71,7 +71,7 @@ pub fn editor(ui: &mut egui::Ui, theme: &Theme, doc: &mut Doc, vim: bool, vim_st
     let font = TextStyle::Monospace.resolve(ui.style());
     let syntax = theme.syntax.clone();
     let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-        let mut job = highlight::highlight(buf.as_str(), font.clone(), &syntax);
+        let mut job = highlight::highlight(buf.as_str(), font.clone(), &syntax, false);
         job.wrap.max_width = wrap_width;
         ui.fonts_mut(|f| f.layout_job(job))
     };
