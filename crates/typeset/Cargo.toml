@@ -1,0 +1,14 @@
+[package]
+name = "mathcraft-typeset"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Typeset mathematics layout for MathCraft (L1, WASM-safe, no I/O, no UI toolkit)"
+
+[dependencies]
+mathcraft-core.workspace = true
+
+[lints]
+workspace = true
