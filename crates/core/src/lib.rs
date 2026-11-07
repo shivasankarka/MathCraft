@@ -8,6 +8,7 @@ pub mod codegen;
 pub mod error;
 pub mod expr;
 pub mod functions;
+pub mod latex;
 pub mod number;
 pub mod numeric;
 mod print;
