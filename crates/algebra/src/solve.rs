@@ -8,7 +8,7 @@ use crate::rational::together;
 use crate::util::{guard, has_singularity, subs};
 use dashu::integer::IBig;
 use mathcraft_core::numeric::eval_f64;
-use mathcraft_core::{Expr, Kind, MathError, MathResult};
+use mathcraft_core::{Expr, Kind, MathError, MathResult, Num};
 
 const MAX_DEPTH: u32 = 12;
 
@@ -23,6 +23,14 @@ pub fn solve(f: &Expr, x: &Expr) -> MathResult<Vec<Expr>> {
     if to_poly(&target, x)?.is_some() {
         let roots = solve_polynomial(&target, x)?;
         return Ok(filter(f, x, roots));
+    }
+    if let Some(h) = rationalize(&target, x)? {
+        // Complex candidates cannot be checked against principal-branch roots, so only real solutions are kept.
+        let roots: Vec<Expr> = solve(&h, x)?.into_iter().filter(|r| !r.contains(&Expr::imag())).collect();
+        let mut roots = filter(f, x, roots);
+        sort_roots(&mut roots);
+        roots.dedup();
+        return Ok(roots);
     }
     if let Some(g) = combine_logs(&target, x) {
         let roots = solve(&g, x)?;
@@ -43,6 +51,45 @@ pub fn solve(f: &Expr, x: &Expr) -> MathResult<Vec<Expr>> {
     sort_roots(&mut roots);
     roots.dedup();
     Ok(roots)
+}
+
+/// Remove one square root `sqrt(g)` (a power with denominator 2 of an expression containing `x`): replace it by `t`,
+/// then eliminate `t` between the equation and `t**2 - g` with a resultant. The new equation has extra roots (the
+/// other branch of the root); the caller checks every candidate against the original.
+fn rationalize(f: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
+    fn find(e: &Expr, x: &Expr) -> Option<Expr> {
+        if let Kind::Pow(g, k) = e.kind()
+            && g.contains(x)
+            && !k.contains(x)
+            && let Some((_, q)) = k.as_num().and_then(Num::parts)
+            && IBig::from(q) == IBig::from(2)
+        {
+            return Some(g.clone());
+        }
+        e.children().iter().find_map(|c| find(c, x))
+    }
+    fn replace(e: &Expr, g: &Expr, t: &Expr) -> MathResult<Expr> {
+        if let Kind::Pow(b, k) = e.kind()
+            && b == g
+            && let Some((p, q)) = k.as_num().and_then(Num::parts)
+            && IBig::from(q) == IBig::from(2)
+            && let Ok(p) = i64::try_from(&p)
+        {
+            // p is odd (the fraction is reduced): g ** (p/2) = g ** ((p-1)/2) * sqrt(g)
+            return Ok(Expr::mul(vec![Expr::pow(g, &Expr::int((p - 1) / 2)), t.clone()]));
+        }
+        e.map_children(|c| replace(c, g, t))
+    }
+    let Some(g) = find(f, x) else { return Ok(None) };
+    let t = Expr::sym("_t");
+    let in_t = together(&replace(f, &g, &t)?)?.0;
+    let in_t = expand(&in_t)?;
+    if to_poly(&in_t, &t)?.is_none() {
+        return Ok(None);
+    }
+    let rel = Expr::add(vec![Expr::pow(&t, &Expr::int(2)), g.neg()]);
+    let h = crate::system::resultant(&in_t, &rel, &t)?;
+    Ok((!h.is_zero() && h.contains(x)).then_some(h))
 }
 
 /// `log(a) + log(b) - log(c) == 0` as the equation `a*b/c - 1 == 0`: several logarithms (with integer weights) and
