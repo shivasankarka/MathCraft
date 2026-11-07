@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { os: macos-latest, target: aarch64-apple-darwin, name: macos-arm64 }
+          - { os: macos-13, target: x86_64-apple-darwin, name: macos-x64 }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, name: linux-x64 }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, name: windows-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux GUI libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libgtk-3-dev
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p mathcraft -p mathcraft-cli
+      - name: Package
+        shell: bash
+        run: |
+          dir="mathcraft-${GITHUB_REF_NAME}-${{ matrix.name }}"
+          mkdir "$dir"
+          ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          cp target/${{ matrix.target }}/release/mathcraft$ext target/${{ matrix.target }}/release/mathcraft-cli$ext "$dir"/
+          cp README.md LICENSE-MIT LICENSE-APACHE "$dir"/
+          cp -r examples "$dir"/
+          if [ "${{ runner.os }}" = "Windows" ]; then 7z a "$dir.zip" "$dir"; else tar czf "$dir.tar.gz" "$dir"; fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            mathcraft-*.tar.gz
+            mathcraft-*.zip
