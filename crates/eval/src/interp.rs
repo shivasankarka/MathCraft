@@ -347,9 +347,22 @@ impl Interp<'_> {
             Ex::Attr(..) => err("attributes are not supported; call a method like expr.expand() or use a function like expand(expr)"),
             Ex::Index(v, i) => {
                 let v = self.eval(v)?;
+                if let Ex::Slice(lo, hi, step) = &**i {
+                    let mut bound = |x: &Option<Box<Ex>>| -> R<Option<i64>> {
+                        let Some(x) = x else { return Ok(None) };
+                        let v = self.eval(x)?;
+                        if matches!(v, Value::None) {
+                            return Ok(None);
+                        }
+                        numeric(&v).and_then(|e| e.as_i64()).map(Some).ok_or_else(|| EvalError::new("slice bounds must be integers"))
+                    };
+                    let (lo, hi, step) = (bound(lo)?, bound(hi)?, bound(step)?);
+                    return self.slice(&v, lo, hi, step);
+                }
                 let i = self.eval(i)?;
                 self.index(&v, &i)
             }
+            Ex::Slice(..) => err("a slice such as a[1:3] only makes sense inside brackets"),
             Ex::List(xs) => Ok(Value::list(xs.iter().map(|x| self.eval(x)).collect::<R<_>>()?)),
             Ex::Tuple(xs) => Ok(Value::Tuple(Arc::new(xs.iter().map(|x| self.eval(x)).collect::<R<_>>()?))),
             Ex::Lambda { params, body } => self.make_function("<lambda>", params, FuncBody::Lambda((**body).clone())),
@@ -433,6 +446,48 @@ impl Interp<'_> {
             }
             other => err(format!("a {} is not iterable", other.type_name())),
         }
+    }
+
+    /// `v[lo:hi:step]` with Python's rules: negative bounds count from the end, out-of-range bounds clamp.
+    fn slice(&mut self, v: &Value, lo: Option<i64>, hi: Option<i64>, step: Option<i64>) -> R<Value> {
+        let step = step.unwrap_or(1);
+        if step == 0 {
+            return err("slice step cannot be zero");
+        }
+        let len = match v {
+            Value::List(l) | Value::Tuple(l) => l.len(),
+            Value::Str(s) => s.chars().count(),
+            Value::Array(a) if a.cols.is_none() => a.rows,
+            Value::Range { .. } => self.iter_values(v)?.len(),
+            other => return err(format!("a {} cannot be sliced", other.type_name())),
+        };
+        let n = i64::try_from(len).unwrap_or(i64::MAX);
+        let clamp = |x: i64, lo: i64, hi: i64| x.clamp(lo, hi);
+        let fix = |x: i64, low: i64, high: i64| clamp(if x < 0 { x.saturating_add(n) } else { x }, low, high);
+        let (start, stop) = if step > 0 {
+            (lo.map_or(0, |x| fix(x, 0, n)), hi.map_or(n, |x| fix(x, 0, n)))
+        } else {
+            (lo.map_or(n - 1, |x| fix(x, -1, n - 1)), hi.map_or(-1, |x| fix(x, -1, n - 1)))
+        };
+        let mut picks = Vec::new();
+        let mut k = start;
+        while (step > 0 && k < stop) || (step < 0 && k > stop) {
+            picks.push(usize::try_from(k).unwrap_or(0));
+            k = k.saturating_add(step);
+        }
+        Ok(match v {
+            Value::List(l) => Value::list(picks.iter().filter_map(|k| l.get(*k).cloned()).collect()),
+            Value::Tuple(l) => Value::Tuple(Arc::new(picks.iter().filter_map(|k| l.get(*k).cloned()).collect())),
+            Value::Str(s) => {
+                let chars: Vec<char> = s.chars().collect();
+                let out: String = picks.iter().filter_map(|k| chars.get(*k)).collect();
+                Value::Str(Arc::from(out.as_str()))
+            }
+            other => {
+                let items = self.iter_values(other)?;
+                Value::list(picks.iter().filter_map(|k| items.get(*k).cloned()).collect())
+            }
+        })
     }
 
     fn index(&self, v: &Value, i: &Value) -> R<Value> {
