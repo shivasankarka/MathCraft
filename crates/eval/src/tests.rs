@@ -426,3 +426,13 @@ fn euler_identity_and_logs_of_negatives() {
     assert_eq!(ev("simplify(cos(x)**4 - sin(x)**4 - cos(x)**2 + sin(x)**2)"), "0");
     assert_eq!(ev("simplify(sin(x)**2*cos(x)**2 + sin(x)**4 - sin(x)**2)"), "0");
 }
+
+#[test]
+fn equations_with_square_roots() {
+    assert_eq!(ev("solve(sqrt(x+1)-x, x)"), "[sqrt(5)/2 + 1/2]");
+    assert_eq!(ev("solve(sqrt(x)+sqrt(x+5)-5, x)"), "[4]");
+    assert_eq!(ev("solve(sqrt(2*x+1)-sqrt(x)-1, x)"), "[0, 4]");
+    assert_eq!(ev("solve(1/sqrt(x)-2, x)"), "[1/4]");
+    assert_eq!(ev("solve(sqrt(x)+3, x)"), "[]");
+    assert_eq!(ev("solve(x**(3/2)-8, x)"), "[4]");
+}
