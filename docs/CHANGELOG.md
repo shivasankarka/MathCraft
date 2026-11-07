@@ -10,6 +10,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - Fixed a wrong limit: `limit((1+x)**(1/x), x, 0)` gave 1; it is now e (`1 ** (1/0)` no longer collapses to 1).
 - More limits work: variable exponents like `(1+1/x)**x`, `x*sin(1/x)`, `exp(-1/x**2)/x**2` and root differences like `sqrt(x**2+x) - x`.
 - Improper integrals work: `integrate(exp(-x), (x, 0, oo))` gives 1 (it used to return `-exp(-oo) + 1`).
+- `solve` handles polynomial systems such as `solve([x**2 + y**2 - 25, x - y - 1], [x, y])` by elimination; the answer is a list of solutions, each a list of `var == value`. Linear systems keep their flat form.
 
 ## 0.1.1 (2026-11-08)
 
