@@ -76,7 +76,13 @@ fn same(a: &Expr, b: &Expr) -> bool {
     }
 }
 
-fn judge(input: &str, expected: &str) -> Verdict {
+/// Antiderivatives agree up to an additive constant: the difference takes the same value at every sample point.
+fn same_up_to_constant(a: &Expr, b: &Expr) -> bool {
+    let diffs: Vec<f64> = (0..4).filter_map(|k| Some(sample(a, k)? - sample(b, k)?)).collect();
+    diffs.len() >= 3 && diffs.windows(2).all(|w| (w[0] - w[1]).abs() <= 1e-8 * (1.0 + w[0].abs()))
+}
+
+fn judge(input: &str, expected: &str, antiderivative: bool) -> Verdict {
     let got = match eval(input) {
         Ok(v) => v,
         Err(e) => return Verdict::Error(e),
@@ -86,17 +92,17 @@ fn judge(input: &str, expected: &str) -> Verdict {
         Err(e) => return Verdict::Error(format!("bad expectation: {e}")),
     };
     match (got.to_expr(), want.to_expr()) {
-        (Ok(a), Ok(b)) if same(&a, &b) => Verdict::Pass,
+        (Ok(a), Ok(b)) if same(&a, &b) || (antiderivative && same_up_to_constant(&a, &b)) => Verdict::Pass,
         _ => Verdict::Wrong(got.to_string()),
     }
 }
 
-fn run_case(input: &str, expected: &str) -> Verdict {
+fn run_case(input: &str, expected: &str, antiderivative: bool) -> Verdict {
     let (tx, rx) = mpsc::channel();
     let (i, e) = (input.to_string(), expected.to_string());
     let spawned = std::thread::Builder::new().stack_size(256 << 20).spawn(move || {
         let _g = budget::install(Budget::new(Some(LIMIT), Arc::new(AtomicBool::new(false)), u64::MAX));
-        let _ = tx.send(judge(&i, &e));
+        let _ = tx.send(judge(&i, &e, antiderivative));
     });
     if spawned.is_err() {
         return Verdict::Error("could not start a thread".into());
@@ -117,7 +123,7 @@ fn benchmark() {
             continue;
         }
         let start = Instant::now();
-        let v = run_case(input, expected);
+        let v = run_case(input, expected, area == "integrate");
         let slot = areas.entry(area.to_string()).or_default();
         slot.1 += 1;
         if matches!(v, Verdict::Pass) {
