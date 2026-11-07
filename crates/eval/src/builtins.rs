@@ -88,6 +88,14 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("sinh", "sinh(x)", "hyperbolic sine"),
     ("cosh", "cosh(x)", "hyperbolic cosine"),
     ("tanh", "tanh(x)", "hyperbolic tangent"),
+    ("asinh", "asinh(x)", "inverse hyperbolic sine"),
+    ("acosh", "acosh(x)", "inverse hyperbolic cosine"),
+    ("atanh", "atanh(x)", "inverse hyperbolic tangent"),
+    ("erf", "erf(x)", "error function, 2/sqrt(pi) times the integral of exp(-t**2) from 0 to x"),
+    ("sec", "sec(x)", "secant, 1/cos(x)"),
+    ("csc", "csc(x)", "cosecant, 1/sin(x)"),
+    ("cot", "cot(x)", "cotangent, cos(x)/sin(x)"),
+    ("atan2", "atan2(y, x)", "angle of the point (x, y), exact when it is a multiple of pi/4"),
     ("exp", "exp(x)", "e to the power x"),
     ("log", "log(x[, base])", "natural logarithm (or logarithm in a base)"),
     ("sqrt", "sqrt(x)", "square root; exact, e.g. sqrt(8) is 2*sqrt(2)"),
@@ -636,7 +644,27 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             })?;
             check_depth(it, out)
         }
-        "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "sinh" | "cosh" | "tanh" | "exp" | "sqrt" => unary_math(name, &a, it),
+        "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh" | "erf" | "exp" | "sqrt" => {
+            unary_math(name, &a, it)
+        }
+        "sec" | "csc" | "cot" => {
+            a.limits(name, 1, 1)?;
+            let (num, den) = match name {
+                "sec" => ("", "cos"),
+                "csc" => ("", "sin"),
+                _ => ("cos", "sin"),
+            };
+            let out = broadcast(a.get(0)?, &mut |e| {
+                let top = if num.is_empty() { Expr::one() } else { Expr::call(num, vec![e.clone()]) };
+                Ok(top.div(&Expr::call(den, vec![e.clone()])))
+            })?;
+            check_depth(it, out)
+        }
+        "atan2" => {
+            a.limits(name, 2, 2)?;
+            let (y, x) = (a.expr(0)?, a.expr(1)?);
+            Ok(Value::Expr(alg::atan2(&y, &x)?))
+        }
         "log" => {
             a.limits(name, 1, 2)?;
             let base = a.pos.get(1).map(Value::to_expr).transpose()?;
