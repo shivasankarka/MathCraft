@@ -12,6 +12,12 @@ mathcraft-core.workspace = true
 mathcraft-algebra.workspace = true
 mathcraft-syntax.workspace = true
 dashu.workspace = true
+faer = { workspace = true, optional = true }
+
+[features]
+# Fast dense float linear algebra (matrix product, det, inverse, solve) from faer. Off for builds that must stay small.
+default = ["fast-linalg"]
+fast-linalg = ["dep:faer"]
 
 [lints]
 workspace = true
