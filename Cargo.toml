@@ -1,0 +1,57 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/algebra", "crates/syntax", "crates/eval", "crates/typeset", "crates/notebook", "crates/vim", "apps/mathcraft-cli", "apps/mathcraft"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.97"
+publish = false
+
+[workspace.dependencies]
+# internal
+mathcraft-core = { path = "crates/core" }
+mathcraft-algebra = { path = "crates/algebra" }
+mathcraft-syntax = { path = "crates/syntax" }
+mathcraft-eval = { path = "crates/eval" }
+mathcraft-typeset = { path = "crates/typeset" }
+mathcraft-notebook = { path = "crates/notebook" }
+mathcraft-vim = { path = "crates/vim" }
+
+# external (licences checked in docs/research/crate-survey.md)
+dashu = "0.6"
+thiserror = "2"
+petgraph = "0.8"
+ruff_python_parser = "=0.0.21"
+ruff_python_ast = "=0.0.21"
+ruff_text_size = "=0.0.21"
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui = "0.37"
+egui_plot = "0.38"
+rfd = "0.17"
+egui_kittest = { version = "0.37", default-features = false, features = ["wgpu", "snapshot"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+indexing_slicing = "warn"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
