@@ -444,7 +444,8 @@ impl Expr {
                 }
             }
         }
-        if base.is_one() {
+        // 1 ** y is 1, unless y is itself undefined (1 ** (1/0) is not a number)
+        if base.is_one() && !exp.divides_by_zero() {
             return Expr::one();
         }
         // E ** log(x) == x
@@ -525,6 +526,15 @@ impl Expr {
             Kind::Pow(a, b) | Kind::Eq(a, b) => a.contains(needle) || b.contains(needle),
             Kind::Add(v) | Kind::Mul(v) | Kind::List(v) | Kind::Call(_, v) => v.iter().any(|x| x.contains(needle)),
             Kind::Num(_) | Kind::Sym(_) => false,
+        }
+    }
+
+    /// Whether a literal `0 ** negative` (a division by zero) appears anywhere inside.
+    pub fn divides_by_zero(&self) -> bool {
+        match self.kind() {
+            Kind::Pow(b, x) => (b.is_zero() && x.as_num().is_some_and(Num::is_negative)) || b.divides_by_zero() || x.divides_by_zero(),
+            Kind::Num(_) | Kind::Sym(_) => false,
+            _ => self.children().iter().any(Expr::divides_by_zero),
         }
     }
 
