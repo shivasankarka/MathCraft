@@ -46,10 +46,12 @@ silicon) only. The plan is in [PLAN.md](PLAN.md).
 
 ## Performance baseline (release build, M-series Mac, best of 3, includes process start)
 
-startup 10 ms; `expand((x+y+z)**30)` (496 terms) 23 ms; `expand((x+y+z+w)**20)` (1771 terms) 71 ms; sum of 200k squares
-53 ms; `fib(25)` recursive 129 ms; 12th derivative of `x**x*sin(x)` 41 ms; symbolic 7x7 determinant 33 ms; exact 12x12
-Hilbert inverse 5 ms. The interpreter is a tree walker with hash-map scopes and is roughly 4x slower than CPython on
-call-heavy loops (no benchmark of CPython was run here; this is an estimate from fib(25)). Algebra is the strength.
+startup 10 ms; `expand((x+y+z)**30)` (496 terms) 21 ms; `expand((x+y+z+w)**20)` (1771 terms) 65 ms; sum of 200k squares
+33 ms (was 53); `fib(25)` recursive 63 ms (was 129); 300k-iteration scalar loop 64 ms (was ~120); 12th derivative of `x**x*sin(x)` 45 ms; symbolic
+7x7 determinant 34 ms; exact 12x12 Hilbert inverse 4 ms. Gains came from: direct arithmetic on plain numbers instead of canonical
+sum/product building, a fast name hasher, shared parameter-name strings, in-place assignment, and cached small integers (-64..4096).
+The interpreter is still a tree walker with hash-map scopes, roughly 3x slower than CPython on scalar loops (CPython loop: 23 ms for
+the same 300k iterations); resolved variable slots or a bytecode step are the next lever. Algebra is the strength.
 
 ## Known gaps and limitations (be aware when testing)
 
