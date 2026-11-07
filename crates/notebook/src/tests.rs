@@ -194,7 +194,12 @@ fn kernel_thread_runs_jobs_and_can_be_interrupted() {
     kernel.run(jobs);
     loop {
         match kernel.events.recv_timeout(Duration::from_secs(10)).unwrap() {
-            crate::Event::Started(_) => kernel.interrupt(),
+            crate::Event::Started(_) => {
+                // let the loop really start: an interrupt that lands before the kernel's pre-run check cancels the
+                // cell without running it (Stale), which is also correct but not what this test is about
+                std::thread::sleep(Duration::from_millis(300));
+                kernel.interrupt();
+            }
             crate::Event::Finished(id, r) => {
                 nb.apply(id, r);
                 break;
