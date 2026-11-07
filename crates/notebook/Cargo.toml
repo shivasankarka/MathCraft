@@ -1,0 +1,17 @@
+[package]
+name = "mathcraft-notebook"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "MathCraft notebooks: cells, static analysis, dependency graph, reactive execution, kernel thread (L2)"
+
+[dependencies]
+mathcraft-core.workspace = true
+mathcraft-syntax.workspace = true
+mathcraft-eval.workspace = true
+petgraph.workspace = true
+
+[lints]
+workspace = true
