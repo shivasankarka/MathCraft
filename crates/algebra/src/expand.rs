@@ -8,15 +8,23 @@ pub const MAX_TERMS: usize = 100_000;
 
 pub fn expand(e: &Expr) -> MathResult<Expr> {
     guard(e)?;
+    // polynomials in plain symbols with integer coefficients take the sparse fast path
+    if let Some(r) = crate::sparse::expand(e)? {
+        return Ok(r);
+    }
+    expand_tree(e)
+}
+
+pub(crate) fn expand_tree(e: &Expr) -> MathResult<Expr> {
     match e.kind() {
         Kind::Num(_) | Kind::Sym(_) => Ok(e.clone()),
         Kind::Mul(fs) => {
-            let parts = fs.iter().map(expand).collect::<MathResult<Vec<_>>>()?;
+            let parts = fs.iter().map(expand_tree).collect::<MathResult<Vec<_>>>()?;
             distribute(&parts)
         }
         Kind::Pow(b, x) => {
-            let nb = expand(b)?;
-            let nx = expand(x)?;
+            let nb = expand_tree(b)?;
+            let nx = expand_tree(x)?;
             if let (Kind::Add(_), Some(n)) = (nb.kind(), nx.as_i64())
                 && n >= 2
             {
