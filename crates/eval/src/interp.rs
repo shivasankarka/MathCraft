@@ -4,7 +4,7 @@
 //! overlay (`top`); the overlay is committed only if the whole cell succeeds, so a failing cell leaves no half-done state.
 
 use crate::builtins::{self, Args};
-use crate::value::{EvalError, FuncBody, Function, R, Value, err};
+use crate::value::{EvalError, FastMap, FuncBody, Function, R, TopMap, Value, err};
 use dashu::integer::IBig;
 use mathcraft_algebra::linalg;
 use mathcraft_core::numeric::eval_f64;
@@ -27,13 +27,13 @@ enum Flow {
 }
 
 struct Frame {
-    locals: HashMap<String, Value>,
-    captured: HashMap<String, Value>,
+    locals: FastMap,
+    captured: Arc<FastMap>,
 }
 
 pub struct Interp<'g> {
     base: &'g HashMap<String, Value>,
-    pub(crate) top: HashMap<String, Value>,
+    pub(crate) top: TopMap,
     frames: Vec<Frame>,
     pub(crate) stdout: String,
     pub(crate) strict: bool,
@@ -51,7 +51,7 @@ pub struct Outcome {
 /// Run parsed statements against `globals`.
 pub fn run(globals: &mut HashMap<String, Value>, stmts: &[Stmt], strict: bool) -> Outcome {
     let (top, stdout, result) = {
-        let mut it = Interp { base: &*globals, top: HashMap::new(), frames: Vec::new(), stdout: String::new(), strict };
+        let mut it = Interp { base: &*globals, top: TopMap::default(), frames: Vec::new(), stdout: String::new(), strict };
         let result = it.run_top(stmts);
         (std::mem::take(&mut it.top), std::mem::take(&mut it.stdout), result)
     };
@@ -73,6 +73,9 @@ pub fn run_source(globals: &mut HashMap<String, Value>, source: &str, strict: bo
 }
 
 fn int_literal(s: &str) -> R<Expr> {
+    if let Ok(v) = s.parse::<i64>() {
+        return Ok(Expr::int(v));
+    }
     s.parse::<IBig>().map(Expr::big).map_err(|_| EvalError::new(format!("invalid integer literal {s}")))
 }
 
@@ -89,10 +92,21 @@ impl Interp<'_> {
     }
 
     fn set(&mut self, name: &str, v: Value) {
+        // overwrite in place when the name exists: no new key string per assignment in a loop
         match self.frames.last_mut() {
-            Some(fr) => fr.locals.insert(name.to_string(), v),
-            None => self.top.insert(name.to_string(), v),
-        };
+            Some(fr) => match fr.locals.get_mut(name) {
+                Some(slot) => *slot = v,
+                None => {
+                    fr.locals.insert(Arc::from(name), v);
+                }
+            },
+            None => match self.top.get_mut(name) {
+                Some(slot) => *slot = v,
+                None => {
+                    self.top.insert(name.to_string(), v);
+                }
+            },
+        }
     }
 
     fn eval_name(&mut self, name: &str) -> R<Value> {
@@ -246,10 +260,18 @@ impl Interp<'_> {
     fn make_function(&mut self, name: &str, params: &[Param], body: FuncBody) -> R<Value> {
         let defaults = params.iter().map(|p| p.default.as_ref().map(|d| self.eval(d)).transpose()).collect::<R<Vec<_>>>()?;
         let captured = match self.frames.last() {
-            Some(fr) => fr.captured.iter().chain(fr.locals.iter()).map(|(k, v)| (k.clone(), v.clone())).collect(),
-            None => HashMap::new(),
+            Some(fr) => Arc::new(fr.captured.iter().chain(fr.locals.iter()).map(|(k, v)| (k.clone(), v.clone())).collect()),
+            None => Arc::new(FastMap::default()),
         };
-        Ok(Value::Func(Arc::new(Function { name: name.to_string(), params: params.to_vec(), defaults, body, captured })))
+        Ok(Value::Func(Arc::new(Function {
+            name: name.to_string(),
+            keys: params.iter().map(|p| Arc::from(p.name.as_str())).collect(),
+            self_key: Arc::from(name),
+            params: params.to_vec(),
+            defaults,
+            body,
+            captured,
+        })))
     }
 
     // ---- expressions -------------------------------------------------------------------------------------------
@@ -337,10 +359,10 @@ impl Interp<'_> {
             }
             Ex::ListComp { elt, gens } => {
                 let captured = match self.frames.last() {
-                    Some(fr) => fr.captured.iter().chain(fr.locals.iter()).map(|(k, v)| (k.clone(), v.clone())).collect(),
-                    None => HashMap::new(),
+                    Some(fr) => Arc::new(fr.captured.iter().chain(fr.locals.iter()).map(|(k, v)| (k.clone(), v.clone())).collect()),
+                    None => Arc::new(FastMap::default()),
                 };
-                self.frames.push(Frame { locals: HashMap::new(), captured });
+                self.frames.push(Frame { locals: FastMap::default(), captured });
                 let mut out = Vec::new();
                 let r = self.comprehend(gens, elt, &mut out);
                 self.frames.pop();
@@ -498,13 +520,13 @@ impl Interp<'_> {
         if args.len() > f.params.len() {
             return err(format!("{}() takes {} argument(s) but {} were given", f.name, f.params.len(), args.len()));
         }
-        let mut locals: HashMap<String, Value> = HashMap::new();
+        let mut locals = FastMap::default();
         if f.name != "<lambda>" {
-            locals.insert(f.name.clone(), Value::Func(f.clone()));
+            locals.insert(f.self_key.clone(), Value::Func(f.clone()));
         }
         let mut positional = args.into_iter();
         let mut kwargs = kw;
-        for (p, default) in f.params.iter().zip(f.defaults.iter()) {
+        for ((p, default), key) in f.params.iter().zip(f.defaults.iter()).zip(&f.keys) {
             let value = if let Some(v) = positional.next() {
                 v
             } else if let Some(pos) = kwargs.iter().position(|(k, _)| *k == p.name) {
@@ -514,7 +536,7 @@ impl Interp<'_> {
             } else {
                 return err(format!("{}() is missing the argument '{}'", f.name, p.name));
             };
-            locals.insert(p.name.clone(), value);
+            locals.insert(key.clone(), value);
         }
         if let Some((k, _)) = kwargs.first() {
             return err(format!("{}() got an unexpected argument '{k}'", f.name));
@@ -592,6 +614,18 @@ impl Interp<'_> {
     }
 
     fn arith(&self, a: Expr, op: BinOp, b: Expr) -> R<Value> {
+        // Plain numbers: combine them directly instead of building and re-canonicalising a sum or product.
+        if let (Some(x), Some(y)) = (a.as_num(), b.as_num()) {
+            let fast = match op {
+                BinOp::Add => Some(x.add(y)),
+                BinOp::Sub => Some(x.add(&y.neg())),
+                BinOp::Mul => Some(x.mul(y)),
+                _ => None,
+            };
+            if let Some(n) = fast {
+                return self.checked(Expr::num(n));
+            }
+        }
         let r = match op {
             BinOp::Add => Expr::add(vec![a, b]),
             BinOp::Sub => a.sub(&b),
