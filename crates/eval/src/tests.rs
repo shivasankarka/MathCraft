@@ -349,3 +349,14 @@ fn f_strings_format_values() {
     assert!(ev("f'{[1]:.2f}'").contains("cannot format"));
     assert!(ev("f'{1:99999}'").contains("unsupported format spec"));
 }
+
+#[test]
+fn limits_with_variable_exponents_and_radicals() {
+    assert_eq!(ev("limit((1+x)**(1/x), x, 0)"), "E");
+    assert_eq!(ev("limit((1+1/x)**x, x, oo)"), "E");
+    assert_eq!(ev("limit(x*sin(1/x), x, oo)"), "1");
+    assert_eq!(ev("limit(exp(-1/x**2)/x**2, x, 0)"), "0");
+    assert_eq!(ev("limit(sqrt(x**2+x)-x, x, oo)"), "1/2");
+    // 1 ** (1/0) is not a number, so it must not quietly become 1
+    assert_ne!(ev("subs((1+x)**(1/x), x, 0)"), "1");
+}
