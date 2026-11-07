@@ -2,6 +2,7 @@
 //! app decides what the items are; this file does the matching and the drawing.
 
 use crate::fonts;
+use crate::icons;
 use crate::theme::{self, Theme};
 use eframe::egui::{self, Align2, Key, Modifiers, RichText, Sense, Stroke, vec2};
 
@@ -65,6 +66,22 @@ pub fn fuzzy(query: &str, text: &str) -> Option<i32> {
     None
 }
 
+/// The char positions in `text` that the query's letters land on, by the same left-to-right rule as [`fuzzy`].
+/// Empty when the query is empty or does not match.
+pub fn matched_chars(query: &str, text: &str) -> Vec<usize> {
+    let q: Vec<char> = query.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
+    let mut out = Vec::new();
+    let mut qi = 0;
+    for (i, c) in text.chars().enumerate() {
+        let Some(want) = q.get(qi) else { break };
+        if c.to_lowercase().eq(std::iter::once(*want)) {
+            out.push(i);
+            qi += 1;
+        }
+    }
+    if qi == q.len() { out } else { Vec::new() }
+}
+
 /// Indices into `items` that match the query, best first (original order when the query is empty).
 pub fn filter<T>(items: &[Item<T>], query: &str) -> Vec<usize> {
     let mut hits: Vec<(i32, usize)> =
@@ -106,24 +123,27 @@ pub fn show<T>(ctx: &egui::Context, theme: &Theme, state: &mut PaletteState, ite
     if enter {
         chosen = hits.get(state.selected).copied();
     }
-    let width = 560.0_f32.min(ctx.content_rect().width() - 32.0);
-    egui::Area::new(egui::Id::unique("palette")).anchor(Align2::CENTER_TOP, vec2(0.0, 70.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+    let width = 600.0_f32.min(ctx.content_rect().width() - 32.0);
+    egui::Area::new(egui::Id::unique("palette")).anchor(Align2::CENTER_TOP, vec2(0.0, 64.0)).order(egui::Order::Foreground).show(ctx, |ui| {
         egui::Frame::new()
             .fill(theme.surface)
-            .stroke(Stroke::new(1.0, theme.border_strong))
-            .corner_radius(theme::RADIUS_LARGE + 2)
-            .shadow(theme.popup_shadow())
-            .inner_margin(egui::Margin::same(8))
+            .stroke(Stroke::new(1.0, if theme.dark { theme.border_strong } else { theme.border }))
+            .corner_radius(theme::RADIUS_LARGE + 4)
+            .shadow(theme.window_shadow())
+            .inner_margin(egui::Margin::same(6))
             .show(ui, |ui| {
                 ui.set_width(width);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let field_top = ui.cursor().top();
                 let edit = ui.add(
                     egui::TextEdit::singleline(&mut state.query)
-                        .hint_text(RichText::new("Type a command or a file name").color(theme.text_faint))
-                        .font(egui::FontId::new(15.0, egui::FontFamily::Proportional))
-                        .frame(egui::Frame::NONE)
-                        .margin(egui::Margin::symmetric(8, 6))
+                        .hint_text(RichText::new("Search commands, files and functions").color(theme.text_faint))
+                        .font(egui::FontId::new(16.0, egui::FontFamily::Proportional))
+                        .frame(egui::Frame::NONE.inner_margin(egui::Margin { left: 34, right: 10, top: 10, bottom: 10 }))
                         .desired_width(f32::INFINITY),
                 );
+                let glass = egui::Rect::from_center_size(egui::pos2(ui.max_rect().left() + 19.0, (field_top + edit.rect.bottom()) / 2.0), vec2(15.0, 15.0));
+                icons::paint(ui.painter(), icons::Icon::Search, glass, theme.text_faint);
                 if state.fresh {
                     edit.request_focus();
                     state.fresh = false;
@@ -132,54 +152,74 @@ pub fn show<T>(ctx: &egui::Context, theme: &Theme, state: &mut PaletteState, ite
                     state.selected = 0;
                 }
                 let r = ui.max_rect();
-                ui.painter().hline(egui::Rangef::new(r.left() - 8.0, r.right() + 8.0), ui.cursor().top() + 2.0, Stroke::new(1.0, theme.separator));
+                ui.painter().hline(egui::Rangef::new(r.left() - 6.0, r.right() + 6.0), ui.cursor().top() + 0.5, Stroke::new(1.0, theme.separator_soft()));
                 ui.add_space(6.0);
                 if hits.is_empty() {
-                    ui.add_space(6.0);
-                    ui.label(RichText::new("No command matches").size(13.0).color(theme.text_dim));
-                    ui.add_space(4.0);
+                    ui.add_space(14.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(RichText::new(format!("Nothing matches “{}”", state.query.trim())).size(theme::TEXT_UI).color(theme.text_dim));
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("Try fewer letters, or the start of each word.").size(theme::TEXT_CAPTION).color(theme.text_faint));
+                    });
+                    ui.add_space(16.0);
                     return;
                 }
                 // keep the selected row in view when there are more matches than rows
                 let first = state.selected.saturating_sub(MAX_ROWS - 1);
-                for (row, idx) in hits.iter().enumerate().skip(first).take(MAX_ROWS) {
-                    let Some(item) = items.get(*idx) else { continue };
-                    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+                let shown: Vec<(usize, usize)> = hits.iter().copied().enumerate().skip(first).take(MAX_ROWS).collect();
+                // the group names form a column so the titles line up
+                let group_font = egui::FontId::new(theme::TEXT_SMALL, egui::FontFamily::Proportional);
+                let group_w = shown
+                    .iter()
+                    .filter_map(|(_, i)| items.get(*i))
+                    .map(|it| ui.painter().layout_no_wrap(it.group.to_owned(), group_font.clone(), theme.text_faint).size().x)
+                    .fold(0.0_f32, f32::max);
+                for (row, idx) in shown {
+                    let Some(item) = items.get(idx) else { continue };
+                    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), theme::ROW_LARGE), Sense::click());
                     let selected = row == state.selected;
+                    let p = ui.painter();
                     if selected {
-                        ui.painter().rect_filled(rect, theme::RADIUS, theme.surface_pressed);
+                        p.rect_filled(rect, theme::RADIUS, theme.selected_row());
                     } else if resp.hovered() {
-                        ui.painter().rect_filled(rect, theme::RADIUS, theme.surface_hover);
+                        p.rect_filled(rect, theme::RADIUS, theme.surface_hover);
                     }
                     let mid = rect.center().y;
                     let mut x = rect.left() + 10.0;
-                    if !item.group.is_empty() {
-                        let g = ui.painter().layout_no_wrap(item.group.to_owned(), egui::FontId::new(12.0, egui::FontFamily::Proportional), theme.text_faint);
-                        let w = g.size().x;
-                        ui.painter().galley(egui::pos2(x, mid - g.size().y / 2.0), g, theme.text_faint);
-                        x += w + 8.0;
-                    }
-                    let font = egui::FontId::new(13.5, if selected { fonts::strong_family() } else { egui::FontFamily::Proportional });
-                    ui.painter().text(egui::pos2(x, mid), Align2::LEFT_CENTER, &item.title, font, theme.text);
-                    if !item.detail.is_empty() {
-                        ui.painter().text(
-                            egui::pos2(rect.right() - 10.0, mid),
-                            Align2::RIGHT_CENTER,
-                            &item.detail,
-                            egui::FontId::new(12.0, egui::FontFamily::Proportional),
-                            theme.text_faint,
+                    if group_w > 0.0 {
+                        p.text(
+                            egui::pos2(x, mid),
+                            Align2::LEFT_CENTER,
+                            item.group,
+                            group_font.clone(),
+                            if selected { theme.text_dim } else { theme.text_faint },
                         );
+                        x += group_w + 14.0;
                     }
+                    let keys_w = if item.detail.is_empty() { 0.0 } else { icons::keycaps(p, theme, egui::pos2(rect.right() - 8.0, mid), &item.detail) + 16.0 };
+                    let title = title_job(theme, &item.title, &matched_title(&state.query, item), selected);
+                    let galley = ui.fonts_mut(|f| f.layout_job(title));
+                    let room = egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(rect.right() - 8.0 - keys_w, rect.bottom()));
+                    ui.painter().with_clip_rect(room.intersect(ui.clip_rect())).galley(egui::pos2(x, mid - galley.size().y / 2.0), galley, theme.text);
                     if resp.hovered() && ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
                         state.selected = row;
                     }
                     if resp.clicked() {
-                        chosen = Some(*idx);
+                        chosen = Some(idx);
                     }
                 }
+                ui.add_space(4.0);
                 if hits.len() > MAX_ROWS {
-                    ui.add_space(2.0);
-                    ui.label(RichText::new(format!("{} more: keep typing to narrow down", hits.len() - MAX_ROWS)).size(11.5).color(theme.text_faint));
+                    ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+                        let more = hits.len() - MAX_ROWS;
+                        ui.label(
+                            RichText::new(format!("{more} more {}. Keep typing to narrow the list.", if more == 1 { "match" } else { "matches" }))
+                                .size(theme::TEXT_CAPTION)
+                                .color(theme.text_faint),
+                        );
+                    });
+                    ui.add_space(4.0);
                 }
             });
     });
@@ -187,6 +227,41 @@ pub fn show<T>(ctx: &egui::Context, theme: &Theme, state: &mut PaletteState, ite
         state.open = false;
     }
     chosen
+}
+
+/// Where the query's letters fall in the title: in the title alone when they all fit there; otherwise the query
+/// matched "group title" (as the search does), with letters that land in the group dropped.
+fn matched_title<T>(query: &str, item: &Item<T>) -> Vec<usize> {
+    let own = matched_chars(query, &item.title);
+    if !own.is_empty() {
+        return own;
+    }
+    let offset = item.group.chars().count() + 1;
+    matched_chars(query, &format!("{} {}", item.group, item.title)).into_iter().filter_map(|i| i.checked_sub(offset)).collect()
+}
+
+/// The title with matched letters in the strong weight and full text colour; the rest regular.
+fn title_job(theme: &Theme, title: &str, matched: &[usize], selected: bool) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let plain = egui::TextFormat::simple(
+        egui::FontId::new(theme::TEXT_UI + 0.5, egui::FontFamily::Proportional),
+        if selected || matched.is_empty() { theme.text } else { theme.text_dim },
+    );
+    let hit = egui::TextFormat::simple(egui::FontId::new(theme::TEXT_UI + 0.5, fonts::strong_family()), theme.text);
+    let mut buf = String::new();
+    let mut buf_hit = false;
+    for (i, c) in title.chars().enumerate() {
+        let is_hit = matched.contains(&i);
+        if is_hit != buf_hit && !buf.is_empty() {
+            job.append(&std::mem::take(&mut buf), 0.0, if buf_hit { hit.clone() } else { plain.clone() });
+        }
+        buf_hit = is_hit;
+        buf.push(c);
+    }
+    if !buf.is_empty() {
+        job.append(&buf, 0.0, if buf_hit { hit } else { plain });
+    }
+    job
 }
 
 #[cfg(test)]
@@ -215,6 +290,17 @@ mod tests {
         assert_eq!(order("ts").first().map(String::as_str), Some("Toggle sidebar"), "word starts count");
         assert_eq!(order("").len(), 5, "an empty query lists everything in order");
         assert!(order("zzz").is_empty());
+    }
+
+    #[test]
+    fn matched_letters_are_found_in_the_title() {
+        assert_eq!(matched_chars("ra", "Run all"), vec![0, 4]);
+        assert!(matched_chars("zz", "Run all").is_empty());
+        let it = Item { title: "Save".to_owned(), detail: String::new(), group: "File", payload: 0 };
+        assert_eq!(matched_title("sa", &it), vec![0, 1]);
+        assert_eq!(matched_title("fsa", &it), vec![0, 1], "letters in the group are not marked in the title");
+        let it = Item { title: "Strict names".to_owned(), detail: String::new(), group: "Settings", payload: 0 };
+        assert_eq!(matched_title("sa", &it), vec![0, 8], "the title alone is preferred");
     }
 
     #[test]
