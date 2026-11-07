@@ -289,12 +289,7 @@ impl Lower<'_> {
                 Ex::Call { func: boxed(&c.func)?, args: many(&c.arguments.args)?, kwargs }
             }
             py::Expr::Attribute(a) => Ex::Attr(boxed(&a.value)?, a.attr.to_string()),
-            py::Expr::Subscript(s) => {
-                if matches!(*s.slice, py::Expr::Slice(_)) {
-                    return self.err(e, "slices are not supported yet; use a single index");
-                }
-                Ex::Index(boxed(&s.value)?, boxed(&s.slice)?)
-            }
+            py::Expr::Subscript(s) => Ex::Index(boxed(&s.value)?, boxed(&s.slice)?),
             py::Expr::List(l) => Ex::List(many(&l.elts)?),
             py::Expr::Tuple(t) => Ex::Tuple(many(&t.elts)?),
             py::Expr::Lambda(l) => Ex::Lambda { params: self.params(l.parameters.as_deref(), e, d)?, body: boxed(&l.body)? },
@@ -309,14 +304,66 @@ impl Lower<'_> {
                 }
                 Ex::ListComp { elt: boxed(&c.elt)?, gens }
             }
-            py::Expr::FString(_) => return self.err(e, "f-strings are not supported yet"),
+            py::Expr::FString(f) => {
+                let mut out: Option<Ex> = None;
+                let mut push = |part: Ex| {
+                    out = Some(match out.take() {
+                        None => part,
+                        Some(acc) => Ex::Bin(Box::new(acc), BinOp::Add, Box::new(part)),
+                    });
+                };
+                for part in &f.value {
+                    let fs = match part {
+                        py::FStringPartRef::Literal(l) => {
+                            push(Ex::Str(l.value.to_string()));
+                            continue;
+                        }
+                        py::FStringPartRef::FString(fs) => fs,
+                    };
+                    for el in &fs.elements {
+                        match el {
+                            py::InterpolatedStringElement::Literal(l) => push(Ex::Str(l.value.to_string())),
+                            py::InterpolatedStringElement::Interpolation(i) => {
+                                if i.debug_text.is_some() {
+                                    return self.err(e, "`{x=}` in f-strings is not supported; write the name yourself");
+                                }
+                                let mut value = self.expr(&i.expression, d)?;
+                                if matches!(i.conversion, py::ConversionFlag::Repr | py::ConversionFlag::Ascii) {
+                                    value = Ex::Call { func: Box::new(Ex::Name("repr".into())), args: vec![value], kwargs: vec![] };
+                                }
+                                let mut spec = Ex::Str(String::new());
+                                if let Some(fs) = &i.format_spec {
+                                    let mut parts = Vec::new();
+                                    for el in &fs.elements {
+                                        match el {
+                                            py::InterpolatedStringElement::Literal(l) => parts.push(Ex::Str(l.value.to_string())),
+                                            py::InterpolatedStringElement::Interpolation(n) => {
+                                                let inner = self.expr(&n.expression, d)?;
+                                                parts.push(Ex::Call { func: Box::new(Ex::Name("str".into())), args: vec![inner], kwargs: vec![] });
+                                            }
+                                        }
+                                    }
+                                    if let Some(first) = parts.into_iter().reduce(|a, b| Ex::Bin(Box::new(a), BinOp::Add, Box::new(b))) {
+                                        spec = first;
+                                    }
+                                }
+                                push(Ex::Call { func: Box::new(Ex::Name("format".into())), args: vec![value, spec], kwargs: vec![] });
+                            }
+                        }
+                    }
+                }
+                out.unwrap_or_else(|| Ex::Str(String::new()))
+            }
             py::Expr::Dict(_) | py::Expr::Set(_) | py::Expr::DictComp(_) | py::Expr::SetComp(_) => {
                 return self.err(e, "dictionaries and sets are not supported yet; use lists");
             }
             py::Expr::Generator(_) => return self.err(e, "generator expressions are not supported yet; use a list comprehension [...]"),
             py::Expr::Named(_) => return self.err(e, "the `:=` operator is not supported"),
             py::Expr::Starred(_) => return self.err(e, "`*` unpacking is not supported yet"),
-            py::Expr::Slice(_) => return self.err(e, "slices are not supported yet"),
+            py::Expr::Slice(s) => {
+                let part = |x: &Option<Box<py::Expr>>| -> Result<Option<Box<Ex>>, SyntaxError> { x.as_deref().map(boxed).transpose() };
+                Ex::Slice(part(&s.lower)?, part(&s.upper)?, part(&s.step)?)
+            }
             _ => return self.err(e, "this kind of expression is not supported yet"),
         })
     }
@@ -363,6 +410,14 @@ mod tests {
         assert_eq!(e.line, 2);
         assert!(e.message.contains("classes"));
         assert!(parse("import numpy").unwrap_err().message.contains("imports"));
+        assert!(parse("x = {1: 2}").unwrap_err().message.contains("dictionaries"));
+    }
+
+    #[test]
+    fn slices_and_f_strings_lower() {
+        assert!(matches!(first("a[1:2]"), StmtKind::Expr(Ex::Index(_, i)) if matches!(*i, Ex::Slice(Some(_), Some(_), None))));
+        assert!(matches!(first("a[::-1]"), StmtKind::Expr(Ex::Index(_, i)) if matches!(*i, Ex::Slice(None, None, Some(_)))));
+        assert!(matches!(first("f'a{x}b'"), StmtKind::Expr(Ex::Bin(..))));
     }
 
     #[test]
