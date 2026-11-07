@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub vim: bool,
+    /// Draw powers as superscripts in notebook cells.
+    pub pretty_powers: bool,
     pub appearance: ThemePreference,
     /// A preset name (`purple`) or a `#rrggbb` colour; `None` keeps the theme's own accent.
     pub accent: Option<String>,
@@ -17,7 +19,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { vim: false, appearance: ThemePreference::System, accent: None }
+        Settings { vim: false, pretty_powers: true, appearance: ThemePreference::System, accent: None }
     }
 }
 
@@ -39,6 +41,9 @@ impl Settings {
         if let Some(Value::Bool(v)) = m.get("vim") {
             s.vim = *v;
         }
+        if let Some(Value::Bool(v)) = m.get("pretty_powers") {
+            s.pretty_powers = *v;
+        }
         s.appearance = match m.get("appearance").and_then(Value::as_str) {
             Some("light") => ThemePreference::Light,
             Some("dark") => ThemePreference::Dark,
@@ -56,6 +61,7 @@ impl Settings {
         };
         let mut m = Map::new();
         m.insert("vim".into(), json!(self.vim));
+        m.insert("pretty_powers".into(), json!(self.pretty_powers));
         m.insert("appearance".into(), json!(appearance));
         if let Some(a) = &self.accent {
             m.insert("accent".into(), json!(a));
@@ -129,7 +135,7 @@ mod tests {
 
     #[test]
     fn round_trips_and_ignores_junk() {
-        let s = Settings { vim: true, appearance: ThemePreference::Dark, accent: Some("purple".into()) };
+        let s = Settings { vim: true, pretty_powers: false, appearance: ThemePreference::Dark, accent: Some("purple".into()) };
         assert_eq!(Settings::parse(&s.to_json()), s);
         assert_eq!(Settings::parse("not json"), Settings::default());
         assert_eq!(Settings::parse(r##"{"vim": 3, "appearance": "sepia", "accent": "#12"}"##), Settings::default());

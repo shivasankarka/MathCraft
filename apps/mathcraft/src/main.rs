@@ -73,6 +73,7 @@ enum Cmd {
     Functions,
     Theme(ThemePreference),
     ToggleVim,
+    TogglePretty,
     Accent(Option<&'static str>),
     ReloadTheme,
     ToggleStrict,
@@ -114,6 +115,7 @@ struct App {
     show_sidebar: bool,
     /// Vim keys in editors (Settings), and the status text of the focused editor ("NORMAL", ":wq", ...).
     vim: bool,
+    pretty: bool,
     vim_status: String,
     palette: PaletteState,
     /// The toolbar is also the window's title bar (macOS, real window only): leave room for the window buttons.
@@ -140,6 +142,7 @@ impl App {
     fn load_settings(&mut self, dir: Option<PathBuf>) {
         let s = dir.as_deref().map(settings::Settings::load).unwrap_or_default();
         self.vim = self.vim || s.vim;
+        self.pretty = s.pretty_powers;
         self.ctx.set_theme(s.appearance);
         self.accent = s.accent.clone();
         self.config = dir;
@@ -156,7 +159,7 @@ impl App {
     }
 
     fn current_settings(&self) -> settings::Settings {
-        settings::Settings { vim: self.vim, appearance: self.ctx.options(|o| o.theme_preference), accent: self.accent.clone() }
+        settings::Settings { vim: self.vim, pretty_powers: self.pretty, appearance: self.ctx.options(|o| o.theme_preference), accent: self.accent.clone() }
     }
 
     /// Save the settings when one changed since the last save.
@@ -209,6 +212,7 @@ impl App {
             collapsed: HashSet::new(),
             show_sidebar,
             vim: std::env::var_os("MATHCRAFT_VIM").is_some_and(|v| v == "1"),
+            pretty: true,
             vim_status: String::new(),
             palette: PaletteState::default(),
             unified_title_bar: false,
@@ -369,6 +373,7 @@ impl App {
             item("Theme", "Light", String::new(), Cmd::Theme(ThemePreference::Light)),
             item("Theme", "Dark", String::new(), Cmd::Theme(ThemePreference::Dark)),
             item("Accent colour", "Blue (default)", String::new(), Cmd::Accent(None)),
+            item("Settings", &format!("Powers as superscripts in cells ({})", on(self.pretty)), String::new(), Cmd::TogglePretty),
             item("Settings", &format!("Vim keys ({})", on(self.vim)), String::new(), Cmd::ToggleVim),
             item("Settings", &format!("Strict names ({})", on(self.cur.nb.strict)), String::new(), Cmd::ToggleStrict),
             item("Cell", "Add a code cell", String::new(), Cmd::AddCell(CellKind::Code)),
@@ -423,6 +428,7 @@ impl App {
             Cmd::Functions => self.show_help = true,
             Cmd::Theme(t) => ctx.set_theme(t),
             Cmd::ToggleVim => self.vim = !self.vim,
+            Cmd::TogglePretty => self.pretty = !self.pretty,
             Cmd::Accent(name) => {
                 self.accent = name.map(str::to_owned);
                 self.rebuild_themes();
@@ -983,6 +989,7 @@ impl App {
                         names: &names,
                         actions: &mut actions,
                         vim: self.vim,
+                        pretty: self.pretty,
                         vim_status: &mut self.vim_status,
                     };
                     text_view::results(ui, &mut env, &self.cur.nb, active);
@@ -1018,6 +1025,7 @@ impl App {
                                 names: &names,
                                 actions: &mut actions,
                                 vim: self.vim,
+                                pretty: self.pretty,
                                 vim_status: &mut self.vim_status,
                             };
                             for (i, cell) in self.cur.nb.cells().iter().enumerate() {
@@ -1086,6 +1094,8 @@ struct Env<'a> {
     actions: &'a mut Vec<Action>,
     /// Vim keys are on; the focused editor writes its mode here for the status bar.
     vim: bool,
+    /// Powers are drawn as superscripts while editing (notebook view).
+    pretty: bool,
     vim_status: &'a mut String,
 }
 
@@ -1444,7 +1454,7 @@ fn editor(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, code: bool) -> bool {
     let plain = theme.text;
     let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
         let mut job = if code {
-            highlight::highlight(buf.as_str(), font.clone(), &syntax)
+            highlight::highlight(buf.as_str(), font.clone(), &syntax, env.pretty)
         } else {
             egui::text::LayoutJob::simple(buf.as_str().to_owned(), font.clone(), plain, wrap_width)
         };
@@ -2327,6 +2337,24 @@ mod tests {
             h.run_steps(4);
             h.render().unwrap().save(dir.join(format!("completion-{name}.png"))).unwrap();
         }
+    }
+
+    #[test]
+    #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
+    fn powers_screenshot() {
+        let Some(dir) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = egui_kittest::Harness::builder()
+            .wgpu()
+            .with_size(vec2(760.0, 300.0))
+            .build_ui_state(|ui, app: &mut Option<App>| app.get_or_insert_with(|| App::with_context(ui.ctx().clone(), None)).show(ui), None);
+        h.ctx.set_theme(ThemePreference::Light);
+        h.run_steps(4);
+        if let Some(app) = h.state_mut() {
+            app.replace_notebook(Notebook::from_text("# %%\nf = x**2 + 3*y^3 - (a+b)**(n+1)\ndiff(f, x) / e^-x + 2**10\n"), None);
+        }
+        h.run_steps(6);
+        h.render().unwrap().save(dir.join("powers.png")).unwrap();
     }
 
     /// `MATHCRAFT_SHOTS=<dir>` is set: `MATHCRAFT_SHOTS=/tmp/shots cargo test -p mathcraft screenshots -- --ignored`.
