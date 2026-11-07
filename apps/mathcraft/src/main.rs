@@ -45,10 +45,7 @@ fn main() -> eframe::Result {
     if let Ok(icon) = eframe::icon_data::from_png_bytes(APP_ICON) {
         window = window.with_icon(icon);
     }
-    let options = eframe::NativeOptions {
-        viewport: unified_title_bar(window),
-        ..Default::default()
-    };
+    let options = eframe::NativeOptions { viewport: unified_title_bar(window), ..Default::default() };
     eframe::run_native("MathCraft", options, Box::new(move |cc| Ok(Box::new(App::new(cc, path)))))
 }
 
@@ -1666,12 +1663,7 @@ fn value_math(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, v: &Value) {
             } else {
                 math_view::show(ui, &layout, theme, math_view::SIZE)
             };
-            resp.context_menu(|ui| {
-                if ui.button("Copy as text").clicked() {
-                    ui.ctx().copy_text(v.to_string());
-                    ui.close();
-                }
-            });
+            resp.context_menu(|ui| copy_as_menu(ui, v));
         }
         None => match v {
             Value::Str(s) => {
@@ -1682,6 +1674,31 @@ fn value_math(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, v: &Value) {
             }
         },
     }
+}
+
+/// The ways a result can leave MathCraft, each with the text to copy (`None` when this value has no such form).
+fn copy_formats(v: &Value) -> Vec<(&'static str, Option<String>)> {
+    use mathcraft_core::codegen::{Target, expression};
+    let code = |target| match v {
+        Value::Expr(e) => expression(e, target).ok(),
+        _ => None,
+    };
+    vec![("Text", Some(v.to_string())), ("LaTeX", v.latex()), ("Python", code(Target::Python)), ("NumPy", code(Target::NumPy)), ("Rust", code(Target::Rust))]
+}
+
+/// The output's context menu: copy the value as text, LaTeX or source code in another language.
+fn copy_as_menu(ui: &mut egui::Ui, v: &Value) {
+    ui.menu_button("Copy as", |ui| {
+        for (label, text) in copy_formats(v) {
+            let enabled = text.is_some();
+            if ui.add_enabled(enabled, egui::Button::new(label)).clicked()
+                && let Some(text) = text
+            {
+                ui.ctx().copy_text(text);
+                ui.close();
+            }
+        }
+    });
 }
 
 fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::PlotSpec) {
@@ -1738,6 +1755,20 @@ mod tests {
     use super::*;
     use egui_kittest::kittest::Queryable;
     use std::time::Instant;
+
+    #[test]
+    fn results_can_be_copied_in_several_formats() {
+        use mathcraft_core::Expr;
+        let e = Value::from_expr(Expr::pow(&Expr::sym("x"), &Expr::int(2)));
+        let formats: Vec<_> = copy_formats(&e).into_iter().collect();
+        let get = |name: &str| formats.iter().find(|(n, _)| *n == name).and_then(|(_, t)| t.clone());
+        assert_eq!(get("Text").as_deref(), Some("x**2"));
+        assert_eq!(get("LaTeX").as_deref(), Some("x^{2}"));
+        assert_eq!(get("Python").as_deref(), Some("x**2"));
+        assert_eq!(get("Rust").as_deref(), Some("x.powi(2)"));
+        // a string has no LaTeX or code form
+        assert!(copy_formats(&Value::Str("hi".into())).iter().filter(|(n, _)| *n != "Text").all(|(_, t)| t.is_none()));
+    }
 
     #[test]
     fn tick_labels_are_short() {
