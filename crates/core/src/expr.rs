@@ -435,6 +435,10 @@ impl Expr {
             } else {
                 match base.kind() {
                     Kind::Pow(b2, e2) if en.is_integer() && en.is_exact() => return Expr::pow(b2, &Expr::mul(vec![e2.clone(), exp.clone()])),
+                    // exp(a) is positive for real a, so any power of it just scales the exponent: sqrt(exp(4)) = exp(2)
+                    Kind::Pow(b2, e2) if b2.as_sym() == Some(SYM_E) && e2.as_num().is_some_and(Num::is_exact) && en.is_exact() => {
+                        return Expr::pow(b2, &Expr::mul(vec![e2.clone(), exp.clone()]));
+                    }
                     Kind::Mul(fs) if en.is_integer() && en.is_exact() => return Expr::mul(fs.iter().map(|f| Expr::pow(f, exp)).collect()),
                     _ => {}
                 }
@@ -450,6 +454,17 @@ impl Expr {
             && let [x] = args.as_slice()
         {
             return x.clone();
+        }
+        // E ** (c * log(a)) == a ** c for a number c: exp(3*log(2)) = 8
+        if base.as_sym() == Some(SYM_E)
+            && let (c, rest) = exp.split_coeff()
+            && c.is_exact()
+            && !c.is_one()
+            && let Kind::Call(name, args) = rest.kind()
+            && &**name == "log"
+            && let [a] = args.as_slice()
+        {
+            return Expr::pow(a, &Expr::num(c));
         }
         Expr::raw(Kind::Pow(base.clone(), exp.clone()))
     }

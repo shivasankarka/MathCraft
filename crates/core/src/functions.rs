@@ -198,6 +198,9 @@ mod tests {
         assert_eq!(Expr::call("exp", vec![Expr::call("log", vec![x()])]), x());
         assert_eq!(Expr::mul(vec![ex.clone(), ex]).to_string(), "exp(2*x)");
         assert_eq!(Expr::call("log", vec![Expr::e()]), Expr::one());
+        // exp(c*log(a)) is a power; powers of exp(number) scale the exponent
+        assert_eq!(Expr::call("exp", vec![Expr::mul(vec![Expr::int(3), Expr::call("log", vec![Expr::int(2)])])]), Expr::int(8));
+        assert_eq!(Expr::pow(&Expr::call("exp", vec![Expr::int(4)]), &Expr::half()).to_string(), "exp(2)");
     }
 
     #[test]
