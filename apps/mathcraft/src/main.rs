@@ -1,0 +1,1459 @@
+//! MathCraft desktop app: a reactive symbolic-math notebook (egui).
+//!
+//! The UI is a thin client: the notebook model, dependency analysis and scheduling live in `mathcraft-notebook`,
+//! and computation runs on its kernel thread, so the window never blocks.
+
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+mod complete;
+mod fonts;
+mod highlight;
+mod icons;
+mod markdown;
+mod math_view;
+mod theme;
+
+use eframe::egui::{self, Color32, Key, Margin, Modifiers, RichText, Stroke, TextStyle, ThemePreference, vec2};
+use egui::text_selection::CCursorRange;
+use icons::Icon;
+use math_view::MathCache;
+use mathcraft_eval::{DOCS, Value};
+use mathcraft_notebook::{Cell, CellId, CellKind, CellState, Event, Kernel, Notebook, RunMode, RunRequest};
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::time::Duration;
+use theme::Theme;
+
+const WELCOME: &str = include_str!("welcome.py");
+
+fn main() -> eframe::Result {
+    let path = std::env::args().nth(1).map(PathBuf::from);
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([1060.0, 840.0]).with_min_inner_size([520.0, 380.0]).with_title("MathCraft"),
+        ..Default::default()
+    };
+    eframe::run_native("MathCraft", options, Box::new(move |cc| Ok(Box::new(App::new(cc, path)))))
+}
+
+enum Action {
+    SetSource(CellId, String),
+    Run(CellId),
+    /// Run, then move to the next cell (adding one at the end).
+    RunAndAdvance(CellId),
+    AddAfter(Option<CellId>, CellKind),
+    Delete(CellId),
+    Move(CellId, isize),
+}
+
+struct App {
+    nb: Notebook,
+    kernel: Kernel,
+    ctx: egui::Context,
+    path: Option<PathBuf>,
+    dirty: bool,
+    focus: Option<CellId>,
+    editing_md: HashSet<CellId>,
+    show_help: bool,
+    help_filter: String,
+    status: String,
+    last_title: String,
+    dark: Theme,
+    light: Theme,
+    math: MathCache,
+    /// How many times each cell's output has been replaced; invalidates its cached typeset layout.
+    generations: HashMap<CellId, u64>,
+}
+
+impl App {
+    fn new(cc: &eframe::CreationContext<'_>, path: Option<PathBuf>) -> Self {
+        Self::with_context(cc.egui_ctx.clone(), path)
+    }
+
+    fn with_context(ctx: egui::Context, path: Option<PathBuf>) -> Self {
+        fonts::install(&ctx);
+        let (dark, light) = (Theme::dark(), Theme::light());
+        dark.apply(&ctx);
+        light.apply(&ctx);
+        configure_style(&ctx);
+        let kernel = spawn_kernel(&ctx);
+        let (nb, status) = match &path {
+            Some(p) => match std::fs::read_to_string(p) {
+                Ok(t) => (Notebook::from_text(&t), format!("Opened {}", file_name(p))),
+                Err(e) => (Notebook::from_text(WELCOME), format!("Could not read {}: {e}", file_name(p))),
+            },
+            None => (Notebook::from_text(WELCOME), String::new()),
+        };
+        let mut app = App {
+            nb,
+            kernel,
+            ctx,
+            path,
+            dirty: false,
+            focus: None,
+            editing_md: HashSet::new(),
+            show_help: false,
+            help_filter: String::new(),
+            status,
+            last_title: String::new(),
+            dark,
+            light,
+            math: MathCache::default(),
+            generations: HashMap::new(),
+        };
+        app.run(RunRequest::All);
+        app
+    }
+
+    fn run(&mut self, req: RunRequest) {
+        let jobs = self.nb.plan(req);
+        if !jobs.is_empty() {
+            self.kernel.run(jobs);
+        }
+    }
+
+    fn poll_kernel(&mut self) {
+        while let Ok(ev) = self.kernel.events.try_recv() {
+            match ev {
+                Event::Started(id) => self.nb.mark_running(id),
+                Event::Finished(id, r) => {
+                    *self.generations.entry(id).or_default() += 1;
+                    self.nb.apply(id, r);
+                }
+                Event::Reset => self.nb.mark_all_stale(),
+            }
+        }
+    }
+
+    fn busy(&self) -> bool {
+        self.nb.cells().iter().any(|c| matches!(c.state, CellState::Running | CellState::Queued))
+    }
+
+    fn replace_notebook(&mut self, nb: Notebook, path: Option<PathBuf>) {
+        // A new kernel: the old one's variables and queued work belong to the old notebook.
+        self.kernel = spawn_kernel(&self.ctx);
+        self.nb = nb;
+        self.path = path;
+        self.dirty = false;
+        self.editing_md.clear();
+        self.math.clear();
+        self.generations.clear();
+        self.run(RunRequest::All);
+    }
+
+    fn confirm_discard(&self) -> bool {
+        !self.dirty
+            || rfd::MessageDialog::new()
+                .set_title("Unsaved changes")
+                .set_description("This notebook has unsaved changes. Discard them?")
+                .set_buttons(rfd::MessageButtons::YesNo)
+                .show()
+                == rfd::MessageDialogResult::Yes
+    }
+
+    fn new_file(&mut self) {
+        if self.confirm_discard() {
+            let mut nb = Notebook::new();
+            nb.add_cell(None, CellKind::Code, "");
+            self.replace_notebook(nb, None);
+            self.status = "New notebook".into();
+        }
+    }
+
+    fn open_file(&mut self) {
+        if !self.confirm_discard() {
+            return;
+        }
+        let Some(p) = rfd::FileDialog::new().add_filter("MathCraft notebook or script", &["py", "txt"]).pick_file() else { return };
+        match std::fs::read_to_string(&p) {
+            Ok(t) => {
+                self.status = format!("Opened {}", file_name(&p));
+                self.replace_notebook(Notebook::from_text(&t), Some(p));
+            }
+            Err(e) => self.status = format!("Could not open {}: {e}", file_name(&p)),
+        }
+    }
+
+    fn save(&mut self, as_new: bool) {
+        let target = match (&self.path, as_new) {
+            (Some(p), false) => p.clone(),
+            _ => match rfd::FileDialog::new().add_filter("MathCraft notebook", &["py"]).set_file_name("notebook.py").save_file() {
+                Some(p) => p,
+                None => return,
+            },
+        };
+        // Write beside the target, then rename, so a crash never leaves half a file.
+        let tmp = target.with_extension("py.tmp");
+        let result = std::fs::write(&tmp, self.nb.to_text()).and_then(|()| std::fs::rename(&tmp, &target));
+        match result {
+            Ok(()) => {
+                self.status = format!("Saved {}", file_name(&target));
+                self.path = Some(target);
+                self.dirty = false;
+            }
+            Err(e) => self.status = format!("Could not save: {e}"),
+        }
+    }
+
+    fn apply(&mut self, actions: Vec<Action>) {
+        for a in actions {
+            match a {
+                Action::SetSource(id, text) => {
+                    self.nb.set_source(id, &text);
+                    self.dirty = true;
+                }
+                Action::Run(id) => self.run(RunRequest::Cell(id)),
+                Action::RunAndAdvance(id) => {
+                    self.run(RunRequest::Cell(id));
+                    let next = self.nb.index_of(id).and_then(|i| self.nb.cells().get(i + 1)).map(|c| c.id);
+                    let target = match next {
+                        Some(n) => n,
+                        None => {
+                            self.dirty = true;
+                            self.nb.add_cell(Some(id), CellKind::Code, "")
+                        }
+                    };
+                    self.focus = Some(target);
+                }
+                Action::AddAfter(after, kind) => {
+                    let id = self.nb.add_cell(after, kind, "");
+                    if kind == CellKind::Markdown {
+                        self.editing_md.insert(id);
+                    }
+                    self.focus = Some(id);
+                    self.dirty = true;
+                }
+                Action::Delete(id) => {
+                    self.nb.delete_cell(id);
+                    self.kernel.forget_cell(id);
+                    self.dirty = true;
+                    if self.nb.cells().is_empty() {
+                        self.nb.add_cell(None, CellKind::Code, "");
+                    }
+                }
+                Action::Move(id, delta) => {
+                    self.nb.move_cell(id, delta);
+                    self.dirty = true;
+                }
+            }
+        }
+    }
+
+    fn shortcuts(&mut self, ctx: &egui::Context) {
+        let (save, open, new, run_all, interrupt, help) = ctx.input_mut(|i| {
+            (
+                i.consume_key(Modifiers::COMMAND, Key::S),
+                i.consume_key(Modifiers::COMMAND, Key::O),
+                i.consume_key(Modifiers::COMMAND, Key::N),
+                i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter),
+                i.consume_key(Modifiers::COMMAND, Key::Period),
+                i.consume_key(Modifiers::NONE, Key::F1),
+            )
+        });
+        if save {
+            self.save(false);
+        }
+        if open {
+            self.open_file();
+        }
+        if new {
+            self.new_file();
+        }
+        if run_all {
+            self.run(RunRequest::All);
+        }
+        if interrupt {
+            self.kernel.interrupt();
+        }
+        if help {
+            self.show_help = !self.show_help;
+        }
+    }
+
+    fn shortcut(ctx: &egui::Context, mods: Modifiers, key: Key) -> String {
+        ctx.format_shortcut(&egui::KeyboardShortcut::new(mods, key))
+    }
+
+    fn menu_item(ui: &mut egui::Ui, ctx: &egui::Context, label: &str, keys: Option<(Modifiers, Key)>) -> bool {
+        let mut b = egui::Button::new(label);
+        if let Some((m, k)) = keys {
+            b = b.shortcut_text(Self::shortcut(ctx, m, k));
+        }
+        let clicked = ui.add(b).clicked();
+        if clicked {
+            ui.close();
+        }
+        clicked
+    }
+
+    fn toolbar(&mut self, ui: &mut egui::Ui, theme: &Theme) {
+        let ctx = ui.ctx().clone();
+        egui::MenuBar::new().ui(ui, |ui| {
+            ui.menu_button("File", |ui| {
+                if Self::menu_item(ui, &ctx, "New", Some((Modifiers::COMMAND, Key::N))) {
+                    self.new_file();
+                }
+                if Self::menu_item(ui, &ctx, "Open…", Some((Modifiers::COMMAND, Key::O))) {
+                    self.open_file();
+                }
+                ui.separator();
+                if Self::menu_item(ui, &ctx, "Save", Some((Modifiers::COMMAND, Key::S))) {
+                    self.save(false);
+                }
+                if Self::menu_item(ui, &ctx, "Save As…", None) {
+                    self.save(true);
+                }
+            });
+            ui.menu_button("Run", |ui| {
+                if Self::menu_item(ui, &ctx, "Run all", Some((Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter))) {
+                    self.run(RunRequest::All);
+                }
+                if Self::menu_item(ui, &ctx, "Run stale cells", None) {
+                    self.run(RunRequest::Stale);
+                }
+                if Self::menu_item(ui, &ctx, "Interrupt", Some((Modifiers::COMMAND, Key::Period))) {
+                    self.kernel.interrupt();
+                }
+            });
+            ui.menu_button("Settings", |ui| {
+                menu_section(ui, theme, &format!("Appearance (now {})", theme.name));
+                let mut pref = ctx.options(|o| o.theme_preference);
+                ui.radio_value(&mut pref, ThemePreference::System, "Match system");
+                ui.radio_value(&mut pref, ThemePreference::Light, "Light");
+                ui.radio_value(&mut pref, ThemePreference::Dark, "Dark");
+                ctx.set_theme(pref);
+                ui.separator();
+                menu_section(ui, theme, "When a cell runs");
+                ui.radio_value(&mut self.nb.mode, RunMode::Auto, "Also run the cells that depend on it");
+                ui.radio_value(&mut self.nb.mode, RunMode::Lazy, "Only mark dependent cells as stale");
+                ui.separator();
+                menu_section(ui, theme, "Names");
+                ui.checkbox(&mut self.nb.strict, "Strict: declare symbols with symbols()");
+            });
+            if ui.button("Functions").on_hover_text("List every function (F1)").clicked() {
+                self.show_help = !self.show_help;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                if self.busy() {
+                    if icons::primary_button(ui, theme, Icon::Stop, "Stop", "Stop the running computation (⌘.)").clicked() {
+                        self.kernel.interrupt();
+                    }
+                    ui.add(egui::Spinner::new().size(13.0).color(theme.text_faint));
+                } else if icons::primary_button(ui, theme, Icon::PlayAll, "Run all", "Run every cell (⌘⇧↵)").clicked() {
+                    self.run(RunRequest::All);
+                }
+                let pref = ctx.options(|o| o.theme_preference);
+                let (next, label) = match pref {
+                    ThemePreference::System => (ThemePreference::Light, "Appearance: match system. Click for Light"),
+                    ThemePreference::Light => (ThemePreference::Dark, "Appearance: Light. Click for Dark"),
+                    ThemePreference::Dark => (ThemePreference::System, "Appearance: Dark. Click to match the system"),
+                };
+                if icons::button(ui, theme, Icon::Contrast, label).clicked() {
+                    ctx.set_theme(next);
+                }
+                vertical_rule(ui, theme);
+                document_title(ui, theme, self.path.as_ref(), self.dirty);
+            });
+        });
+    }
+
+    fn help_window(&mut self, ctx: &egui::Context, theme: &Theme) {
+        let mut open = self.show_help;
+        egui::Window::new(RichText::new("Functions").font(egui::FontId::new(14.0, fonts::strong_family())))
+            .open(&mut open)
+            .default_rect(egui::Rect::from_min_size(ctx.content_rect().center_top() + vec2(-320.0, 64.0), vec2(640.0, 500.0)))
+            .max_width(720.0)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.help_filter)
+                        .hint_text(RichText::new("Search by name or description").color(theme.text_faint))
+                        .margin(Margin::symmetric(8, 5))
+                        .desired_width(f32::INFINITY),
+                );
+                ui.add_space(4.0);
+                ui.label(RichText::new("⇧↵ runs a cell and moves on   ⌘↵ runs it in place   ⌘⇧↵ runs all   ⌘. stops").size(11.5).color(theme.text_faint));
+                ui.add_space(4.0);
+                ui.separator();
+                let needle = self.help_filter.trim().to_lowercase();
+                let matches: Vec<_> = DOCS
+                    .iter()
+                    .filter(|(name, _, summary)| needle.is_empty() || name.to_lowercase().contains(&needle) || summary.to_lowercase().contains(&needle))
+                    .collect();
+                egui::ScrollArea::vertical().auto_shrink([true, false]).show(ui, |ui| {
+                    if matches.is_empty() {
+                        ui.add_space(24.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new(format!("No function matches “{}”", self.help_filter.trim())).color(theme.text_dim));
+                            ui.label(RichText::new("Try a shorter word, or part of a description such as “matrix”.").size(12.0).color(theme.text_faint));
+                        });
+                        return;
+                    }
+                    // One entry per function: the signature, and what it does underneath.
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    for (_, sig, summary) in matches {
+                        ui.add_space(6.0);
+                        ui.add(egui::Label::new(RichText::new(*sig).monospace().size(13.0).color(theme.syntax.function)).wrap());
+                        ui.add(egui::Label::new(RichText::new(*summary).size(13.0).color(theme.text_dim)).wrap());
+                    }
+                    ui.add_space(6.0);
+                });
+            });
+        self.show_help = open;
+    }
+
+    fn status_bar(&self, ui: &mut egui::Ui, theme: &Theme) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 5.0;
+            let (fresh, stale, errors) = self.nb.cells().iter().filter(|c| c.kind == CellKind::Code).fold((0, 0, 0), |(f, s, e), c| match c.state {
+                CellState::Fresh => (f + 1, s, e),
+                CellState::Stale | CellState::New => (f, s + 1, e),
+                CellState::Error | CellState::Blocked => (f, s, e + 1),
+                _ => (f, s, e),
+            });
+            let dim = |t: String| RichText::new(t).size(11.5).color(theme.text_dim);
+            let cells = self.nb.cells().len();
+            ui.label(dim(format!("{cells} {}", if cells == 1 { "cell" } else { "cells" })));
+            for (n, label, color) in [(fresh, "up to date", theme.ok), (stale, "stale", theme.warn), (errors, "with problems", theme.danger)] {
+                if n > 0 {
+                    ui.add_space(6.0);
+                    dot(ui, color);
+                    ui.label(dim(format!("{n} {label}")));
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mode = if self.nb.mode == RunMode::Auto { "Dependents run automatically" } else { "Dependents wait (lazy)" };
+                ui.label(dim(mode.into())).on_hover_text("Change in Settings");
+                if !self.status.is_empty() {
+                    ui.add_space(10.0);
+                    ui.add(egui::Label::new(RichText::new(self.status.clone()).size(11.5).color(theme.text_faint)).truncate());
+                }
+            });
+        });
+    }
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.show(root);
+    }
+}
+
+/// Width of the notebook column.
+const COLUMN: f32 = 940.0;
+
+impl App {
+    fn theme(&self, ctx: &egui::Context) -> Theme {
+        if ctx.theme() == egui::Theme::Dark { self.dark.clone() } else { self.light.clone() }
+    }
+
+    /// One frame of the whole window.
+    fn show(&mut self, root: &mut egui::Ui) {
+        let ctx = root.ctx().clone();
+        let ctx = &ctx;
+        self.poll_kernel();
+        self.shortcuts(ctx);
+        let theme = self.theme(ctx);
+
+        if ctx.input(|i| i.viewport().close_requested()) && self.dirty && !self.confirm_discard() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
+
+        let name = self.path.as_ref().and_then(|p| p.file_name()).map_or("Untitled".to_string(), |n| n.to_string_lossy().to_string());
+        let title = format!("{}{} — MathCraft", if self.dirty { "• " } else { "" }, name);
+        if title != self.last_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.last_title = title;
+        }
+
+        let top = egui::Panel::top("toolbar")
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(theme.chrome).inner_margin(Margin { left: 10, right: 12, top: 7, bottom: 7 }))
+            .show(root, |ui| self.toolbar(ui, &theme));
+        hairline(root, &theme, top.response.rect.x_range(), top.response.rect.bottom() - 0.5);
+        let bottom = egui::Panel::bottom("status")
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(theme.chrome).inner_margin(Margin::symmetric(14, 4)))
+            .show(root, |ui| self.status_bar(ui, &theme));
+        hairline(root, &theme, bottom.response.rect.x_range(), bottom.response.rect.top() + 0.5);
+
+        let mut actions: Vec<Action> = Vec::new();
+        let focus = self.focus.take();
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme.bg)).show(root, |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                let side = ((ui.available_width() - COLUMN) / 2.0).max(16.0);
+                ui.add_space(14.0);
+                ui.horizontal_top(|ui| {
+                    ui.add_space(side);
+                    let width = (ui.available_width() - side).clamp(240.0, COLUMN);
+                    ui.vertical(|ui| {
+                        ui.set_width(width);
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let names: Vec<String> = self.nb.cells().iter().flat_map(|c| c.defs().cloned()).collect();
+                        let mut env = Env {
+                            theme: &theme,
+                            math: &mut self.math,
+                            generations: &self.generations,
+                            focus,
+                            editing_md: &mut self.editing_md,
+                            names: &names,
+                            actions: &mut actions,
+                        };
+                        for (i, cell) in self.nb.cells().iter().enumerate() {
+                            cell_ui(ui, &mut env, cell, i, &self.nb);
+                            add_row(ui, &mut env, cell.id);
+                        }
+                        if let [only] = self.nb.cells()
+                            && only.source.trim().is_empty()
+                        {
+                            empty_state(ui, &theme);
+                        }
+                        ui.add_space(140.0);
+                    });
+                });
+            });
+        });
+        self.apply(actions);
+        self.help_window(ctx, &theme);
+
+        if self.busy() {
+            ctx.request_repaint_after(Duration::from_millis(120));
+        }
+    }
+}
+
+/// The last part of a path, for messages (the full path is in the toolbar's tooltip).
+fn file_name(p: &std::path::Path) -> String {
+    p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().to_string())
+}
+
+fn spawn_kernel(ctx: &egui::Context) -> Kernel {
+    let c = ctx.clone();
+    match Kernel::spawn(move || c.request_repaint()) {
+        Ok(k) => k,
+        // Without a kernel thread nothing can run; this only happens if the OS refuses a thread.
+        Err(e) => {
+            eprintln!("cannot start the computation thread: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn configure_style(ctx: &egui::Context) {
+    use egui::{FontFamily, FontId};
+    ctx.all_styles_mut(|s| {
+        // One type scale: 11.5 captions, 13 chrome, 15 document text, 13.5 code; headings in the markdown renderer.
+        s.text_styles.insert(TextStyle::Body, FontId::new(14.0, FontFamily::Proportional));
+        s.text_styles.insert(TextStyle::Button, FontId::new(13.0, FontFamily::Proportional));
+        s.text_styles.insert(TextStyle::Small, FontId::new(11.5, FontFamily::Proportional));
+        s.text_styles.insert(TextStyle::Heading, FontId::new(17.0, fonts::strong_family()));
+        s.text_styles.insert(TextStyle::Monospace, FontId::new(13.5, FontFamily::Monospace));
+        s.spacing.item_spacing = vec2(8.0, 6.0);
+        s.spacing.button_padding = vec2(8.0, 4.0);
+        s.spacing.interact_size.y = 24.0;
+        s.spacing.menu_margin = Margin::same(5);
+        s.spacing.menu_spacing = 4.0;
+        s.spacing.window_margin = Margin::same(14);
+        s.spacing.scroll = egui::style::ScrollStyle { bar_width: 7.0, floating_width: 3.0, ..egui::style::ScrollStyle::floating() };
+    });
+}
+
+/// Everything a cell needs from the app while it is drawn.
+struct Env<'a> {
+    theme: &'a Theme,
+    math: &'a mut MathCache,
+    generations: &'a HashMap<CellId, u64>,
+    focus: Option<CellId>,
+    editing_md: &'a mut HashSet<CellId>,
+    /// Names defined by the notebook's cells, offered by autocompletion.
+    names: &'a [String],
+    actions: &'a mut Vec<Action>,
+}
+
+fn state_color(theme: &Theme, state: CellState) -> Color32 {
+    match state {
+        CellState::New => theme.text_faint,
+        CellState::Fresh => theme.ok,
+        CellState::Stale | CellState::Blocked => theme.warn,
+        CellState::Queued | CellState::Running => theme.accent,
+        CellState::Error => theme.danger,
+    }
+}
+
+fn state_label(state: CellState) -> &'static str {
+    match state {
+        CellState::New => "not run",
+        CellState::Fresh => "",
+        CellState::Stale => "stale",
+        CellState::Queued => "queued",
+        CellState::Running => "running…",
+        CellState::Error => "error",
+        CellState::Blocked => "blocked",
+    }
+}
+
+fn dot(ui: &mut egui::Ui, color: Color32) {
+    let (r, _) = ui.allocate_exact_size(vec2(8.0, 8.0), egui::Sense::hover());
+    ui.painter().circle_filled(r.center(), 3.5, color);
+}
+
+/// Shown under the single empty cell of a new notebook: what to type and the keys that matter.
+fn empty_state(ui: &mut egui::Ui, theme: &Theme) {
+    ui.add_space(28.0);
+    ui.horizontal(|ui| {
+        ui.add_space(GUTTER + EDITOR_PAD_X);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            ui.label(RichText::new("A new notebook").font(egui::FontId::new(15.0, fonts::strong_family())).color(theme.text));
+            ui.label(RichText::new("Type an expression in the cell above, such as integrate(x*sin(x), x), and run it.").size(13.5).color(theme.text_dim));
+            ui.add_space(4.0);
+            egui::Grid::new("empty-keys").num_columns(2).spacing([14.0, 8.0]).show(ui, |ui| {
+                for (keys, what) in [
+                    ("⇧ ↵", "Run the cell and move to the next one"),
+                    ("⌘ ↵", "Run the cell and stay"),
+                    ("⌘ ⇧ ↵", "Run every cell"),
+                    ("F1", "Browse all functions"),
+                ] {
+                    keycap(ui, theme, keys);
+                    ui.label(RichText::new(what).size(13.0).color(theme.text_dim));
+                    ui.end_row();
+                }
+            });
+        });
+    });
+}
+
+/// A key or key combination drawn as a small cap.
+fn keycap(ui: &mut egui::Ui, theme: &Theme, keys: &str) {
+    let galley = ui.painter().layout_no_wrap(keys.to_string(), egui::FontId::proportional(12.0), theme.text_dim);
+    let (r, _) = ui.allocate_exact_size(vec2(galley.size().x + 12.0, 20.0), egui::Sense::hover());
+    ui.painter().rect(r, 5.0, theme.code_bg, Stroke::new(1.0, theme.border_strong), egui::StrokeKind::Inside);
+    ui.painter().galley(r.center() - galley.size() / 2.0, galley, theme.text_dim);
+}
+
+/// A one-pixel line across the window at `y`, between chrome and document.
+fn hairline(ui: &egui::Ui, theme: &Theme, x: egui::Rangef, y: f32) {
+    ui.painter().hline(x, y, Stroke::new(1.0, theme.separator));
+}
+
+/// A short vertical divider between groups of toolbar items.
+fn vertical_rule(ui: &mut egui::Ui, theme: &Theme) {
+    let (r, _) = ui.allocate_exact_size(vec2(9.0, 16.0), egui::Sense::hover());
+    ui.painter().vline(r.center().x, r.y_range(), Stroke::new(1.0, theme.border_strong));
+}
+
+/// The file name in the toolbar, with "Edited" beside it while there are unsaved changes.
+fn document_title(ui: &mut egui::Ui, theme: &Theme, path: Option<&PathBuf>, dirty: bool) {
+    let name = path.and_then(|p| p.file_name()).map_or("Untitled".to_string(), |n| n.to_string_lossy().to_string());
+    if dirty {
+        ui.label(RichText::new("Edited").size(12.0).color(theme.text_faint));
+    }
+    let tip = path.map_or_else(|| "Not saved yet".to_string(), |p| p.display().to_string());
+    ui.label(RichText::new(name).size(13.0).font(egui::FontId::new(13.0, fonts::strong_family())).color(theme.text_dim)).on_hover_text(tip);
+}
+
+/// A quiet heading inside a menu.
+fn menu_section(ui: &mut egui::Ui, theme: &Theme, title: &str) {
+    ui.add_space(2.0);
+    ui.label(RichText::new(title).font(egui::FontId::new(11.5, fonts::strong_family())).color(theme.text_faint));
+}
+
+/// A note under a cell: problems found before running (warning) or the error from running (error). A tinted strip
+/// with a coloured rule and icon on the left; the message itself is in the normal text colour so it stays readable.
+fn banner(ui: &mut egui::Ui, theme: &Theme, icon: Icon, color: Color32, code: Option<&str>, message: &str) {
+    let inner = egui::Frame::new().fill(theme.tint(color)).corner_radius(theme::RADIUS).inner_margin(Margin { left: 34, right: 12, top: 7, bottom: 7 }).show(
+        ui,
+        |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                if let Some(code) = code {
+                    ui.label(RichText::new(code).monospace().size(11.5).color(color));
+                }
+                ui.add(egui::Label::new(RichText::new(message).size(13.5).color(theme.text)).selectable(true));
+            });
+        },
+    );
+    let r = inner.response.rect;
+    let rule = egui::Rect::from_min_size(r.min, vec2(3.0, r.height()));
+    ui.painter().rect_filled(rule, egui::CornerRadius { nw: theme::RADIUS, sw: theme::RADIUS, ne: 0, se: 0 }, color);
+    icons::paint(ui.painter(), icon, egui::Rect::from_center_size(egui::pos2(r.left() + 19.0, r.top() + 16.5), vec2(14.0, 14.0)), color);
+}
+
+fn editor_id(id: CellId) -> egui::Id {
+    egui::Id::unique(("cell-source", id))
+}
+
+/// The thin "add a cell" strip between cells; its buttons appear while the pointer is over it.
+fn add_row(ui: &mut egui::Ui, env: &mut Env, id: CellId) {
+    let theme = env.theme;
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), egui::Sense::hover());
+    if !ui.rect_contains_pointer(rect) {
+        return;
+    }
+    let mid = rect.center() + vec2(GUTTER / 2.0, 0.0);
+    let line = egui::Rangef::new(rect.left() + GUTTER, rect.right());
+    ui.painter().hline(line, mid.y, Stroke::new(1.0, theme.border));
+    for (dx, label, kind) in [(-40.0, "Code", CellKind::Code), (40.0, "Text", CellKind::Markdown)] {
+        let r = egui::Rect::from_center_size(mid + vec2(dx, 0.0), vec2(72.0, 22.0));
+        let resp = ui.interact(r, ui.scope_id().with(("add", id, dx as i32)), egui::Sense::click());
+        let hot = resp.hovered();
+        ui.painter().rect(r, 11.0, if hot { theme.surface_hover } else { theme.bg }, Stroke::new(1.0, theme.border_strong), egui::StrokeKind::Inside);
+        let ink = if hot { theme.text } else { theme.text_dim };
+        icons::paint(
+            ui.painter(),
+            Icon::Plus,
+            egui::Rect::from_center_size(r.left_center() + vec2(17.0, 0.0), vec2(9.0, 9.0)),
+            if hot { theme.accent } else { ink },
+        );
+        ui.painter().text(r.left_center() + vec2(26.0, 0.0), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(12.0), ink);
+        let tip = if kind == CellKind::Code { "Add a code cell here" } else { "Add a text cell here" };
+        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
+            env.actions.push(Action::AddAfter(Some(id), kind));
+        }
+    }
+}
+
+/// Width reserved left of every cell for its number and run button.
+const GUTTER: f32 = 46.0;
+/// Horizontal padding inside the editor; outputs are indented by the same amount so they line up with the code.
+const EDITOR_PAD_X: f32 = 12.0;
+
+fn cell_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, index: usize, nb: &Notebook) {
+    let theme = env.theme;
+    let is_code = cell.kind == CellKind::Code;
+    let editing_text = !is_code && (env.editing_md.contains(&cell.id) || cell.source.trim().is_empty());
+    let row = ui
+        .horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+            ui.add_space(GUTTER);
+            ui.vertical(|ui| {
+                ui.set_min_width(ui.available_width());
+                match cell.kind {
+                    CellKind::Code => {
+                        editor(ui, env, cell, true);
+                        for p in &cell.problems {
+                            ui.add_space(6.0);
+                            banner(ui, theme, Icon::Warning, theme.warn, Some(p.code()), &p.message());
+                        }
+                        if let (CellState::Blocked, Some(note), true) = (cell.state, &cell.note, cell.problems.is_empty()) {
+                            ui.add_space(6.0);
+                            banner(ui, theme, Icon::Warning, theme.warn, None, note);
+                        }
+                        output_ui(ui, env, cell);
+                    }
+                    CellKind::Markdown => {
+                        if editing_text {
+                            if editor(ui, env, cell, false) {
+                                env.editing_md.remove(&cell.id);
+                            }
+                        } else {
+                            let r = markdown::show(ui, &cell.source, theme);
+                            if r.double_clicked() {
+                                env.editing_md.insert(cell.id);
+                            }
+                            r.on_hover_text("Double-click to edit");
+                        }
+                    }
+                }
+            });
+        })
+        .response
+        .rect;
+
+    let focused = ui.ctx().memory(|m| m.has_focus(editor_id(cell.id)));
+    let active = focused || ui.rect_contains_pointer(row);
+
+    // A rule beside the cell says when it needs attention; a cell that is up to date has none.
+    if is_code && !matches!(cell.state, CellState::Fresh) {
+        let x = row.left() + GUTTER - 9.0;
+        let bar = egui::Rect::from_min_max(egui::pos2(x, row.top() + 4.0), egui::pos2(x + 2.0, row.bottom() - 4.0));
+        let alpha = if cell.state == CellState::New { 0.4 } else { 1.0 };
+        ui.painter().rect_filled(bar, 1.0, state_color(theme, cell.state).gamma_multiply(alpha));
+    }
+
+    // Gutter: the cell number, which becomes the run button while the cell is active.
+    let slot = egui::Rect::from_min_size(row.min + vec2(4.0, 3.0), vec2(26.0, 26.0));
+    if is_code {
+        let resp = ui.interact(slot, ui.scope_id().with(("run", cell.id)), egui::Sense::click());
+        if active || resp.hovered() {
+            let hot = resp.hovered();
+            if hot {
+                ui.painter().rect_filled(slot, theme::RADIUS, if resp.is_pointer_button_down_on() { theme.surface_pressed } else { theme.surface_hover });
+            }
+            icons::paint(ui.painter(), Icon::Play, slot.shrink(8.0), if hot { theme.accent } else { theme.text_dim });
+        } else {
+            ui.painter().text(slot.right_center(), egui::Align2::RIGHT_CENTER, format!("{}", index + 1), egui::FontId::monospace(11.5), theme.text_faint);
+        }
+        let mut tip = String::from("Run this cell (⌘↵)");
+        let defs: Vec<&str> = cell.defs().map(String::as_str).collect();
+        if !defs.is_empty() {
+            tip.push_str(&format!("\nDefines {}", defs.join(", ")));
+        }
+        let deps: Vec<String> = nb.dependencies(cell.id).iter().filter_map(|d| nb.index_of(*d)).map(|i| (i + 1).to_string()).collect();
+        if !deps.is_empty() {
+            tip.push_str(&format!("\nUses cell {}", deps.join(", ")));
+        }
+        let label = state_label(cell.state);
+        if !label.is_empty() {
+            tip.push_str(&format!("\nState: {label}"));
+        }
+        if let Some(o) = &cell.output {
+            tip.push_str(&format!("\nRan in {}", format_elapsed(o.elapsed)));
+        }
+        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
+            env.actions.push(Action::Run(cell.id));
+        }
+    }
+
+    // Move and delete appear only while the cell is active.
+    if active {
+        let size = vec2(26.0 * 3.0 + 4.0, 26.0);
+        let at = egui::Rect::from_min_size(egui::pos2(row.right() - size.x - 5.0, row.top() + 3.0), size);
+        let mut tools = ui.new_child(egui::UiBuilder::new().max_rect(at).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        tools.spacing_mut().item_spacing.x = 2.0;
+        let strip = at.expand(2.0);
+        tools.painter().add(theme.popup_shadow_small().as_shape(strip, theme::RADIUS_LARGE));
+        tools.painter().rect(strip, theme::RADIUS_LARGE, theme.surface, Stroke::new(1.0, theme.border_strong), egui::StrokeKind::Inside);
+        if icons::button(&mut tools, theme, Icon::Up, "Move cell up").clicked() {
+            env.actions.push(Action::Move(cell.id, -1));
+        }
+        if icons::button(&mut tools, theme, Icon::Down, "Move cell down").clicked() {
+            env.actions.push(Action::Move(cell.id, 1));
+        }
+        if icons::button(&mut tools, theme, Icon::Close, "Delete this cell").clicked() {
+            env.actions.push(Action::Delete(cell.id));
+        }
+    }
+}
+
+fn format_elapsed(d: Duration) -> String {
+    let ms = d.as_secs_f64() * 1000.0;
+    if ms < 1.0 {
+        "<1 ms".into()
+    } else if ms < 1000.0 {
+        format!("{ms:.0} ms")
+    } else {
+        format!("{:.2} s", d.as_secs_f64())
+    }
+}
+
+/// The text editor of a cell. Returns true when the user pressed Shift+Enter in a text cell.
+fn editor(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, code: bool) -> bool {
+    let theme = env.theme;
+    let id = editor_id(cell.id);
+    let ctx = ui.ctx().clone();
+    let mut text = cell.source.clone();
+    let mut edited = false;
+    let mut run_advance = false;
+    let mut run_stay = false;
+
+    if ctx.memory(|m| m.has_focus(id)) {
+        if code {
+            edited |= handle_completion_keys(&ctx, id, &mut text, env.names);
+        }
+        let (shift_enter, cmd_enter, tab, enter) = ctx.input_mut(|i| {
+            (
+                i.consume_key(Modifiers::SHIFT, Key::Enter),
+                i.consume_key(Modifiers::COMMAND, Key::Enter),
+                i.consume_key(Modifiers::NONE, Key::Tab),
+                code && i.consume_key(Modifiers::NONE, Key::Enter),
+            )
+        });
+        run_advance = shift_enter;
+        run_stay = cmd_enter;
+        if tab && code {
+            edited |= insert_at_cursor(&ctx, id, &mut text, "    ");
+        } else if tab {
+            ctx.memory_mut(|m| m.request_focus(id));
+        }
+        if enter {
+            let (before, _) = split_at_cursor(&ctx, id, &text);
+            let line = before.rsplit('\n').next().unwrap_or("");
+            let mut indent: String = line.chars().take_while(|c| *c == ' ').collect();
+            if line.trim_end().ends_with(':') {
+                indent.push_str("    ");
+            }
+            edited |= insert_at_cursor(&ctx, id, &mut text, &format!("\n{indent}"));
+        }
+    }
+
+    // While the completion list is open, Escape closes it instead of leaving the editor.
+    let list_open = code && ctx.memory(|m| m.has_focus(id)) && suggest(&ctx, id, &text, env.names).is_some();
+    let keys = egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: list_open };
+    let font = TextStyle::Monospace.resolve(ui.style());
+    let syntax = theme.syntax.clone();
+    let plain = theme.text;
+    let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+        let mut job = if code {
+            highlight::highlight(buf.as_str(), font.clone(), &syntax)
+        } else {
+            egui::text::LayoutJob::simple(buf.as_str().to_owned(), font.clone(), plain, wrap_width)
+        };
+        job.wrap.max_width = wrap_width;
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
+    let hint = if code { "Type code, e.g. diff(x**2, x), then press Shift+Enter" } else { "Write text; # makes a heading" };
+    let has_focus = ctx.memory(|m| m.has_focus(id));
+    // Code sits on a soft panel; a text cell being edited gets the same panel so it reads as a field.
+    let frame = egui::Frame::new()
+        .fill(theme.code_bg)
+        .stroke(Stroke::new(1.0, if has_focus { theme.accent } else { theme.cell_outline }))
+        .corner_radius(theme::RADIUS_LARGE)
+        .inner_margin(Margin::symmetric(EDITOR_PAD_X as i8, 9));
+    let shown = frame.show(ui, |ui| {
+        egui::TextEdit::multiline(&mut text)
+            .id(id)
+            .frame(egui::Frame::NONE)
+            .desired_width(f32::INFINITY)
+            .desired_rows(1)
+            .lock_focus(true)
+            .event_filter(keys)
+            .hint_text(RichText::new(hint).color(theme.text_faint))
+            .layouter(&mut layouter)
+            .show(ui)
+    });
+    let out = shown.inner;
+    if has_focus {
+        // The macOS focus halo, outside the outline.
+        let r = shown.response.rect.expand(2.5);
+        ui.painter().rect_stroke(r, f32::from(theme::RADIUS_LARGE) + 2.5, Stroke::new(3.5, theme.focus_ring()), egui::StrokeKind::Middle);
+    }
+    edited |= out.response.changed();
+    if env.focus == Some(cell.id) {
+        out.response.request_focus();
+    }
+    if code
+        && out.response.has_focus()
+        && let Some(range) = out.cursor_range
+    {
+        let at = out.galley_pos + out.galley.pos_from_cursor(range.primary).left_bottom().to_vec2();
+        edited |= completion_popup(&ctx, theme, id, &mut text, env.names, at);
+    }
+    if edited {
+        env.actions.push(Action::SetSource(cell.id, text));
+    }
+    if run_advance {
+        env.actions.push(if code { Action::RunAndAdvance(cell.id) } else { Action::Run(cell.id) });
+    } else if run_stay && code {
+        env.actions.push(Action::Run(cell.id));
+    }
+    run_advance && !code
+}
+
+/// What the completion list offers right now.
+struct Suggestion {
+    /// Char index where the word being completed starts, and the cursor's char index.
+    start: usize,
+    cursor: usize,
+    word: String,
+    candidates: Vec<complete::Candidate>,
+}
+
+fn cursor_index(ctx: &egui::Context, id: egui::Id, text: &str) -> usize {
+    let total = text.chars().count();
+    egui::TextEdit::load_state(ctx, id).and_then(|s| s.cursor.char_range()).map_or(total, |r| usize::from(r.primary.index).min(total))
+}
+
+fn suggest(ctx: &egui::Context, id: egui::Id, text: &str, names: &[String]) -> Option<Suggestion> {
+    let dismissed = id.with("dismissed");
+    let cursor = cursor_index(ctx, id, text);
+    let found = complete::word_before(text, cursor).filter(|_| !complete::in_comment_or_string(text, cursor));
+    let Some((start, word)) = found else {
+        ctx.data_mut(|d| d.remove::<usize>(dismissed));
+        return None;
+    };
+    if ctx.data(|d| d.get_temp::<usize>(dismissed)) == Some(start) {
+        return None;
+    }
+    let candidates = complete::candidates(&word, names);
+    (!candidates.is_empty()).then_some(Suggestion { start, cursor, word, candidates })
+}
+
+/// The highlighted row, kept per editor and reset when the word changes.
+fn selected_row(ctx: &egui::Context, id: egui::Id, s: &Suggestion) -> usize {
+    let stored = ctx.data(|d| d.get_temp::<(String, usize)>(id.with("selected")));
+    match stored {
+        Some((word, row)) if word == s.word => row.min(s.candidates.len().saturating_sub(1)),
+        _ => 0,
+    }
+}
+
+/// Up/Down move in the list, Tab or Enter accept, Escape closes it. Runs before the text field sees the keys.
+fn handle_completion_keys(ctx: &egui::Context, id: egui::Id, text: &mut String, names: &[String]) -> bool {
+    let Some(s) = suggest(ctx, id, text, names) else { return false };
+    let row = selected_row(ctx, id, &s);
+    let (up, down, accept, escape) = ctx.input_mut(|i| {
+        (
+            i.consume_key(Modifiers::NONE, Key::ArrowUp),
+            i.consume_key(Modifiers::NONE, Key::ArrowDown),
+            i.consume_key(Modifiers::NONE, Key::Tab) || i.consume_key(Modifiers::NONE, Key::Enter),
+            i.consume_key(Modifiers::NONE, Key::Escape),
+        )
+    });
+    let last = s.candidates.len().saturating_sub(1);
+    let moved = if up {
+        if row == 0 { last } else { row - 1 }
+    } else if down {
+        if row >= last { 0 } else { row + 1 }
+    } else {
+        row
+    };
+    ctx.data_mut(|d| d.insert_temp(id.with("selected"), (s.word.clone(), moved)));
+    if escape {
+        ctx.data_mut(|d| d.insert_temp(id.with("dismissed"), s.start));
+    }
+    match s.candidates.get(row) {
+        Some(c) if accept => accept_candidate(ctx, id, text, &s, c),
+        _ => false,
+    }
+}
+
+fn accept_candidate(ctx: &egui::Context, id: egui::Id, text: &mut String, s: &Suggestion, c: &complete::Candidate) -> bool {
+    let ins = if c.is_function { format!("{}(", c.name) } else { c.name.clone() };
+    replace_chars(ctx, id, text, s.start, s.cursor, &ins);
+    true
+}
+
+/// The list itself, drawn under the cursor. Returns whether a click accepted an entry (which edits `text`).
+fn completion_popup(ctx: &egui::Context, theme: &Theme, id: egui::Id, text: &mut String, names: &[String], at: egui::Pos2) -> bool {
+    let Some(s) = suggest(ctx, id, text, names) else { return false };
+    let row = selected_row(ctx, id, &s);
+    let mut clicked = None;
+    egui::Area::new(id.with("popup")).order(egui::Order::Foreground).fixed_pos(at + vec2(-EDITOR_PAD_X - 4.0, 6.0)).show(ctx, |ui| {
+        egui::Frame::new()
+            .fill(theme.surface)
+            .stroke(Stroke::new(1.0, if theme.dark { theme.border_strong } else { theme.border }))
+            .corner_radius(theme::RADIUS_LARGE)
+            .shadow(theme.popup_shadow())
+            .inner_margin(Margin::same(4))
+            .show(ui, |ui| {
+                ui.set_min_width(280.0);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let mono = TextStyle::Monospace.resolve(ui.style());
+                for (i, c) in s.candidates.iter().enumerate() {
+                    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), egui::Sense::click());
+                    let selected = i == row;
+                    if selected {
+                        ui.painter().rect_filled(rect, theme::RADIUS, theme.accent.gamma_multiply(if theme.dark { 0.32 } else { 0.14 }));
+                    } else if resp.hovered() {
+                        ui.painter().rect_filled(rect, theme::RADIUS, theme.surface_hover);
+                    }
+                    // f for a function, x for a name defined in the notebook.
+                    let (letter, kind) = if c.is_function { ("f", theme.syntax.function) } else { ("x", theme.syntax.keyword) };
+                    icons::badge(ui.painter(), egui::Rect::from_center_size(rect.left_center() + vec2(14.0, 0.0), vec2(16.0, 16.0)), letter, kind);
+                    let name_end =
+                        ui.painter().text(rect.left_center() + vec2(30.0, 0.0), egui::Align2::LEFT_CENTER, &c.name, mono.clone(), theme.text).right();
+                    let detail = c.detail.strip_prefix(c.name.as_str()).filter(|_| c.is_function).unwrap_or(&c.detail);
+                    ui.painter().text(
+                        egui::pos2(name_end + 2.0, rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        detail,
+                        egui::FontId::monospace(12.0),
+                        if selected { theme.text_dim } else { theme.text_faint },
+                    );
+                    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        clicked = Some(c.clone());
+                    }
+                }
+            });
+    });
+    match clicked {
+        Some(c) => {
+            accept_candidate(ctx, id, text, &s, &c);
+            ctx.memory_mut(|m| m.request_focus(id));
+            true
+        }
+        None => false,
+    }
+}
+
+/// Text before and after the cursor.
+fn split_at_cursor(ctx: &egui::Context, id: egui::Id, text: &str) -> (String, String) {
+    let idx = egui::TextEdit::load_state(ctx, id).and_then(|s| s.cursor.char_range()).map_or_else(|| text.chars().count(), |r| usize::from(r.primary.index));
+    (text.chars().take(idx).collect(), text.chars().skip(idx).collect())
+}
+
+/// Insert text at the cursor (replacing any selection) and put the cursor after it. Returns whether text changed.
+fn insert_at_cursor(ctx: &egui::Context, id: egui::Id, text: &mut String, ins: &str) -> bool {
+    let Some(state) = egui::TextEdit::load_state(ctx, id) else { return false };
+    let total = text.chars().count();
+    let (lo, hi) = match state.cursor.char_range() {
+        Some(r) => {
+            let (a, b) = (usize::from(r.primary.index), usize::from(r.secondary.index));
+            (a.min(b).min(total), a.max(b).min(total))
+        }
+        None => (total, total),
+    };
+    replace_chars(ctx, id, text, lo, hi, ins);
+    true
+}
+
+/// Replace the chars `lo..hi` with `ins` and put the cursor after it.
+fn replace_chars(ctx: &egui::Context, id: egui::Id, text: &mut String, lo: usize, hi: usize, ins: &str) {
+    let new: String = text.chars().take(lo).chain(ins.chars()).chain(text.chars().skip(hi)).collect();
+    *text = new;
+    if let Some(mut state) = egui::TextEdit::load_state(ctx, id) {
+        let at = egui::text::CCursor::new(lo + ins.chars().count());
+        state.cursor.set_char_range(Some(CCursorRange::one(at)));
+        state.store(ctx, id);
+    }
+}
+
+fn output_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell) {
+    let Some(o) = &cell.output else { return };
+    let theme = env.theme;
+    if o.stdout.is_empty() && matches!(o.result, Ok(None)) {
+        return;
+    }
+    let stale = cell.state == CellState::Stale;
+    let has_value = matches!(o.result, Ok(Some(_)));
+    if !o.stdout.is_empty() || has_value {
+        ui.add_space(10.0);
+        // Outputs line up with the code above them, not with the editor's outline.
+        egui::Frame::new().inner_margin(Margin { left: EDITOR_PAD_X as i8, right: 0, top: 0, bottom: 2 }).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            if stale {
+                ui.set_opacity(0.45);
+            }
+            if !o.stdout.is_empty() {
+                ui.add(egui::Label::new(RichText::new(o.stdout.trim_end()).monospace().size(13.0).color(theme.text_dim)).selectable(true));
+                if has_value {
+                    ui.add_space(8.0);
+                }
+            }
+            match &o.result {
+                Ok(Some(Value::Plot(p))) => plot_ui(ui, theme, cell.id, p),
+                Ok(Some(v)) => value_ui(ui, env, cell, v),
+                _ => {}
+            }
+        });
+    }
+    if let Err(e) = &o.result {
+        ui.add_space(6.0);
+        ui.scope(|ui| {
+            if stale {
+                ui.set_opacity(0.45);
+            }
+            banner(ui, theme, Icon::Error, theme.danger, None, &e.to_string());
+        });
+    }
+}
+
+fn value_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, v: &Value) {
+    if let Value::Array(a) = v {
+        array_ui(ui, env, cell, v, &a.describe());
+        return;
+    }
+    value_math(ui, env, cell, v);
+}
+
+/// A vector or matrix: typeset, with its kind, shape and element type underneath.
+fn array_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, v: &Value, caption: &str) {
+    value_math(ui, env, cell, v);
+    ui.add_space(4.0);
+    ui.label(RichText::new(caption).size(11.5).color(env.theme.text_faint));
+}
+
+fn value_math(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, v: &Value) {
+    let generation = env.generations.get(&cell.id).copied().unwrap_or(0);
+    match env.math.get(ui.ctx(), cell.id, generation, v) {
+        Some(layout) => {
+            let theme = env.theme;
+            let resp = if layout.width + 8.0 > ui.available_width() {
+                egui::ScrollArea::horizontal().id_salt(("out", cell.id)).show(ui, |ui| math_view::show(ui, &layout, theme, math_view::SIZE)).inner
+            } else {
+                math_view::show(ui, &layout, theme, math_view::SIZE)
+            };
+            resp.context_menu(|ui| {
+                if ui.button("Copy as text").clicked() {
+                    ui.ctx().copy_text(v.to_string());
+                    ui.close();
+                }
+            });
+        }
+        None => match v {
+            Value::Str(s) => {
+                ui.add(egui::Label::new(RichText::new(s.as_ref()).size(15.0).color(env.theme.text)).selectable(true));
+            }
+            other => {
+                ui.add(egui::Label::new(RichText::new(other.to_string()).monospace().size(14.0).color(env.theme.text)).selectable(true));
+            }
+        },
+    }
+}
+
+fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::PlotSpec) {
+    ui.scope(|ui| {
+        // The plot draws its frame, labels and legend from the visuals; keep them quiet and on the page colour.
+        let v = ui.visuals_mut();
+        v.override_text_color = Some(theme.text_dim);
+        v.extreme_bg_color = theme.bg;
+        v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, theme.border);
+        let mut plot = egui_plot::Plot::new(egui::Id::unique(("plot", id)))
+            .height(280.0)
+            .grid_spacing(80.0..=400.0)
+            .allow_scroll(false)
+            .show_grid(false)
+            .x_axis_label(p.x_label.clone());
+        if p.series.len() > 1 {
+            plot = plot.legend(egui_plot::Legend::default().position(egui_plot::Corner::RightTop));
+        }
+        plot.show(ui, |plot| {
+            for (i, s) in p.series.iter().enumerate() {
+                let color = theme.plot.get(i % theme.plot.len()).copied().unwrap_or(theme.accent);
+                for seg in &s.segments {
+                    plot.line(egui_plot::Line::new(s.label.clone(), egui_plot::PlotPoints::from(seg.clone())).color(color).width(1.75));
+                }
+            }
+        });
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::kittest::Queryable;
+    use std::time::Instant;
+
+    fn frame(ctx: &egui::Context, app: &mut App) {
+        ctx.run_ui(egui::RawInput::default(), |ui| app.show(ui)).drop_without_applying_deltas();
+    }
+
+    /// Render real frames of the welcome notebook until the kernel has finished every cell.
+    #[test]
+    fn welcome_notebook_renders_and_runs() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        let start = Instant::now();
+        while app.busy() || start.elapsed() < Duration::from_millis(300) {
+            frame(&ctx, &mut app);
+            std::thread::sleep(Duration::from_millis(20));
+            assert!(start.elapsed() < Duration::from_secs(60), "the welcome notebook did not finish running");
+        }
+        frame(&ctx, &mut app);
+        let code: Vec<_> = app.nb.cells().iter().filter(|c| c.kind == CellKind::Code).collect();
+        assert!(code.len() >= 8);
+        for c in &code {
+            assert_eq!(c.state, CellState::Fresh, "cell `{}` is {:?}: {:?}", c.source, c.state, c.output);
+        }
+        assert!(app.nb.check().is_empty());
+        let show = |i: usize| match app.nb.cells().get(i).and_then(|c| c.output.as_ref()).map(|o| &o.result) {
+            Some(Ok(Some(v))) => v.to_string().chars().take(200).collect::<String>(),
+            other => format!("{other:?}").chars().take(200).collect(),
+        };
+        assert!(show(2).contains("cos(x)"), "{}", show(2));
+        assert!(show(3).starts_with("<plot"), "{}", show(3));
+    }
+
+    #[test]
+    fn editing_and_running_through_actions_updates_dependents() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        app.replace_notebook(Notebook::from_text("# %%\na = 2\n# %%\nb = a * 10\n# %%\nb + 1\n"), None);
+        let wait = |ctx: &egui::Context, app: &mut App| {
+            let start = Instant::now();
+            while app.busy() || start.elapsed() < Duration::from_millis(200) {
+                frame(ctx, app);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        wait(&ctx, &mut app);
+        let ids: Vec<CellId> = app.nb.cells().iter().map(|c| c.id).collect();
+        let last = |app: &App| app.nb.cells().last().and_then(|c| c.output.as_ref()).map(|o| format!("{:?}", o.result)).unwrap_or_default();
+        assert!(last(&app).contains("21"), "{}", last(&app));
+        app.apply(vec![Action::SetSource(ids[0], "a = 5".into()), Action::Run(ids[0])]);
+        wait(&ctx, &mut app);
+        assert!(last(&app).contains("51"), "{}", last(&app));
+        assert!(app.dirty);
+    }
+
+    #[test]
+    fn delete_last_cell_leaves_an_empty_one() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        app.replace_notebook(Notebook::from_text("# %%\nx = 1\n"), None);
+        let id = app.nb.cells().first().map(|c| c.id).unwrap_or(0);
+        app.apply(vec![Action::Delete(id)]);
+        assert_eq!(app.nb.cells().len(), 1);
+        frame(&ctx, &mut app);
+    }
+
+    /// Renders the notebook with the GPU, in both themes, to PNG files for a visual check. Skipped unless
+    /// A headless harness around one empty code cell, with the editor focused.
+    fn typing_harness() -> egui_kittest::Harness<'static, Option<App>> {
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(vec2(900.0, 600.0))
+            .build_ui_state(|ui, app: &mut Option<App>| app.get_or_insert_with(|| App::with_context(ui.ctx().clone(), None)).show(ui), None);
+        harness.run();
+        if let Some(app) = harness.state_mut() {
+            app.replace_notebook(Notebook::from_text("# %%\n"), None);
+        }
+        harness.run();
+        harness.get_by_role(egui::accesskit::Role::MultilineTextInput).focus();
+        harness.run();
+        harness
+    }
+
+    fn code_cell(harness: &egui_kittest::Harness<'_, Option<App>>) -> Option<Cell> {
+        harness.state().as_ref()?.nb.cells().iter().find(|c| c.kind == CellKind::Code).cloned()
+    }
+
+    fn source(harness: &egui_kittest::Harness<'_, Option<App>>) -> String {
+        code_cell(harness).map(|c| c.source).unwrap_or_default()
+    }
+
+    #[test]
+    fn tab_accepts_a_completion() {
+        let mut h = typing_harness();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("y = dif");
+        h.run();
+        assert_eq!(source(&h), "y = dif");
+        h.key_press(Key::Tab);
+        h.run();
+        assert_eq!(source(&h), "y = diff(");
+    }
+
+    #[test]
+    fn arrows_choose_and_escape_closes_the_list() {
+        let mut h = typing_harness();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("fact");
+        h.run();
+        let first = complete::candidates("fact", &[]);
+        assert!(first.len() >= 2, "the test needs two `fact` completions: {first:?}");
+        h.key_press(Key::ArrowDown);
+        h.run();
+        h.key_press(Key::Enter);
+        h.run();
+        let want = first.get(1).map(|c| format!("{}(", c.name)).unwrap_or_default();
+        assert_eq!(source(&h), want);
+
+        let mut h = typing_harness();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("fact");
+        h.run();
+        h.key_press(Key::Escape);
+        h.run();
+        h.key_press(Key::Tab);
+        h.run();
+        assert_eq!(source(&h), "fact    ", "after Escape, Tab indents instead of completing");
+    }
+
+    #[test]
+    fn enter_keeps_indentation_and_shift_enter_runs() {
+        let mut h = typing_harness();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("if True:");
+        h.run();
+        h.key_press(Key::Enter);
+        h.run();
+        assert_eq!(source(&h), "if True:\n    ");
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("1 + 1");
+        h.run();
+        h.key_press_modifiers(Modifiers::SHIFT, Key::Enter);
+        let start = Instant::now();
+        while h.state().as_ref().is_some_and(App::busy) && start.elapsed() < Duration::from_secs(20) {
+            h.run();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        h.run();
+        assert_eq!(code_cell(&h).map(|c| c.state), Some(CellState::Fresh));
+    }
+
+    #[test]
+    fn undo_and_redo_work_in_a_cell() {
+        let mut h = typing_harness();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("abc");
+        h.run();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text(" def");
+        h.run();
+        assert_eq!(source(&h), "abc def");
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run();
+        assert!(source(&h).len() < 7, "undo removed something: {:?}", source(&h));
+        h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+        h.run();
+        assert_eq!(source(&h), "abc def");
+    }
+
+    #[test]
+    #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
+    fn completion_screenshot() {
+        let Some(dir) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, pref) in [("dark", ThemePreference::Dark), ("light", ThemePreference::Light)] {
+            let mut h = egui_kittest::Harness::builder()
+                .wgpu()
+                .with_size(vec2(900.0, 420.0))
+                .build_ui_state(|ui, app: &mut Option<App>| app.get_or_insert_with(|| App::with_context(ui.ctx().clone(), None)).show(ui), None);
+            h.ctx.set_theme(pref);
+            h.run();
+            if let Some(app) = h.state_mut() {
+                app.replace_notebook(Notebook::from_text("# %%\nvelocity = 3\n# %%\n"), None);
+            }
+            h.run();
+            let editors = h.get_all_by_role(egui::accesskit::Role::MultilineTextInput).count();
+            assert!(editors >= 2);
+            h.get_all_by_role(egui::accesskit::Role::MultilineTextInput).nth(1).unwrap().focus();
+            h.run();
+            h.get_all_by_role(egui::accesskit::Role::MultilineTextInput).nth(1).unwrap().type_text("y = ex");
+            h.run_steps(4);
+            h.render().unwrap().save(dir.join(format!("completion-{name}.png"))).unwrap();
+        }
+    }
+
+    /// `MATHCRAFT_SHOTS=<dir>` is set: `MATHCRAFT_SHOTS=/tmp/shots cargo test -p mathcraft screenshots -- --ignored`.
+    #[test]
+    #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
+    fn screenshots() {
+        let Some(dir) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&dir).unwrap();
+        // `MATHCRAFT_NOTEBOOK=<file>` renders that notebook instead of the welcome one.
+        let file = std::env::var_os("MATHCRAFT_NOTEBOOK").map(PathBuf::from);
+        for (name, pref) in [("dark", ThemePreference::Dark), ("light", ThemePreference::Light)] {
+            for (suffix, size, ppp) in [("top", vec2(1060.0, 900.0), 2.0), ("full", vec2(1060.0, if file.is_some() { 1100.0 } else { 3000.0 }), 1.0)] {
+                let mut harness = egui_kittest::Harness::builder()
+                    .wgpu()
+                    .with_size(size)
+                    .with_pixels_per_point(ppp)
+                    .build_ui_state(|ui, app: &mut Option<App>| app.get_or_insert_with(|| App::with_context(ui.ctx().clone(), file.clone())).show(ui), None);
+                harness.ctx.set_theme(pref);
+                let start = Instant::now();
+                loop {
+                    harness.run_steps(3);
+                    std::thread::sleep(Duration::from_millis(30));
+                    if harness.state().as_ref().is_some_and(|a| !a.busy()) || start.elapsed() > Duration::from_secs(60) {
+                        break;
+                    }
+                }
+                harness.run_steps(6);
+                let img = harness.render().unwrap();
+                img.save(dir.join(format!("{name}-{suffix}.png"))).unwrap();
+            }
+        }
+    }
+
+    /// A new notebook (the empty state) with the function list open, in both themes.
+    #[test]
+    #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
+    fn help_screenshot() {
+        let Some(dir) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, pref) in [("dark", ThemePreference::Dark), ("light", ThemePreference::Light)] {
+            let mut h = egui_kittest::Harness::builder()
+                .wgpu()
+                .with_size(vec2(1000.0, 720.0))
+                .build_ui_state(|ui, app: &mut Option<App>| app.get_or_insert_with(|| App::with_context(ui.ctx().clone(), None)).show(ui), None);
+            h.ctx.set_theme(pref);
+            h.run();
+            if let Some(app) = h.state_mut() {
+                app.replace_notebook(Notebook::from_text("# %%\n"), None);
+            }
+            h.run_steps(4);
+            h.render().unwrap().save(dir.join(format!("empty-{name}.png"))).unwrap();
+            if let Some(app) = h.state_mut() {
+                app.show_help = true;
+            }
+            h.run_steps(4);
+            h.render().unwrap().save(dir.join(format!("help-{name}.png"))).unwrap();
+        }
+    }
+}
