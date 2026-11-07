@@ -1,0 +1,11 @@
+[package]
+name = "mathcraft-vim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Vim-style modal editing engine for MathCraft (pure text in, text out; no UI toolkit, WASM-safe)"
+
+[lints]
+workspace = true
