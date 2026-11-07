@@ -1,0 +1,15 @@
+[package]
+name = "mathcraft-amplitude"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Dirac traces and Lorentz-index contraction for scattering amplitudes (L1, WASM-safe, no I/O)"
+
+[dependencies]
+mathcraft-core.workspace = true
+mathcraft-algebra.workspace = true
+
+[lints]
+workspace = true
