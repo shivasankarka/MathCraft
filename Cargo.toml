@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/algebra", "crates/syntax", "crates/eval", "crates/typeset", "crates/notebook", "crates/vim", "apps/mathcraft-cli", "apps/mathcraft"]
+members = ["crates/core", "crates/algebra", "crates/syntax", "crates/eval", "crates/typeset", "crates/notebook", "crates/vim", "crates/engine", "crates/mcp", "apps/mathcraft-cli", "apps/mathcraft"]
 
 [workspace.package]
 version = "0.0.1"
@@ -18,10 +18,13 @@ mathcraft-eval = { path = "crates/eval" }
 mathcraft-typeset = { path = "crates/typeset" }
 mathcraft-notebook = { path = "crates/notebook" }
 mathcraft-vim = { path = "crates/vim" }
+mathcraft-engine = { path = "crates/engine" }
+mathcraft-mcp = { path = "crates/mcp" }
 
 # external (licences checked in docs/research/crate-survey.md)
 dashu = "0.6"
 thiserror = "2"
+serde_json = "1"
 petgraph = "0.8"
 ruff_python_parser = "=0.0.21"
 ruff_python_ast = "=0.0.21"
