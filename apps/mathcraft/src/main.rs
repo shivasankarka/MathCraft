@@ -976,10 +976,12 @@ impl App {
         if self.cur.view == View::Text {
             let active = text_view::active_cell(ctx, &self.cur);
             let names: Vec<String> = self.cur.nb.cells().iter().flat_map(|c| c.defs().cloned()).collect();
+            // the results never squeeze the editor out: it keeps at least 240 points
+            let widest = (root.available_width() - 240.0).clamp(120.0, 800.0);
             let panel = egui::Panel::right("results")
                 .resizable(true)
-                .default_size(400.0)
-                .size_range(240.0..=800.0)
+                .default_size(400.0_f32.min(widest))
+                .size_range(120.0_f32.min(widest)..=widest)
                 .show_separator_line(false)
                 .frame(egui::Frame::new().fill(theme.bg))
                 .show(root, |ui| {
@@ -2021,6 +2023,41 @@ mod tests {
             }
             harness.run_steps(6);
             harness.render().unwrap().save(out.join(format!("sidebar-{name}.png"))).unwrap();
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
+    fn narrow_views_screenshot() {
+        let Some(out) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&out).unwrap();
+        let dir = sample_folder("narrow");
+        for (name, pref, text) in [("text-dark", ThemePreference::Dark, true), ("sidebar-light", ThemePreference::Light, false)] {
+            let d = dir.clone();
+            let mut harness = egui_kittest::Harness::builder().wgpu().with_size(vec2(560.0, 560.0)).build_ui_state(
+                move |ui, app: &mut Option<App>| {
+                    app.get_or_insert_with(|| {
+                        let mut app = App::with_context(ui.ctx().clone(), Some(d.clone()));
+                        app.open_path(d.join("derivatives.py"));
+                        app.open_path(d.join("solving.py"));
+                        if text {
+                            app.cur.set_view(View::Text);
+                        }
+                        app
+                    })
+                    .show(ui)
+                },
+                None,
+            );
+            harness.ctx.set_theme(pref);
+            let start = Instant::now();
+            while harness.state().as_ref().is_none_or(App::busy) && start.elapsed() < Duration::from_secs(30) {
+                harness.run_steps(3);
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            harness.run_steps(6);
+            harness.render().unwrap().save(out.join(format!("narrow-{name}.png"))).unwrap();
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
