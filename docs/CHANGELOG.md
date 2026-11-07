@@ -10,3 +10,4 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - `x^2` is accepted as a power.
 - Settings are remembered (Vim keys, appearance, accent colour); `theme.json` can override colours.
 - New app icon.
+- Much faster `expand` for large integer polynomials; `gcd` and `lcm` of polynomials; new `cancel`.
