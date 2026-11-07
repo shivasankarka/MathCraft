@@ -1,6 +1,6 @@
 //! The notebook document: cells, their analysis and dependency graph, run states, and run planning.
 //!
-//! Rules (after marimo): a global name may be defined by one cell only, cells may not depend on each other in a
+//! Rules (inspired by marimo): a global name may be defined by one cell only, cells may not depend on each other in a
 //! cycle, and running a cell re-runs the cells that read what it defines. A cell that breaks a rule does not run.
 
 use crate::analysis::{CellAnalysis, analyze};
