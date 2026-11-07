@@ -131,10 +131,6 @@ pub struct MathCache {
 }
 
 impl MathCache {
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
-
     /// The layout of a cell's value, recomputed when `generation` (the cell's run count) or the size changed.
     pub fn get(&mut self, ctx: &Context, id: CellId, generation: u64, value: &Value) -> Option<Arc<Layout>> {
         let size_key = SIZE.to_bits();
