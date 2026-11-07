@@ -4,7 +4,7 @@ use crate::expr::{Expr, Kind, SYM_E, SYM_PI};
 use crate::number::Num;
 use dashu::integer::IBig;
 
-const UNARY: &[&str] = &["sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "log", "abs"];
+const UNARY: &[&str] = &["sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "erf", "log", "abs"];
 
 pub fn is_builtin_function(name: &str) -> bool {
     matches!(name, "sqrt" | "exp") || UNARY.contains(&name)
@@ -28,7 +28,7 @@ enum Parity {
 
 fn parity(name: &str) -> Parity {
     match name {
-        "sin" | "tan" | "asin" | "atan" | "sinh" | "tanh" => Parity::Odd,
+        "sin" | "tan" | "asin" | "atan" | "sinh" | "tanh" | "asinh" | "atanh" | "erf" => Parity::Odd,
         "cos" | "cosh" | "abs" => Parity::Even,
         _ => Parity::Neither,
     }
@@ -46,11 +46,40 @@ pub fn f64_unary(name: &str, v: f64) -> Option<f64> {
         "sinh" => v.sinh(),
         "cosh" => v.cosh(),
         "tanh" => v.tanh(),
+        "asinh" => v.asinh(),
+        "acosh" => v.acosh(),
+        "atanh" => v.atanh(),
+        "erf" => erf(v),
         "log" => v.ln(),
         "abs" => v.abs(),
         _ => return None,
     };
     (!r.is_nan()).then_some(r)
+}
+
+/// The error function to machine precision: its Maclaurin series for small arguments, a continued fraction for the
+/// complementary function beyond.
+fn erf(x: f64) -> f64 {
+    let a = x.abs();
+    let r = if a < 2.5 {
+        let (mut term, mut sum, mut n) = (a, a, 0.0_f64);
+        while term.abs() > 1e-17 * sum.abs() && n < 200.0 {
+            n += 1.0;
+            term *= -a * a / n;
+            sum += term / (2.0 * n + 1.0);
+        }
+        2.0 / std::f64::consts::PI.sqrt() * sum
+    } else if a > 6.0 {
+        1.0
+    } else {
+        // erfc(a) = exp(-a^2)/sqrt(pi) * 1/(a + (1/2)/(a + 1/(a + (3/2)/(a + ...))))
+        let mut tail = a;
+        for k in (1..=80).rev() {
+            tail = a + f64::from(k) / 2.0 / tail;
+        }
+        1.0 - (-a * a).exp() / std::f64::consts::PI.sqrt() / tail
+    };
+    r.copysign(x)
 }
 
 fn unary(name: &str, x: &Expr) -> Expr {
@@ -88,10 +117,11 @@ fn exact_value(name: &str, n: &Num) -> Option<Expr> {
     let zero = n.is_zero();
     let one = n.is_one();
     match name {
-        "sin" | "tan" | "asin" | "atan" | "sinh" | "tanh" if zero => Some(Expr::zero()),
+        "sin" | "tan" | "asin" | "atan" | "sinh" | "tanh" | "asinh" | "atanh" | "erf" if zero => Some(Expr::zero()),
         "cos" | "cosh" if zero => Some(Expr::one()),
-        "acos" | "log" if one => Some(Expr::zero()),
+        "acos" | "acosh" | "log" if one => Some(Expr::zero()),
         "atan" if one => Some(Expr::mul(vec![Expr::rational(1, 4)?, Expr::pi()])),
+        "atan" if n.neg().is_one() => Some(Expr::mul(vec![Expr::rational(-1, 4)?, Expr::pi()])),
         "asin" | "acos" => {
             // arcsin/arccos at 0, ±1/2, ±1: the angle as a multiple of pi
             let (p, q) = n.parts().and_then(|(p, q)| Some((i64::try_from(&p).ok()?, i64::try_from(&IBig::from(q)).ok()?)))?;
