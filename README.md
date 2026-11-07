@@ -51,7 +51,7 @@ plot([sin(x), cos(x)], (x, 0, 10))
 Use `**` for powers (`^` is XOR in Python and gives a helpful error). Declare symbols explicitly with
 `x, y = symbols('x y')`, or turn on *Strict* in Settings to require it.
 
-## Notebook rules (after marimo)
+## Notebook rules (inspired by marimo)
 
 - A name can be defined in **one cell only**; no two cells may depend on each other in a cycle. Offending cells don't
   run and say why (`MC002` duplicate definition, `MC003` cycle, `MC001` syntax error).
