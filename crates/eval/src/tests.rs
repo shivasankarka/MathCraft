@@ -360,3 +360,12 @@ fn limits_with_variable_exponents_and_radicals() {
     // 1 ** (1/0) is not a number, so it must not quietly become 1
     assert_ne!(ev("subs((1+x)**(1/x), x, 0)"), "1");
 }
+
+#[test]
+fn improper_integrals_take_limits_at_the_ends() {
+    assert_eq!(ev("integrate(exp(-x), (x, 0, oo))"), "1");
+    assert_eq!(ev("integrate(x**3*exp(-x), (x, 0, oo))"), "6");
+    assert_eq!(ev("integrate(1/(1+x**2), (x, -oo, oo))"), "pi");
+    assert_eq!(ev("integrate(1/x**2, (x, 1, oo))"), "1");
+    assert_eq!(ev("integrate(1/sqrt(x), (x, 0, 4))"), "4");
+}
