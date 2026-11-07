@@ -7,6 +7,7 @@ use crate::value::{EvalError, PlotSeries, PlotSpec, R, Value, err};
 use dashu::integer::IBig;
 use mathcraft_algebra as alg;
 use mathcraft_algebra::linalg;
+use mathcraft_amplitude as amp;
 use mathcraft_core::numeric::{approximate, eval_f64};
 use mathcraft_core::{Expr, Kind, Num, budget};
 use std::cmp::Ordering;
@@ -128,6 +129,13 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("transpose", "transpose(matrix)", "swap rows and columns"),
     ("rank", "rank(matrix)", "rank of a matrix"),
     ("eye", "eye(n, dtype=exact)", "n by n identity matrix"),
+    ("gamma", "gamma(mu)", "the Dirac matrix γ^μ; use inside gamma_trace"),
+    ("slash", "slash(p)", "the Dirac matrix p-slash for a momentum p (slash(p + q) is linear); use inside gamma_trace"),
+    ("gamma_trace", "gamma_trace(a, b, ...)", "trace of a product of gamma(mu) and slash(p) matrices (items may be sums, e.g. slash(p) + m)"),
+    ("metric", "metric(mu, nu)", "the metric tensor g^{mu nu}"),
+    ("comp", "comp(p, mu)", "component p^mu of a four-vector"),
+    ("pdot", "pdot(p, q)", "Lorentz product p.q of two four-vectors"),
+    ("contract", "contract(expr)", "sum over repeated Lorentz indices (metric, comp); metric(mu, mu) is 4"),
     ("plot", "plot(f, (x, a, b)) | plot([f, g], (x, a, b))", "draw one or more curves"),
     ("help", "help() | help('name')", "list the functions, or describe one"),
 ];
@@ -633,6 +641,31 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
         "Eq" => {
             a.limits(name, 2, 2)?;
             Ok(Value::Expr(Expr::eq(a.expr(0)?, a.expr(1)?)))
+        }
+        "gamma" | "slash" | "comp" | "metric" | "pdot" => {
+            let (lo, hi) = if matches!(name, "gamma" | "slash") { (1, 1) } else { (2, 2) };
+            a.limits(name, lo, hi)?;
+            let x = a.expr(0)?;
+            Ok(Value::Expr(match name {
+                "gamma" => amp::gamma(&x),
+                "slash" => amp::slash(&x),
+                _ => {
+                    let y = a.expr(1)?;
+                    match name {
+                        "comp" => amp::comp(&x, &y),
+                        "metric" => amp::metric(&x, &y),
+                        _ => amp::pdot(&x, &y),
+                    }
+                }
+            }))
+        }
+        "gamma_trace" => {
+            let items = (0..a.pos.len()).map(|i| a.expr(i)).collect::<R<Vec<_>>>()?;
+            check_depth(it, Value::Expr(amp::gamma_trace(&items)?))
+        }
+        "contract" => {
+            a.limits(name, 1, 1)?;
+            check_depth(it, Value::Expr(amp::contract(&a.expr(0)?)?))
         }
         "expand" | "simplify" | "factor" | "cancel" => {
             a.limits(name, 1, 1)?;

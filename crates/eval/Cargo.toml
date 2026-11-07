@@ -10,6 +10,7 @@ description = "MathCraft interpreter: values, evaluation of the Python-flavoured
 [dependencies]
 mathcraft-core.workspace = true
 mathcraft-algebra.workspace = true
+mathcraft-amplitude.workspace = true
 mathcraft-syntax.workspace = true
 dashu.workspace = true
 faer = { workspace = true, optional = true }
