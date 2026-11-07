@@ -669,6 +669,9 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
         }
+        // roomier, rounder menu titles than egui's default
+        ui.spacing_mut().button_padding = vec2(9.0, 4.0);
+        ui.spacing_mut().item_spacing.x = 6.0;
         egui::MenuBar::new().ui(ui, |ui| {
             if self.unified_title_bar {
                 ui.add_space(theme::TRAFFIC_LIGHTS_INSET);
@@ -711,8 +714,11 @@ impl App {
             });
             ui.menu_button("View", |ui| {
                 let mut view = self.cur.view;
-                ui.radio_value(&mut view, View::Notebook, "Notebook: one block per cell");
-                ui.radio_value(&mut view, View::Text, "Text: the whole file in one editor");
+                for (v, label) in [(View::Notebook, "Notebook: one block per cell"), (View::Text, "Text: the whole file in one editor")] {
+                    if choice(ui, theme, label, view == v) {
+                        view = v;
+                    }
+                }
                 if view != self.cur.view {
                     self.cur.set_view(view);
                     ui.close();
@@ -724,20 +730,37 @@ impl App {
             ui.menu_button("Settings", |ui| {
                 menu_section(ui, theme, &format!("Appearance (now {})", theme.name));
                 let mut pref = ctx.options(|o| o.theme_preference);
-                ui.radio_value(&mut pref, ThemePreference::System, "Match system");
-                ui.radio_value(&mut pref, ThemePreference::Light, "Light");
-                ui.radio_value(&mut pref, ThemePreference::Dark, "Dark");
+                for (v, label) in [(ThemePreference::System, "Match system"), (ThemePreference::Light, "Light"), (ThemePreference::Dark, "Dark")] {
+                    if choice(ui, theme, label, pref == v) {
+                        pref = v;
+                    }
+                }
                 ctx.set_theme(pref);
+                menu_section(ui, theme, "Accent");
+                if let Some(name) = accent_row(ui, theme, self.accent.as_deref()) {
+                    self.accent = (name != "blue").then(|| name.to_owned());
+                    self.rebuild_themes();
+                }
                 ui.separator();
                 menu_section(ui, theme, "When a cell runs");
-                ui.radio_value(&mut self.cur.nb.mode, RunMode::Auto, "Also run the cells that depend on it");
-                ui.radio_value(&mut self.cur.nb.mode, RunMode::Lazy, "Only mark dependent cells as stale");
+                for (m, label) in [(RunMode::Auto, "Also run the cells that depend on it"), (RunMode::Lazy, "Only mark dependent cells as stale")] {
+                    if choice(ui, theme, label, self.cur.nb.mode == m) {
+                        self.cur.nb.mode = m;
+                    }
+                }
                 ui.separator();
                 menu_section(ui, theme, "Names");
-                ui.checkbox(&mut self.cur.nb.strict, "Strict: declare symbols with symbols()");
+                if choice(ui, theme, "Strict: declare symbols with symbols()", self.cur.nb.strict) {
+                    self.cur.nb.strict = !self.cur.nb.strict;
+                }
                 ui.separator();
                 menu_section(ui, theme, "Editing");
-                ui.checkbox(&mut self.vim, "Vim keys");
+                if choice(ui, theme, "Vim keys", self.vim) {
+                    self.vim = !self.vim;
+                }
+                if choice(ui, theme, "Show powers as superscripts in cells", self.pretty) {
+                    self.pretty = !self.pretty;
+                }
             });
             if ui.button("Functions").on_hover_text("List every function (F1)").clicked() {
                 self.show_help = !self.show_help;
@@ -1215,6 +1238,52 @@ fn document_title(ui: &mut egui::Ui, theme: &Theme, path: Option<&PathBuf>, dirt
 }
 
 /// A quiet heading inside a menu.
+/// A menu row for a setting that is on or off, or one of several: a check mark in front of the chosen one.
+/// Returns true when clicked. Does not close the menu, so several settings can be changed in one visit.
+fn choice(ui: &mut egui::Ui, theme: &Theme, label: &str, selected: bool) -> bool {
+    let font = TextStyle::Button.resolve(ui.style());
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, theme.text);
+    // a popup offers the whole window as its width, so rows ask for a sensible one
+    let size = vec2(ui.available_width().min(330.0).max(galley.size().x + 38.0), 24.0);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        if resp.hovered() {
+            ui.painter().rect_filled(rect, 5.0, theme.surface_hover);
+        }
+        if selected {
+            let c = egui::pos2(rect.left() + 14.0, rect.center().y);
+            let stroke = Stroke::new(1.7, theme.accent);
+            ui.painter().line_segment([c + vec2(-4.0, 0.5), c + vec2(-1.5, 3.5)], stroke);
+            ui.painter().line_segment([c + vec2(-1.5, 3.5), c + vec2(4.5, -3.5)], stroke);
+        }
+        let at = egui::pos2(rect.left() + 28.0, rect.center().y - galley.size().y / 2.0);
+        ui.painter().galley(at, galley, theme.text);
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+/// The accent colours as a row of dots; the chosen one has a ring. Returns the name clicked.
+fn accent_row(ui: &mut egui::Ui, theme: &Theme, current: Option<&str>) -> Option<&'static str> {
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        ui.spacing_mut().item_spacing.x = 6.0;
+        for (name, dark, light) in settings::ACCENTS {
+            let [r, g, b] = if theme.dark { dark } else { light };
+            let (rect, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), egui::Sense::click());
+            let selected = current.unwrap_or("blue") == name;
+            ui.painter().circle_filled(rect.center(), 7.0, Color32::from_rgb(r, g, b));
+            if selected || resp.hovered() {
+                ui.painter().circle_stroke(rect.center(), 10.0, Stroke::new(1.5, if selected { theme.text } else { theme.border_strong }));
+            }
+            if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(name).clicked() {
+                picked = Some(name);
+            }
+        }
+    });
+    picked
+}
+
 fn menu_section(ui: &mut egui::Ui, theme: &Theme, title: &str) {
     ui.add_space(2.0);
     ui.label(RichText::new(title).font(egui::FontId::new(11.5, fonts::strong_family())).color(theme.text_faint));
@@ -2437,6 +2506,27 @@ mod tests {
         }
         h.run_steps(6);
         h.render().unwrap().save(dir.join("narrow-help.png")).unwrap();
+    }
+
+    #[test]
+    #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
+    fn menu_screenshot() {
+        let Some(dir) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, pref) in [("light", ThemePreference::Light), ("dark", ThemePreference::Dark)] {
+            for menu in ["File", "Settings"] {
+                let mut h = egui_kittest::Harness::builder()
+                    .wgpu()
+                    .with_size(vec2(760.0, 640.0))
+                    .with_pixels_per_point(2.0)
+                    .build_ui_state(|ui, app: &mut Option<App>| app.get_or_insert_with(|| App::with_context(ui.ctx().clone(), None)).show(ui), None);
+                h.ctx.set_theme(pref);
+                h.run_steps(4);
+                h.get_by_label(menu).click();
+                h.run_steps(6);
+                h.render().unwrap().save(dir.join(format!("menu-{menu}-{name}.png"))).unwrap();
+            }
+        }
     }
 
     #[test]
