@@ -188,7 +188,7 @@ plot([sin(x), cos(x), sin(x) * cos(x)], (x, -6, 6))
 # ## Not working yet
 # Things you may try that do not work today. Each has a clear error or a known limit.
 #
-# - **Solving** general quartics, equations needing log rules (`log(x) + log(x-1) == log(6)`), mixed ones like `cos(x) == x` (use `nsolve`), nonlinear systems, inequalities. Trig equations give one period of solutions.
+# - **Solving** polynomials of degree 5 and up, equations needing log rules (`log(x) + log(x-1) == log(6)`), mixed ones like `cos(x) == x` (use `nsolve`), nonlinear systems, inequalities. Trig equations give one period of solutions.
 # - **Integrals** of `exp(x**2)` and other special functions; no `+ C`; `log(x)` rather than `log|x|`.
 # - **Limits** of the `(1 + 1/x)**x` kind, and `sin(x)/x` as x goes to infinity.
 # - **Complex** `exp(I*x)` rewriting, `arg`, polar form.

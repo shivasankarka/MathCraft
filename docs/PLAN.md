@@ -129,3 +129,4 @@ IDs follow Craft Anything's style (`R<milestone>.<n>`).
 - 2026-11-07: Q16a done: `pycode`/`rustcode` (codegen in core). Copy-as menu and LaTeX export still to do.
 - 2026-11-07: Engine tool registry and MCP server built (first version): `mathcraft-cli mcp`. Verified by tests and a piped session; not yet with a real MCP client.
 - 2026-11-07: Performance step 1: fast paths for plain-number arithmetic, FxHash scopes, shared parameter keys, small-integer cache. fib(25) 129 -> 63 ms. Hash-consing and slot resolution not done; faer spike pending.
+- 2026-11-07: `solve` handles quartics (Ferrari). Float sqrt of a negative number is imaginary. Still open in solve: degree 5+, log rules.
