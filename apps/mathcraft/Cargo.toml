@@ -1,0 +1,29 @@
+[package]
+name = "mathcraft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "MathCraft desktop app: a reactive symbolic-math notebook"
+
+[[bin]]
+name = "mathcraft"
+path = "src/main.rs"
+
+[dependencies]
+mathcraft-eval.workspace = true
+mathcraft-notebook.workspace = true
+mathcraft-core.workspace = true
+mathcraft-typeset.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui_plot.workspace = true
+rfd.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+image.workspace = true
+
+[lints]
+workspace = true
