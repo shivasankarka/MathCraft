@@ -448,6 +448,12 @@ impl Expr {
         if base.is_one() && !exp.divides_by_zero() {
             return Expr::one();
         }
+        // E ** (I*r*pi) for a rational r with a closed form for the angle: cos(r*pi) + I*sin(r*pi)
+        if base.as_sym() == Some(SYM_E)
+            && let Some(v) = crate::functions::euler(exp)
+        {
+            return v;
+        }
         // E ** log(x) == x
         if base.as_sym() == Some(SYM_E)
             && let Kind::Call(name, args) = exp.kind()
