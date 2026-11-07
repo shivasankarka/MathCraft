@@ -112,7 +112,7 @@ fn declared_symbols_work_as_unknown_functions() {
 
 #[test]
 fn helpful_errors_with_line_numbers() {
-    assert!(ev("x = 1\ny = 2 ^ 3").contains("**"));
+    assert_eq!(ev("y = 2 ^ 3\ny"), "8", "^ is a power");
     assert_eq!(ev("a = 1\nb = [1, 2][5]"), "ERROR line 2: index 5 is out of range (length 2)");
     assert!(ev("import numpy").contains("imports"));
     assert!(ev("len(3)").contains("no length"));
@@ -265,6 +265,7 @@ fn solves_cubics_and_transcendental_equations() {
 
 #[test]
 fn exports_functions_as_python_and_rust() {
+    assert_eq!(ev("diff(x^3 + x^2, x)"), ev("diff(x**3 + x**2, x)"), "^ is a power");
     assert_eq!(ev("latex(x**2/3)"), "'\\frac{x^{2}}{3}'");
     assert!(ev("latex([[1, 2], [3, x]])").contains("\\begin{bmatrix}\n  1 & 2 \\\\\n  3 & x\n\\end{bmatrix}"));
     assert_eq!(ev("pycode(x**2 + 1, x)"), "'import math\n\n\ndef f(x):\n    return x**2 + 1\n'");
