@@ -271,3 +271,11 @@ fn exports_functions_as_python_and_rust() {
     assert!(ev("rustcode(x**2 + 1, x)").contains("x.powi(2) + 1.0"));
     assert!(ev("pycode(sin(x)*y)").contains("def f(x, y)"), "arguments default to the free symbols, sorted");
 }
+
+#[test]
+fn quartics_match_known_roots_and_float_sqrt_is_imaginary() {
+    assert_eq!(ev("sqrt(-4.0)"), "2.0*I");
+    // x**4 + x + 1: all four roots are complex; check one against the known value
+    let r = ev("abs(subs(x**4 + x + 1, x, N(solve(x**4 + x + 1, x)[3]))) < 1e-9");
+    assert_eq!(r, "True");
+}
