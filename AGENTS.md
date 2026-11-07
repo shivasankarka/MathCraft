@@ -1,7 +1,7 @@
 # AGENTS.md: guide for AI agents and contributors
 
 MathCraft is a native, pure-Rust (egui) symbolic-computation notebook: a Python-flavoured language, exact algebra and
-calculus, and a reactive notebook modelled on marimo. It is meant to join the ArtCraft "Crafting Apps" suite, so it
+calculus, and a reactive notebook inspired by marimo. It is meant to join the ArtCraft "Crafting Apps" suite, so it
 follows their conventions. Their rules are copied under `reference/` (read-only snapshots, 2026-11-07): start with
 `reference/craft-anything/AGENTS.md` and the house-rules block in `reference/figcraft/AGENTS.md`. **Where this file is
 silent, those win. Where they disagree with this file, tell the user.**
@@ -37,7 +37,7 @@ A crate may depend only on lower layers. core, syntax and algebra must stay WASM
 5. **Licences:** permissive only (see `deny.toml`, `refs/PLAN.md`). Run `cargo deny check` after changing dependencies.
    Never link GPL/LGPL/AGPL code. Symbolica is source-available and must not be a core dependency.
 6. **Clean room:** behaviour comes from public documentation and our own design. Do not copy code, assets or strings from
-   other products, and never reverse engineer Mathematica or any other incumbent. `reference/` is for reading rules, not code.
+   other products, and never reverse engineer any other product. `reference/` is for reading rules, not code.
 7. **Original work, honest status.** Report what ran and what did not. Update `refs/STATUS.md` in the same change.
 8. **Deterministic results.** Canonical ordering and output must not depend on hash order or platform.
 9. **Versioned files.** The notebook format has a version header; migrate, don't break.
