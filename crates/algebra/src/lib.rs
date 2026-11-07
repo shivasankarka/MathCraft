@@ -14,6 +14,7 @@ mod rational;
 mod simplify;
 mod solve;
 mod sparse;
+mod sums;
 mod system;
 mod util;
 
@@ -36,5 +37,6 @@ pub use poly::{factor, from_poly, linear_in, solve_polynomial, to_poly};
 pub use rational::{apart, cancel};
 pub use simplify::simplify;
 pub use solve::{nroots, solve};
+pub use sums::summation;
 pub use system::solve_system;
 pub use util::{has_singularity, is_zero_expr, subs};
