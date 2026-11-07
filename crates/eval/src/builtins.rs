@@ -113,7 +113,11 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("nsolve", "nsolve(eq, x, guess)", "numeric root near a starting guess (Newton's method)"),
     ("apart", "apart(f, x)", "partial fractions of a rational function"),
     ("series", "series(f, x, x0=0, n=6)", "Taylor polynomial up to order n"),
-    ("solve", "solve(eq, x) | solve([eq1, eq2], [x, y])", "solutions of one equation (polynomial, exp/log/trig) or a linear system"),
+    (
+        "solve",
+        "solve(eq, x) | solve([eq1, eq2], [x, y])",
+        "solutions of one equation (polynomial, exp/log/trig), a linear system, or a polynomial system (a list of solutions)",
+    ),
     ("coeffs", "coeffs(poly, x)", "coefficients, lowest degree first"),
     ("degree", "degree(poly, x)", "degree of a polynomial"),
     ("free_symbols", "free_symbols(expr)", "the symbols in an expression"),
@@ -1016,9 +1020,17 @@ fn solve(it: &Interp<'_>, a: &Args) -> R<Value> {
                     all.iter().map(|s| Expr::sym(s)).collect()
                 }
             };
-            match linalg::solve_linear(&eqs, &vars)? {
-                Some(sol) => Ok(Value::list(sol.into_iter().map(Value::Expr).collect())),
-                None => Ok(Value::list(Vec::new())),
+            match linalg::solve_linear(&eqs, &vars) {
+                Ok(Some(sol)) => Ok(Value::list(sol.into_iter().map(Value::Expr).collect())),
+                Ok(None) => Ok(Value::list(Vec::new())),
+                // not linear: eliminate variables; the answer is a list of solutions, each a list of `var == value`
+                Err(e) if e.to_string().contains("only linear systems") => {
+                    let sols = alg::solve_system(&eqs, &vars)?;
+                    Ok(Value::list(
+                        sols.into_iter().map(|s| Value::list(vars.iter().zip(s).map(|(v, val)| Value::Expr(Expr::eq(v.clone(), val))).collect())).collect(),
+                    ))
+                }
+                Err(e) => Err(e.into()),
             }
         }
         single => {
