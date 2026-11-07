@@ -32,6 +32,8 @@ pub enum PolyError {
     TooBig,
     /// The two polynomials use a different number of variables.
     Mismatch,
+    /// The caller's check asked to stop (cancelled or out of time).
+    Stopped,
 }
 
 impl std::fmt::Display for PolyError {
@@ -39,6 +41,7 @@ impl std::fmt::Display for PolyError {
         match self {
             PolyError::TooBig => f.write_str("polynomial exponents or variable count are too large"),
             PolyError::Mismatch => f.write_str("polynomials have different variables"),
+            PolyError::Stopped => f.write_str("stopped"),
         }
     }
 }
@@ -209,6 +212,11 @@ impl Poly {
 
     /// The product, by a heap merge of the partial products.
     pub fn mul(&self, other: &Poly) -> Result<Poly, PolyError> {
+        self.mul_with(other, &mut || false)
+    }
+
+    /// The product; `stop` is called now and then and returns `true` to abandon the work (`Err(Stopped)`).
+    pub fn mul_with(&self, other: &Poly, stop: &mut dyn FnMut() -> bool) -> Result<Poly, PolyError> {
         if self.nvars != other.nvars {
             return Err(PolyError::Mismatch);
         }
@@ -220,8 +228,8 @@ impl Poly {
                 return Err(PolyError::TooBig);
             }
         }
-        if let Some(terms) = mul_small(&self.terms, &other.terms) {
-            return Ok(Poly { nvars: self.nvars, terms });
+        if let Some(terms) = mul_small(&self.terms, &other.terms, stop) {
+            return terms.map(|terms| Poly { nvars: self.nvars, terms });
         }
         // the smaller operand drives the heap (fewer heap entries, longer runs along the other)
         let (a, b) = if self.len() <= other.len() { (&self.terms, &other.terms) } else { (&other.terms, &self.terms) };
@@ -231,7 +239,12 @@ impl Poly {
             heap.push(Entry { mono: x.0 + y.0, i: 0, j: 0 });
         }
         let mut out: Vec<(Mono, IBig)> = Vec::with_capacity(n.saturating_mul(m).min(1 << 22));
+        let mut groups = 0u32;
         while let Some(top) = heap.peek() {
+            groups = groups.wrapping_add(1);
+            if groups.is_multiple_of(4096) && stop() {
+                return Err(PolyError::Stopped);
+            }
             let mono = top.mono;
             let mut acc = IBig::ZERO;
             while heap.peek().is_some_and(|e| e.mono == mono) {
@@ -260,41 +273,64 @@ impl Poly {
     }
 
     /// `self ** n` by repeated squaring.
-    pub fn pow(&self, mut n: u32) -> Result<Poly, PolyError> {
+    pub fn pow(&self, n: u32) -> Result<Poly, PolyError> {
+        self.pow_with(n, &mut || false)
+    }
+
+    pub fn pow_with(&self, mut n: u32, stop: &mut dyn FnMut() -> bool) -> Result<Poly, PolyError> {
         let mut result = Poly::constant(self.nvars, IBig::ONE);
         let mut base = self.clone();
         while n > 0 {
             if n & 1 == 1 {
-                result = result.mul(&base)?;
+                result = result.mul_with(&base, stop)?;
             }
             n >>= 1;
             if n > 0 {
-                base = base.mul(&base)?;
+                base = base.mul_with(&base, stop)?;
             }
         }
         Ok(result)
     }
 
-    /// The quotient when `divisor` divides `self` exactly, else `None`.
+    /// The quotient when `divisor` divides `self` exactly, else `None`. A heap merges the pending products
+    /// `quotient term * divisor term`, so the work is proportional to the product sizes, not to repeated subtraction.
     pub fn div_exact(&self, divisor: &Poly) -> Result<Option<Poly>, PolyError> {
         if self.nvars != divisor.nvars {
             return Err(PolyError::Mismatch);
         }
         let Some((lm, lc)) = divisor.terms.first() else { return Ok(None) };
-        let mut rem = self.clone();
+        let d = &divisor.terms;
         let mut quotient: Vec<(Mono, IBig)> = Vec::new();
-        while let Some((m, c)) = rem.terms.first() {
-            if !divides(*lm, *m) {
-                return Ok(None);
+        let mut heap: BinaryHeap<Entry> = BinaryHeap::new();
+        let mut ip = 0usize;
+        loop {
+            let next = self.terms.get(ip).map(|t| t.0);
+            let Some(m) = next.into_iter().chain(heap.peek().map(|e| e.mono)).max() else { break };
+            let mut s = IBig::ZERO;
+            if let Some((_, c)) = self.terms.get(ip).filter(|t| t.0 == m) {
+                s = c.clone();
+                ip += 1;
             }
-            let (q, r) = (c / lc, c % lc);
-            if r != IBig::ZERO {
+            while heap.peek().is_some_and(|e| e.mono == m) {
+                let Some(Entry { i, j, .. }) = heap.pop() else { break };
+                if let (Some(q), Some(dj)) = (quotient.get(i), d.get(j)) {
+                    s -= &q.1 * &dj.1;
+                    if let Some(next) = d.get(j + 1) {
+                        heap.push(Entry { mono: q.0 + next.0, i, j: j + 1 });
+                    }
+                }
+            }
+            if s == IBig::ZERO {
+                continue;
+            }
+            if !divides(*lm, m) || &s % lc != IBig::ZERO {
                 return Ok(None);
             }
             let qm = m - lm;
-            let q_poly = Poly { nvars: self.nvars, terms: vec![(qm, q.clone())] };
-            rem = rem.sub(&q_poly.mul(divisor)?)?;
-            quotient.push((qm, q));
+            quotient.push((qm, &s / lc));
+            if let Some(second) = d.get(1) {
+                heap.push(Entry { mono: qm + second.0, i: quotient.len() - 1, j: 1 });
+            }
         }
         Ok(Some(Poly { nvars: self.nvars, terms: quotient }))
     }
@@ -306,7 +342,7 @@ const SMALL_PRODUCT: usize = 256;
 /// The product when every coefficient is a machine word and the sums cannot overflow `i128`: each partial product is
 /// added into an open-addressing table keyed by the monomial, then the table is sorted. Much faster than the heap
 /// when the result is large. `None` when the coefficients are too big (the heap handles those).
-fn mul_small(a: &[(Mono, IBig)], b: &[(Mono, IBig)]) -> Option<Vec<(Mono, IBig)>> {
+fn mul_small(a: &[(Mono, IBig)], b: &[(Mono, IBig)], stop: &mut dyn FnMut() -> bool) -> Option<Result<Vec<(Mono, IBig)>, PolyError>> {
     if a.len().saturating_mul(b.len()) < SMALL_PRODUCT {
         return None;
     }
@@ -327,6 +363,9 @@ fn mul_small(a: &[(Mono, IBig)], b: &[(Mono, IBig)]) -> Option<Vec<(Mono, IBig)>
     }
     let mut table = Table::with_capacity(a.len().max(b.len()) * 4);
     for (m1, c1) in &wa {
+        if stop() {
+            return Some(Err(PolyError::Stopped));
+        }
         let c1 = i128::from(*c1);
         for (m2, c2) in &wb {
             table.add(m1 + m2, c1 * i128::from(*c2));
@@ -334,7 +373,7 @@ fn mul_small(a: &[(Mono, IBig)], b: &[(Mono, IBig)]) -> Option<Vec<(Mono, IBig)>
     }
     let mut out: Vec<(Mono, i128)> = table.into_entries();
     out.sort_unstable_by_key(|t| std::cmp::Reverse(t.0));
-    Some(out.into_iter().map(|(m, c)| (m, IBig::from(c))).collect())
+    Some(Ok(out.into_iter().map(|(m, c)| (m, IBig::from(c))).collect()))
 }
 
 /// Open-addressing hash table from monomial to accumulated coefficient (linear probing, grows at half full).
@@ -422,6 +461,8 @@ impl Ord for Entry {
         self.mono.cmp(&o.mono)
     }
 }
+
+mod gcd;
 
 #[cfg(test)]
 mod tests;
