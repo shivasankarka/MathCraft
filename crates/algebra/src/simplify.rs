@@ -14,7 +14,7 @@ pub fn simplify(e: &Expr) -> MathResult<Expr> {
     }
     let inner = e.map_children(simplify)?;
     let expanded = expand(&inner)?;
-    let mut candidates = vec![inner.clone(), expanded.clone(), trig(&inner)?, trig(&expanded)?, factor(&inner)?, factor(&expanded)?];
+    let mut candidates = vec![inner.clone(), expanded.clone(), trig(&inner)?, trig(&expanded)?, factor(&inner)?, factor(&expanded)?, reduce_trig(&expanded)?];
     if has_denominator(&inner) {
         let cancelled = crate::rational::cancel(&inner)?;
         let (n, d) = split_fraction(&cancelled);
@@ -28,6 +28,34 @@ pub fn simplify(e: &Expr) -> MathResult<Expr> {
         }
     }
     Ok(best)
+}
+
+/// Normal form modulo `sin**2 + cos**2 == 1`: every `cos(u)**k` with `k >= 2` becomes `cos(u)**(k % 2) * (1 - sin(u)**2)**(k / 2)`,
+/// so any trigonometric polynomial identity reduces to zero.
+fn reduce_trig(e: &Expr) -> MathResult<Expr> {
+    fn go(e: &Expr) -> MathResult<Expr> {
+        guard(e)?;
+        if let Kind::Pow(b, k) = e.kind()
+            && let Kind::Call(name, args) = b.kind()
+            && name.as_ref() == "cos"
+            && let [u] = args.as_slice()
+            && let Some(n) = k.as_i64()
+            && n >= 2
+        {
+            let s2 = Expr::pow(&Expr::call("sin", vec![u.clone()]), &Expr::int(2));
+            return Ok(Expr::mul(vec![Expr::pow(b, &Expr::int(n % 2)), Expr::pow(&Expr::add(vec![Expr::one(), s2.neg()]), &Expr::int(n / 2))]));
+        }
+        e.map_children(go)
+    }
+    if !has_trig_square(e) {
+        return Ok(e.clone());
+    }
+    expand(&go(e)?)
+}
+
+fn has_trig_square(e: &Expr) -> bool {
+    matches!(e.kind(), Kind::Pow(b, k) if matches!(b.kind(), Kind::Call(n, _) if n.as_ref() == "cos") && k.as_i64().is_some_and(|n| n >= 2))
+        || e.children().iter().any(has_trig_square)
 }
 
 fn has_denominator(e: &Expr) -> bool {
