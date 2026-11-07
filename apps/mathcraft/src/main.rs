@@ -6,22 +6,26 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod complete;
+mod doc;
 mod fonts;
 mod highlight;
 mod icons;
 mod markdown;
 mod math_view;
+mod tabs;
 mod theme;
 
+use doc::{Doc, file_name};
 use eframe::egui::{self, Color32, Key, Margin, Modifiers, RichText, Stroke, TextStyle, ThemePreference, vec2};
 use egui::text_selection::CCursorRange;
 use icons::Icon;
 use math_view::MathCache;
 use mathcraft_eval::{DOCS, Value};
-use mathcraft_notebook::{Cell, CellId, CellKind, CellState, Event, Kernel, Notebook, RunMode, RunRequest};
+use mathcraft_notebook::{Cell, CellId, CellKind, CellState, Notebook, RunMode, RunRequest};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
+use tabs::{TabAction, TabInfo};
 use theme::Theme;
 
 const WELCOME: &str = include_str!("welcome.py");
@@ -46,22 +50,19 @@ enum Action {
 }
 
 struct App {
-    nb: Notebook,
-    kernel: Kernel,
+    /// The document being shown; the others wait in `others` and swap in when their tab is selected.
+    cur: Doc,
+    others: Vec<Doc>,
+    /// Tab order, by document id (includes `cur`).
+    order: Vec<u64>,
+    next_id: u64,
     ctx: egui::Context,
-    path: Option<PathBuf>,
-    dirty: bool,
-    focus: Option<CellId>,
-    editing_md: HashSet<CellId>,
     show_help: bool,
     help_filter: String,
     status: String,
     last_title: String,
     dark: Theme,
     light: Theme,
-    math: MathCache,
-    /// How many times each cell's output has been replaced; invalidates its cached typeset layout.
-    generations: HashMap<CellId, u64>,
 }
 
 impl App {
@@ -75,7 +76,6 @@ impl App {
         dark.apply(&ctx);
         light.apply(&ctx);
         configure_style(&ctx);
-        let kernel = spawn_kernel(&ctx);
         let (nb, status) = match &path {
             Some(p) => match std::fs::read_to_string(p) {
                 Ok(t) => (Notebook::from_text(&t), format!("Opened {}", file_name(p))),
@@ -83,98 +83,147 @@ impl App {
             },
             None => (Notebook::from_text(WELCOME), String::new()),
         };
-        let mut app = App {
-            nb,
-            kernel,
+        let cur = Doc::new(0, &ctx, nb, path);
+        App {
+            order: vec![cur.id],
+            cur,
+            others: Vec::new(),
+            next_id: 1,
             ctx,
-            path,
-            dirty: false,
-            focus: None,
-            editing_md: HashSet::new(),
             show_help: false,
             help_filter: String::new(),
             status,
             last_title: String::new(),
             dark,
             light,
-            math: MathCache::default(),
-            generations: HashMap::new(),
-        };
-        app.run(RunRequest::All);
-        app
-    }
-
-    fn run(&mut self, req: RunRequest) {
-        let jobs = self.nb.plan(req);
-        if !jobs.is_empty() {
-            self.kernel.run(jobs);
         }
     }
 
+    fn run(&mut self, req: RunRequest) {
+        self.cur.run(req);
+    }
+
     fn poll_kernel(&mut self) {
-        while let Ok(ev) = self.kernel.events.try_recv() {
-            match ev {
-                Event::Started(id) => self.nb.mark_running(id),
-                Event::Finished(id, r) => {
-                    *self.generations.entry(id).or_default() += 1;
-                    self.nb.apply(id, r);
-                }
-                Event::Reset => self.nb.mark_all_stale(),
-            }
+        self.cur.poll();
+        for d in &mut self.others {
+            d.poll();
         }
     }
 
     fn busy(&self) -> bool {
-        self.nb.cells().iter().any(|c| matches!(c.state, CellState::Running | CellState::Queued))
+        self.cur.busy() || self.others.iter().any(Doc::busy)
     }
 
+    fn fresh_id(&mut self) -> u64 {
+        self.next_id += 1;
+        self.next_id
+    }
+
+    /// Replace the current document's content (a new kernel: the old one's variables belong to the old notebook).
     fn replace_notebook(&mut self, nb: Notebook, path: Option<PathBuf>) {
-        // A new kernel: the old one's variables and queued work belong to the old notebook.
-        self.kernel = spawn_kernel(&self.ctx);
-        self.nb = nb;
-        self.path = path;
-        self.dirty = false;
-        self.editing_md.clear();
-        self.math.clear();
-        self.generations.clear();
-        self.run(RunRequest::All);
+        self.cur = Doc::new(self.cur.id, &self.ctx, nb, path);
     }
 
-    fn confirm_discard(&self) -> bool {
-        !self.dirty
-            || rfd::MessageDialog::new()
-                .set_title("Unsaved changes")
-                .set_description("This notebook has unsaved changes. Discard them?")
-                .set_buttons(rfd::MessageButtons::YesNo)
-                .show()
-                == rfd::MessageDialogResult::Yes
+    /// Show a notebook in a new tab, or in the current one when that is still untouched and untitled.
+    fn open_in_tab(&mut self, nb: Notebook, path: Option<PathBuf>) {
+        if self.cur.is_pristine() {
+            self.replace_notebook(nb, path);
+            return;
+        }
+        let id = self.fresh_id();
+        let old = std::mem::replace(&mut self.cur, Doc::new(id, &self.ctx, nb, path));
+        self.others.push(old);
+        self.order.push(id);
+    }
+
+    fn select_tab(&mut self, id: u64) {
+        if id == self.cur.id {
+            return;
+        }
+        if let Some(slot) = self.others.iter_mut().find(|d| d.id == id) {
+            std::mem::swap(&mut self.cur, slot);
+        }
+    }
+
+    fn step_tab(&mut self, delta: isize) {
+        let n = self.order.len() as isize;
+        let here = self.order.iter().position(|id| *id == self.cur.id).unwrap_or(0) as isize;
+        if let Some(id) = self.order.get((here + delta).rem_euclid(n.max(1)) as usize).copied() {
+            self.select_tab(id);
+        }
+    }
+
+    fn doc(&self, id: u64) -> Option<&Doc> {
+        if self.cur.id == id { Some(&self.cur) } else { self.others.iter().find(|d| d.id == id) }
+    }
+
+    fn any_dirty(&self) -> bool {
+        self.cur.dirty || self.others.iter().any(|d| d.dirty)
+    }
+
+    fn confirm(title: &str, description: &str) -> bool {
+        rfd::MessageDialog::new().set_title(title).set_description(description).set_buttons(rfd::MessageButtons::YesNo).show() == rfd::MessageDialogResult::Yes
+    }
+
+    fn close_tab(&mut self, id: u64) {
+        if self.doc(id).is_some_and(|d| d.dirty) {
+            self.select_tab(id);
+            if !Self::confirm("Unsaved changes", &format!("{} has unsaved changes. Close it and discard them?", self.cur.name())) {
+                return;
+            }
+        }
+        let pos = self.order.iter().position(|o| *o == id).unwrap_or(0);
+        self.order.retain(|o| *o != id);
+        if id == self.cur.id {
+            let next = self.order.get(pos).or_else(|| self.order.get(pos.wrapping_sub(1))).copied();
+            match next {
+                Some(n) => {
+                    self.select_tab(n);
+                    self.others.retain(|d| d.id != id);
+                }
+                None => {
+                    let fresh = self.fresh_id();
+                    let mut nb = Notebook::new();
+                    nb.add_cell(None, CellKind::Code, "");
+                    self.cur = Doc::new(fresh, &self.ctx, nb, None);
+                    self.order.push(fresh);
+                }
+            }
+        } else {
+            self.others.retain(|d| d.id != id);
+        }
     }
 
     fn new_file(&mut self) {
-        if self.confirm_discard() {
-            let mut nb = Notebook::new();
-            nb.add_cell(None, CellKind::Code, "");
-            self.replace_notebook(nb, None);
-            self.status = "New notebook".into();
-        }
+        let mut nb = Notebook::new();
+        nb.add_cell(None, CellKind::Code, "");
+        self.open_in_tab(nb, None);
+        self.status = "New notebook".into();
     }
 
     fn open_file(&mut self) {
-        if !self.confirm_discard() {
+        let Some(p) = rfd::FileDialog::new().add_filter("MathCraft notebook or script", &["py", "txt"]).pick_file() else { return };
+        self.open_path(p);
+    }
+
+    /// Open a file in a tab, or switch to its tab when it is already open.
+    fn open_path(&mut self, p: PathBuf) {
+        let same = |d: &Doc| d.path.as_ref().is_some_and(|q| q == &p);
+        if let Some(id) = std::iter::once(&self.cur).chain(&self.others).find(|d| same(d)).map(|d| d.id) {
+            self.select_tab(id);
             return;
         }
-        let Some(p) = rfd::FileDialog::new().add_filter("MathCraft notebook or script", &["py", "txt"]).pick_file() else { return };
         match std::fs::read_to_string(&p) {
             Ok(t) => {
                 self.status = format!("Opened {}", file_name(&p));
-                self.replace_notebook(Notebook::from_text(&t), Some(p));
+                self.open_in_tab(Notebook::from_text(&t), Some(p));
             }
             Err(e) => self.status = format!("Could not open {}: {e}", file_name(&p)),
         }
     }
 
     fn save(&mut self, as_new: bool) {
-        let target = match (&self.path, as_new) {
+        let target = match (&self.cur.path, as_new) {
             (Some(p), false) => p.clone(),
             _ => match rfd::FileDialog::new().add_filter("MathCraft notebook", &["py"]).set_file_name("notebook.py").save_file() {
                 Some(p) => p,
@@ -183,12 +232,12 @@ impl App {
         };
         // Write beside the target, then rename, so a crash never leaves half a file.
         let tmp = target.with_extension("py.tmp");
-        let result = std::fs::write(&tmp, self.nb.to_text()).and_then(|()| std::fs::rename(&tmp, &target));
+        let result = std::fs::write(&tmp, self.cur.nb.to_text()).and_then(|()| std::fs::rename(&tmp, &target));
         match result {
             Ok(()) => {
                 self.status = format!("Saved {}", file_name(&target));
-                self.path = Some(target);
-                self.dirty = false;
+                self.cur.path = Some(target);
+                self.cur.dirty = false;
             }
             Err(e) => self.status = format!("Could not save: {e}"),
         }
@@ -198,48 +247,48 @@ impl App {
         for a in actions {
             match a {
                 Action::SetSource(id, text) => {
-                    self.nb.set_source(id, &text);
-                    self.dirty = true;
+                    self.cur.nb.set_source(id, &text);
+                    self.cur.dirty = true;
                 }
                 Action::Run(id) => self.run(RunRequest::Cell(id)),
                 Action::RunAndAdvance(id) => {
                     self.run(RunRequest::Cell(id));
-                    let next = self.nb.index_of(id).and_then(|i| self.nb.cells().get(i + 1)).map(|c| c.id);
+                    let next = self.cur.nb.index_of(id).and_then(|i| self.cur.nb.cells().get(i + 1)).map(|c| c.id);
                     let target = match next {
                         Some(n) => n,
                         None => {
-                            self.dirty = true;
-                            self.nb.add_cell(Some(id), CellKind::Code, "")
+                            self.cur.dirty = true;
+                            self.cur.nb.add_cell(Some(id), CellKind::Code, "")
                         }
                     };
-                    self.focus = Some(target);
+                    self.cur.focus = Some(target);
                 }
                 Action::AddAfter(after, kind) => {
-                    let id = self.nb.add_cell(after, kind, "");
+                    let id = self.cur.nb.add_cell(after, kind, "");
                     if kind == CellKind::Markdown {
-                        self.editing_md.insert(id);
+                        self.cur.editing_md.insert(id);
                     }
-                    self.focus = Some(id);
-                    self.dirty = true;
+                    self.cur.focus = Some(id);
+                    self.cur.dirty = true;
                 }
                 Action::Delete(id) => {
-                    self.nb.delete_cell(id);
-                    self.kernel.forget_cell(id);
-                    self.dirty = true;
-                    if self.nb.cells().is_empty() {
-                        self.nb.add_cell(None, CellKind::Code, "");
+                    self.cur.nb.delete_cell(id);
+                    self.cur.kernel.forget_cell(id);
+                    self.cur.dirty = true;
+                    if self.cur.nb.cells().is_empty() {
+                        self.cur.nb.add_cell(None, CellKind::Code, "");
                     }
                 }
                 Action::Move(id, delta) => {
-                    self.nb.move_cell(id, delta);
-                    self.dirty = true;
+                    self.cur.nb.move_cell(id, delta);
+                    self.cur.dirty = true;
                 }
             }
         }
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        let (save, open, new, run_all, interrupt, help) = ctx.input_mut(|i| {
+        let (save, open, new, run_all, interrupt, help, close, next, prev) = ctx.input_mut(|i| {
             (
                 i.consume_key(Modifiers::COMMAND, Key::S),
                 i.consume_key(Modifiers::COMMAND, Key::O),
@@ -247,6 +296,9 @@ impl App {
                 i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter),
                 i.consume_key(Modifiers::COMMAND, Key::Period),
                 i.consume_key(Modifiers::NONE, Key::F1),
+                i.consume_key(Modifiers::COMMAND, Key::W),
+                i.consume_key(Modifiers::CTRL, Key::Tab),
+                i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab),
             )
         });
         if save {
@@ -262,10 +314,19 @@ impl App {
             self.run(RunRequest::All);
         }
         if interrupt {
-            self.kernel.interrupt();
+            self.cur.kernel.interrupt();
         }
         if help {
             self.show_help = !self.show_help;
+        }
+        if close {
+            self.close_tab(self.cur.id);
+        }
+        if next {
+            self.step_tab(1);
+        }
+        if prev {
+            self.step_tab(-1);
         }
     }
 
@@ -295,6 +356,9 @@ impl App {
                 if Self::menu_item(ui, &ctx, "Open…", Some((Modifiers::COMMAND, Key::O))) {
                     self.open_file();
                 }
+                if Self::menu_item(ui, &ctx, "Close tab", Some((Modifiers::COMMAND, Key::W))) {
+                    self.close_tab(self.cur.id);
+                }
                 ui.separator();
                 if Self::menu_item(ui, &ctx, "Save", Some((Modifiers::COMMAND, Key::S))) {
                     self.save(false);
@@ -311,7 +375,7 @@ impl App {
                     self.run(RunRequest::Stale);
                 }
                 if Self::menu_item(ui, &ctx, "Interrupt", Some((Modifiers::COMMAND, Key::Period))) {
-                    self.kernel.interrupt();
+                    self.cur.kernel.interrupt();
                 }
             });
             ui.menu_button("Settings", |ui| {
@@ -323,11 +387,11 @@ impl App {
                 ctx.set_theme(pref);
                 ui.separator();
                 menu_section(ui, theme, "When a cell runs");
-                ui.radio_value(&mut self.nb.mode, RunMode::Auto, "Also run the cells that depend on it");
-                ui.radio_value(&mut self.nb.mode, RunMode::Lazy, "Only mark dependent cells as stale");
+                ui.radio_value(&mut self.cur.nb.mode, RunMode::Auto, "Also run the cells that depend on it");
+                ui.radio_value(&mut self.cur.nb.mode, RunMode::Lazy, "Only mark dependent cells as stale");
                 ui.separator();
                 menu_section(ui, theme, "Names");
-                ui.checkbox(&mut self.nb.strict, "Strict: declare symbols with symbols()");
+                ui.checkbox(&mut self.cur.nb.strict, "Strict: declare symbols with symbols()");
             });
             if ui.button("Functions").on_hover_text("List every function (F1)").clicked() {
                 self.show_help = !self.show_help;
@@ -336,7 +400,7 @@ impl App {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 if self.busy() {
                     if icons::primary_button(ui, theme, Icon::Stop, "Stop", "Stop the running computation (⌘.)").clicked() {
-                        self.kernel.interrupt();
+                        self.cur.kernel.interrupt();
                     }
                     ui.add(egui::Spinner::new().size(13.0).color(theme.text_faint));
                 } else if icons::primary_button(ui, theme, Icon::PlayAll, "Run all", "Run every cell (⌘⇧↵)").clicked() {
@@ -352,7 +416,7 @@ impl App {
                     ctx.set_theme(next);
                 }
                 vertical_rule(ui, theme);
-                document_title(ui, theme, self.path.as_ref(), self.dirty);
+                document_title(ui, theme, self.cur.path.as_ref(), self.cur.dirty);
             });
         });
     }
@@ -405,14 +469,14 @@ impl App {
     fn status_bar(&self, ui: &mut egui::Ui, theme: &Theme) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
-            let (fresh, stale, errors) = self.nb.cells().iter().filter(|c| c.kind == CellKind::Code).fold((0, 0, 0), |(f, s, e), c| match c.state {
+            let (fresh, stale, errors) = self.cur.nb.cells().iter().filter(|c| c.kind == CellKind::Code).fold((0, 0, 0), |(f, s, e), c| match c.state {
                 CellState::Fresh => (f + 1, s, e),
                 CellState::Stale | CellState::New => (f, s + 1, e),
                 CellState::Error | CellState::Blocked => (f, s, e + 1),
                 _ => (f, s, e),
             });
             let dim = |t: String| RichText::new(t).size(11.5).color(theme.text_dim);
-            let cells = self.nb.cells().len();
+            let cells = self.cur.nb.cells().len();
             ui.label(dim(format!("{cells} {}", if cells == 1 { "cell" } else { "cells" })));
             for (n, label, color) in [(fresh, "up to date", theme.ok), (stale, "stale", theme.warn), (errors, "with problems", theme.danger)] {
                 if n > 0 {
@@ -422,7 +486,7 @@ impl App {
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mode = if self.nb.mode == RunMode::Auto { "Dependents run automatically" } else { "Dependents wait (lazy)" };
+                let mode = if self.cur.nb.mode == RunMode::Auto { "Dependents run automatically" } else { "Dependents wait (lazy)" };
                 ui.label(dim(mode.into())).on_hover_text("Change in Settings");
                 if !self.status.is_empty() {
                     ui.add_space(10.0);
@@ -455,12 +519,15 @@ impl App {
         self.shortcuts(ctx);
         let theme = self.theme(ctx);
 
-        if ctx.input(|i| i.viewport().close_requested()) && self.dirty && !self.confirm_discard() {
+        if ctx.input(|i| i.viewport().close_requested())
+            && self.any_dirty()
+            && !Self::confirm("Unsaved changes", "Some notebooks have unsaved changes. Quit and discard them?")
+        {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
 
-        let name = self.path.as_ref().and_then(|p| p.file_name()).map_or("Untitled".to_string(), |n| n.to_string_lossy().to_string());
-        let title = format!("{}{} — MathCraft", if self.dirty { "• " } else { "" }, name);
+        let name = self.cur.path.as_ref().and_then(|p| p.file_name()).map_or("Untitled".to_string(), |n| n.to_string_lossy().to_string());
+        let title = format!("{}{} — MathCraft", if self.cur.dirty { "• " } else { "" }, name);
         if title != self.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.last_title = title;
@@ -471,6 +538,30 @@ impl App {
             .frame(egui::Frame::new().fill(theme.chrome).inner_margin(Margin { left: 10, right: 12, top: 7, bottom: 7 }))
             .show(root, |ui| self.toolbar(ui, &theme));
         hairline(root, &theme, top.response.rect.x_range(), top.response.rect.bottom() - 0.5);
+        if self.order.len() > 1 {
+            let tabs: Vec<TabInfo> = self
+                .order
+                .iter()
+                .filter_map(|id| self.doc(*id))
+                .map(|d| TabInfo {
+                    id: d.id,
+                    name: d.name(),
+                    dirty: d.dirty,
+                    tip: d.path.as_ref().map_or_else(|| "Not saved yet".to_owned(), |p| p.display().to_string()),
+                })
+                .collect();
+            let strip = egui::Panel::top("tabs")
+                .show_separator_line(false)
+                .frame(egui::Frame::new().fill(theme.chrome))
+                .show(root, |ui| tabs::tab_strip(ui, &theme, &tabs, self.cur.id));
+            hairline(root, &theme, strip.response.rect.x_range(), strip.response.rect.bottom() - 0.5);
+            match strip.inner {
+                Some(TabAction::Select(id)) => self.select_tab(id),
+                Some(TabAction::Close(id)) => self.close_tab(id),
+                Some(TabAction::New) => self.new_file(),
+                None => {}
+            }
+        }
         let bottom = egui::Panel::bottom("status")
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(theme.chrome).inner_margin(Margin::symmetric(14, 4)))
@@ -478,7 +569,7 @@ impl App {
         hairline(root, &theme, bottom.response.rect.x_range(), bottom.response.rect.top() + 0.5);
 
         let mut actions: Vec<Action> = Vec::new();
-        let focus = self.focus.take();
+        let focus = self.cur.focus.take();
         egui::CentralPanel::default().frame(egui::Frame::new().fill(theme.bg)).show(root, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 let side = ((ui.available_width() - COLUMN) / 2.0).max(16.0);
@@ -489,21 +580,21 @@ impl App {
                     ui.vertical(|ui| {
                         ui.set_width(width);
                         ui.spacing_mut().item_spacing.y = 0.0;
-                        let names: Vec<String> = self.nb.cells().iter().flat_map(|c| c.defs().cloned()).collect();
+                        let names: Vec<String> = self.cur.nb.cells().iter().flat_map(|c| c.defs().cloned()).collect();
                         let mut env = Env {
                             theme: &theme,
-                            math: &mut self.math,
-                            generations: &self.generations,
+                            math: &mut self.cur.math,
+                            generations: &self.cur.generations,
                             focus,
-                            editing_md: &mut self.editing_md,
+                            editing_md: &mut self.cur.editing_md,
                             names: &names,
                             actions: &mut actions,
                         };
-                        for (i, cell) in self.nb.cells().iter().enumerate() {
-                            cell_ui(ui, &mut env, cell, i, &self.nb);
+                        for (i, cell) in self.cur.nb.cells().iter().enumerate() {
+                            cell_ui(ui, &mut env, cell, i, &self.cur.nb);
                             add_row(ui, &mut env, cell.id);
                         }
-                        if let [only] = self.nb.cells()
+                        if let [only] = self.cur.nb.cells()
                             && only.source.trim().is_empty()
                         {
                             empty_state(ui, &theme);
@@ -518,23 +609,6 @@ impl App {
 
         if self.busy() {
             ctx.request_repaint_after(Duration::from_millis(120));
-        }
-    }
-}
-
-/// The last part of a path, for messages (the full path is in the toolbar's tooltip).
-fn file_name(p: &std::path::Path) -> String {
-    p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().to_string())
-}
-
-fn spawn_kernel(ctx: &egui::Context) -> Kernel {
-    let c = ctx.clone();
-    match Kernel::spawn(move || c.request_repaint()) {
-        Ok(k) => k,
-        // Without a kernel thread nothing can run; this only happens if the OS refuses a thread.
-        Err(e) => {
-            eprintln!("cannot start the computation thread: {e}");
-            std::process::exit(1);
         }
     }
 }
@@ -1232,13 +1306,13 @@ mod tests {
             assert!(start.elapsed() < Duration::from_secs(60), "the welcome notebook did not finish running");
         }
         frame(&ctx, &mut app);
-        let code: Vec<_> = app.nb.cells().iter().filter(|c| c.kind == CellKind::Code).collect();
+        let code: Vec<_> = app.cur.nb.cells().iter().filter(|c| c.kind == CellKind::Code).collect();
         assert!(code.len() >= 8);
         for c in &code {
             assert_eq!(c.state, CellState::Fresh, "cell `{}` is {:?}: {:?}", c.source, c.state, c.output);
         }
-        assert!(app.nb.check().is_empty());
-        let show = |i: usize| match app.nb.cells().get(i).and_then(|c| c.output.as_ref()).map(|o| &o.result) {
+        assert!(app.cur.nb.check().is_empty());
+        let show = |i: usize| match app.cur.nb.cells().get(i).and_then(|c| c.output.as_ref()).map(|o| &o.result) {
             Some(Ok(Some(v))) => v.to_string().chars().take(200).collect::<String>(),
             other => format!("{other:?}").chars().take(200).collect(),
         };
@@ -1259,13 +1333,54 @@ mod tests {
             }
         };
         wait(&ctx, &mut app);
-        let ids: Vec<CellId> = app.nb.cells().iter().map(|c| c.id).collect();
-        let last = |app: &App| app.nb.cells().last().and_then(|c| c.output.as_ref()).map(|o| format!("{:?}", o.result)).unwrap_or_default();
+        let ids: Vec<CellId> = app.cur.nb.cells().iter().map(|c| c.id).collect();
+        let last = |app: &App| app.cur.nb.cells().last().and_then(|c| c.output.as_ref()).map(|o| format!("{:?}", o.result)).unwrap_or_default();
         assert!(last(&app).contains("21"), "{}", last(&app));
         app.apply(vec![Action::SetSource(ids[0], "a = 5".into()), Action::Run(ids[0])]);
         wait(&ctx, &mut app);
         assert!(last(&app).contains("51"), "{}", last(&app));
-        assert!(app.dirty);
+        assert!(app.cur.dirty);
+    }
+
+    #[test]
+    fn tabs_open_switch_and_close() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        let first = app.cur.id;
+        app.open_in_tab(Notebook::from_text("# %%\na = 1\n"), Some(PathBuf::from("/tmp/mc_a.py")));
+        assert_eq!(app.order.len(), 2, "the welcome notebook is not pristine, so a tab is added");
+        let second = app.cur.id;
+        app.open_in_tab(Notebook::from_text("# %%\nb = 2\n"), Some(PathBuf::from("/tmp/mc_b.py")));
+        assert_eq!(app.order.len(), 3);
+        app.select_tab(first);
+        assert_eq!(app.cur.id, first);
+        assert!(app.cur.nb.cells().len() > 3, "the welcome notebook came back intact");
+        app.step_tab(1);
+        assert_eq!(app.cur.id, second);
+        app.step_tab(-1);
+        app.step_tab(-1);
+        assert_ne!(app.cur.id, first, "wraps around");
+        frame(&ctx, &mut app);
+        app.close_tab(second);
+        assert_eq!(app.order.len(), 2);
+        assert!(app.doc(second).is_none());
+        let remaining: Vec<u64> = app.order.clone();
+        for id in remaining {
+            app.close_tab(id);
+        }
+        assert_eq!(app.order.len(), 1, "closing the last tab leaves a blank one");
+        assert!(app.cur.is_pristine());
+        frame(&ctx, &mut app);
+    }
+
+    #[test]
+    fn an_untouched_blank_tab_is_reused_when_opening() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        app.replace_notebook(Notebook::from_text("# %%\n"), None);
+        app.open_in_tab(Notebook::from_text("# %%\nx = 1\n"), Some(PathBuf::from("/tmp/mc_c.py")));
+        assert_eq!(app.order.len(), 1);
+        assert_eq!(app.cur.name(), "mc_c.py");
     }
 
     #[test]
@@ -1273,9 +1388,9 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = App::with_context(ctx.clone(), None);
         app.replace_notebook(Notebook::from_text("# %%\nx = 1\n"), None);
-        let id = app.nb.cells().first().map(|c| c.id).unwrap_or(0);
+        let id = app.cur.nb.cells().first().map(|c| c.id).unwrap_or(0);
         app.apply(vec![Action::Delete(id)]);
-        assert_eq!(app.nb.cells().len(), 1);
+        assert_eq!(app.cur.nb.cells().len(), 1);
         frame(&ctx, &mut app);
     }
 
@@ -1296,7 +1411,7 @@ mod tests {
     }
 
     fn code_cell(harness: &egui_kittest::Harness<'_, Option<App>>) -> Option<Cell> {
-        harness.state().as_ref()?.nb.cells().iter().find(|c| c.kind == CellKind::Code).cloned()
+        harness.state().as_ref()?.cur.nb.cells().iter().find(|c| c.kind == CellKind::Code).cloned()
     }
 
     fn source(harness: &egui_kittest::Harness<'_, Option<App>>) -> String {
@@ -1428,6 +1543,37 @@ mod tests {
                 let img = harness.render().unwrap();
                 img.save(dir.join(format!("{name}-{suffix}.png"))).unwrap();
             }
+        }
+    }
+
+    /// Three open documents, so the tab strip shows.
+    #[test]
+    #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
+    fn tabs_screenshot() {
+        let Some(dir) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, pref) in [("dark", ThemePreference::Dark), ("light", ThemePreference::Light)] {
+            let mut harness = egui_kittest::Harness::builder().wgpu().with_size(vec2(1000.0, 520.0)).build_ui_state(
+                |ui, app: &mut Option<App>| {
+                    app.get_or_insert_with(|| {
+                        let mut app = App::with_context(ui.ctx().clone(), None);
+                        app.open_in_tab(Notebook::from_text("# %%\nf = sin(x)**2\n# %%\ndiff(f, x)\n"), Some(PathBuf::from("/tmp/derivatives.py")));
+                        app.open_in_tab(Notebook::from_text("# %%\nsolve(x**2 - 2, x)\n"), Some(PathBuf::from("/tmp/a_rather_long_notebook_name_here.py")));
+                        app.cur.dirty = true;
+                        app
+                    })
+                    .show(ui)
+                },
+                None,
+            );
+            harness.ctx.set_theme(pref);
+            let start = Instant::now();
+            while harness.state().as_ref().is_none_or(App::busy) && start.elapsed() < Duration::from_secs(30) {
+                harness.run_steps(3);
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            harness.run_steps(6);
+            harness.render().unwrap().save(dir.join(format!("tabs-{name}.png"))).unwrap();
         }
     }
 
