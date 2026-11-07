@@ -16,6 +16,7 @@ mathcraft-eval.workspace = true
 mathcraft-notebook.workspace = true
 mathcraft-core.workspace = true
 mathcraft-typeset.workspace = true
+mathcraft-vim.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui_plot.workspace = true
