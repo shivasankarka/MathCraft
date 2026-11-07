@@ -2,8 +2,9 @@
 //! The notebook is kept in step with the text, so switching back to cells loses nothing.
 
 use crate::doc::Doc;
+use crate::fonts;
 use crate::icons::Icon;
-use crate::theme::Theme;
+use crate::theme::{self, Theme};
 use crate::{Env, banner, highlight, insert_at_cursor, output_ui, split_at_cursor, vim_edit};
 use eframe::egui::{self, Key, Margin, Modifiers, RichText, Stroke, TextStyle};
 use mathcraft_notebook::{CellId, CellKind, CellState, Notebook};
@@ -78,6 +79,8 @@ pub fn editor(ui: &mut egui::Ui, theme: &Theme, doc: &mut Doc, vim: bool, vim_st
     let row_height = ui.text_style_height(&TextStyle::Monospace);
     let rows = ((ui.available_height() - 40.0) / row_height).max(8.0) as usize;
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        // a slot under the text for the cell-marker bands, filled in once the text is laid out
+        let bands = ui.painter().add(egui::Shape::Noop);
         let shown = egui::Frame::new().inner_margin(Margin { left: 18, right: 14, top: 14, bottom: 14 }).show(ui, |ui| {
             egui::TextEdit::multiline(&mut text)
                 .id(id)
@@ -91,6 +94,24 @@ pub fn editor(ui: &mut egui::Ui, theme: &Theme, doc: &mut Doc, vim: bool, vim_st
                 .show(ui)
         });
         let r = shown.inner;
+        let full = shown.response.rect;
+        let mut marks = Vec::new();
+        let mut line_start = true;
+        let mut lines = text.split('\n');
+        let mut line = "";
+        for row in &r.galley.rows {
+            if line_start {
+                line = lines.next().unwrap_or("");
+            }
+            if line_start && line.trim_start().starts_with("# %%") {
+                let rr = row.rect().translate(r.galley_pos.to_vec2());
+                let band = egui::Rect::from_x_y_ranges(full.x_range(), egui::Rangef::new(rr.top() - 1.0, rr.bottom() + 1.0));
+                marks.push(egui::Shape::rect_filled(band, 0.0, theme.code_bg));
+                marks.push(egui::Shape::hline(full.x_range(), band.top() + 0.5, Stroke::new(1.0, theme.border)));
+            }
+            line_start = row.ends_with_newline;
+        }
+        ui.painter().set(bands, egui::Shape::Vec(marks));
         edited |= r.response.changed();
         if want_focus {
             r.response.request_focus();
@@ -103,11 +124,12 @@ pub fn editor(ui: &mut egui::Ui, theme: &Theme, doc: &mut Doc, vim: bool, vim_st
     out
 }
 
-/// The results beside the editor: one block per code cell, the one under the cursor marked.
+/// The results beside the editor: one block per code cell. The cell under the cursor gets a quiet tinted backing
+/// and a brighter header; state shows as a small coloured dot and a word only when the cell is not up to date.
 pub fn results(ui: &mut egui::Ui, env: &mut Env, nb: &Notebook, active: Option<CellId>) {
     let theme = env.theme;
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        ui.add_space(14.0);
+        ui.add_space(10.0);
         let mut any = false;
         for (i, cell) in nb.cells().iter().enumerate() {
             if cell.kind != CellKind::Code || cell.source.trim().is_empty() {
@@ -115,40 +137,58 @@ pub fn results(ui: &mut egui::Ui, env: &mut Env, nb: &Notebook, active: Option<C
             }
             any = true;
             let here = active == Some(cell.id);
+            let backing = ui.painter().add(egui::Shape::Noop);
             let top = ui.cursor().top();
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.add_space(14.0);
+                ui.add_space(16.0);
+                ui.spacing_mut().item_spacing.x = 6.0;
                 let (label, color) = match cell.state {
                     CellState::Fresh => ("", theme.text_faint),
-                    CellState::Stale | CellState::New => ("not run", theme.warn),
+                    CellState::New => ("not run", theme.text_faint),
+                    CellState::Stale => ("stale", theme.warn),
                     CellState::Running | CellState::Queued => ("running", theme.accent),
                     CellState::Error | CellState::Blocked => ("problem", theme.danger),
                 };
-                ui.label(RichText::new(format!("Cell {}", i + 1)).size(11.5).color(if here { theme.text } else { theme.text_faint }));
+                ui.label(RichText::new(format!("Cell {}", i + 1)).font(egui::FontId::new(theme::TEXT_CAPTION, fonts::strong_family())).color(if here {
+                    theme.text_dim
+                } else {
+                    theme.text_faint
+                }));
                 if !label.is_empty() {
-                    ui.label(RichText::new(label).size(11.5).color(color));
+                    let (dot, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                    ui.painter().circle_filled(dot.center(), 2.5, color);
+                    ui.label(RichText::new(label).size(theme::TEXT_CAPTION).color(color));
                 }
             });
             ui.indent(("res", cell.id), |ui| {
-                ui.set_max_width((ui.available_width() - 12.0).max(120.0));
+                ui.set_max_width((ui.available_width() - 16.0).max(120.0));
                 for p in &cell.problems {
                     ui.add_space(4.0);
                     banner(ui, theme, Icon::Warning, theme.warn, Some(p.code()), &p.message());
                 }
                 output_ui(ui, env, cell);
             });
-            ui.add_space(12.0);
+            ui.add_space(10.0);
+            let bottom = ui.cursor().top();
+            let block = egui::Rect::from_x_y_ranges(ui.max_rect().x_range().shrink(6.0), egui::Rangef::new(top, bottom));
             if here {
-                let bottom = ui.cursor().top() - 8.0;
-                let x = ui.max_rect().left() + 5.0;
-                ui.painter().line_segment([egui::pos2(x, top + 2.0), egui::pos2(x, bottom)], Stroke::new(2.0, theme.accent));
+                ui.painter().set(backing, egui::Shape::rect_filled(block, theme::RADIUS_LARGE, theme.tint(theme.accent)));
             }
+            ui.add_space(4.0);
         }
         if !any {
-            ui.add_space(20.0);
+            ui.add_space(24.0);
             ui.horizontal(|ui| {
-                ui.add_space(14.0);
-                ui.label(RichText::new("Results appear here. Put the cursor in a cell and press Shift+Enter.").size(12.5).color(theme.text_faint));
+                ui.add_space(16.0);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    ui.label(RichText::new("No results yet").size(theme::TEXT_UI).color(theme.text_dim));
+                    ui.add(
+                        egui::Label::new(RichText::new("Put the cursor in a cell and press ⇧↵ to run it.").size(theme::TEXT_SMALL).color(theme.text_faint))
+                            .wrap(),
+                    );
+                });
             });
         }
     });
