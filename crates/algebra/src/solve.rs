@@ -155,7 +155,7 @@ fn filter(f: &Expr, x: &Expr, roots: Vec<Expr>) -> Vec<Expr> {
 
 fn satisfies(f: &Expr, x: &Expr, r: &Expr) -> bool {
     let Ok(v) = subs(f, &[(x.clone(), r.clone())]) else { return true };
-    if has_singularity(&v) || !logs_positive(&v) {
+    if has_singularity(&v) || !logs_positive(f, x, r) {
         return false;
     }
     match eval_f64(&v, &|_| None) {
@@ -165,16 +165,17 @@ fn satisfies(f: &Expr, x: &Expr, r: &Expr) -> bool {
     }
 }
 
-/// Every logarithm in `e` has a positive real argument (when the argument is a real number we can evaluate).
-fn logs_positive(e: &Expr) -> bool {
-    if let Kind::Call(name, args) = e.kind()
+/// Every logarithm in `f` has a positive real argument at `x = r` (when the argument is a real number we can evaluate).
+/// Looked at before substitution, because `log` of a negative number now folds to a complex value.
+fn logs_positive(f: &Expr, x: &Expr, r: &Expr) -> bool {
+    if let Kind::Call(name, args) = f.kind()
         && &**name == "log"
         && let [a] = args.as_slice()
-        && eval_f64(a, &|_| None).is_ok_and(|v| v <= 0.0)
+        && subs(a, &[(x.clone(), r.clone())]).is_ok_and(|v| eval_f64(&v, &|_| None).is_ok_and(|n| n <= 0.0))
     {
         return false;
     }
-    e.children().iter().all(logs_positive)
+    f.children().iter().all(|c| logs_positive(c, x, r))
 }
 
 fn is_negative(e: &Expr) -> Option<bool> {
