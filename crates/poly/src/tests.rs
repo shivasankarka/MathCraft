@@ -129,4 +129,66 @@ fn timing_of_a_large_product() {
     let t = std::time::Instant::now();
     let ag = a.mul(&g).unwrap();
     println!("a*g: {} terms in {:?}", ag.len(), t.elapsed());
+    let b = benchmark_poly([-3, -5, -7, 9, -11, -13, 15], 1);
+    let bg = b.mul(&g).unwrap();
+    let t = std::time::Instant::now();
+    let deadline = t + std::time::Duration::from_secs(120);
+    match ag.gcd_with(&bg, &mut || std::time::Instant::now() > deadline) {
+        Ok(h) => println!("gcd: {} terms in {:?}; equals g: {}", h.len(), t.elapsed(), h == g),
+        Err(e) => println!("gcd gave up after {:?}: {e}", t.elapsed()),
+    }
+}
+
+#[test]
+fn gcd_of_polynomials() {
+    let (a, b, z) = (x(3, 0), x(3, 1), x(3, 2));
+    let s = a.add(&b).unwrap();
+    let d = a.sub(&b).unwrap();
+    // gcd((x+y)^3 (x-y), (x+y)^2 (y+z)) = (x+y)^2
+    let f = s.pow(3).unwrap().mul(&d).unwrap();
+    let g = s.pow(2).unwrap().mul(&b.add(&z).unwrap()).unwrap();
+    assert_eq!(f.gcd(&g).unwrap(), s.pow(2).unwrap());
+    // content: gcd(6 (x+y), 4 (x+y)(x-y)) = 2 (x+y)
+    let h1 = s.scale(&IBig::from(6));
+    let h2 = s.mul(&d).unwrap().scale(&IBig::from(4));
+    assert_eq!(h1.gcd(&h2).unwrap(), s.scale(&IBig::from(2)));
+    // coprime
+    assert_eq!(a.gcd(&b).unwrap(), c(3, 1));
+    assert_eq!(s.gcd(&d).unwrap(), c(3, 1));
+    // constants, zero, sign
+    assert_eq!(c(3, 12).gcd(&c(3, -18)).unwrap(), c(3, 6));
+    assert_eq!(Poly::zero(3).gcd(&s.neg()).unwrap(), s);
+    assert_eq!(f.gcd(&Poly::zero(3)).unwrap(), f);
+    // a common factor in only some variables: gcd(x z, y z) = z
+    assert_eq!(a.mul(&z).unwrap().gcd(&b.mul(&z).unwrap()).unwrap(), z);
+}
+
+#[test]
+fn gcd_divides_both_and_cofactors_are_coprime() {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut random = |terms: usize| {
+        let ts = (0..terms)
+            .map(|_| (pack(&[(next() % 3) as u32, (next() % 3) as u32, (next() % 3) as u32]).unwrap(), IBig::from((next() % 9) as i64 - 4)))
+            .collect();
+        Poly::from_terms(3, ts)
+    };
+    for _ in 0..25 {
+        let (common, p, q) = (random(4), random(3), random(3));
+        if common.is_zero() || p.is_zero() || q.is_zero() {
+            continue;
+        }
+        let (f, g) = (common.mul(&p).unwrap(), common.mul(&q).unwrap());
+        let h = f.gcd(&g).unwrap();
+        assert!(f.div_exact(&h).unwrap().is_some() && g.div_exact(&h).unwrap().is_some(), "gcd divides both");
+        // the common factor divides the gcd
+        assert!(h.div_exact(&common).unwrap().is_some() || h.div_exact(&common.neg()).unwrap().is_some(), "{common:?} | {h:?}");
+        let (cf, cg) = (f.div_exact(&h).unwrap().unwrap(), g.div_exact(&h).unwrap().unwrap());
+        assert_eq!(cf.gcd(&cg).unwrap(), c(3, 1).scale(&cf.gcd(&cg).unwrap().content()), "cofactors are coprime up to an integer");
+    }
 }
