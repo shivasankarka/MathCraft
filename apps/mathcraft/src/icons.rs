@@ -19,6 +19,8 @@ pub enum Icon {
     Warning,
     /// A disc with an exclamation mark: an error from running.
     Error,
+    /// A magnifying glass: search fields.
+    Search,
 }
 
 /// Paint `icon` centred in `rect`.
@@ -82,6 +84,11 @@ pub fn paint(painter: &Painter, icon: Icon, rect: Rect, color: Color32) {
             painter.circle_filled(c, 0.95 * w, color);
             exclamation(painter, c, w, color);
         }
+        Icon::Search => {
+            let lens = pos2(c.x - 0.15 * w, c.y - 0.15 * w);
+            painter.circle_stroke(lens, 0.62 * w, stroke);
+            line(pos2(lens.x + 0.46 * w, lens.y + 0.46 * w), pos2(c.x + 0.9 * w, c.y + 0.9 * w));
+        }
     }
 }
 
@@ -98,6 +105,54 @@ fn exclamation(painter: &Painter, c: Pos2, w: f32, shape: Color32) {
 pub fn badge(painter: &Painter, rect: Rect, letter: &str, color: Color32) {
     painter.rect_filled(rect, 4.0, color.gamma_multiply(0.16));
     painter.text(rect.center(), egui::Align2::CENTER_CENTER, letter, FontId::new(rect.height() * 0.68, strong_family()), color);
+}
+
+/// Split a shortcut as egui formats it ("⇧⌘S", "Ctrl+Shift+S", "F1") into its keys, one per cap.
+pub fn split_keys(shortcut: &str) -> Vec<String> {
+    let s = shortcut.trim();
+    if s.chars().count() > 1 && s.contains('+') {
+        return s.split('+').filter(|k| !k.is_empty()).map(str::to_owned).collect();
+    }
+    let mut keys = Vec::new();
+    let mut rest = String::new();
+    for c in s.chars() {
+        if matches!(c, '⌃' | '⌥' | '⇧' | '⌘') && rest.is_empty() {
+            keys.push(c.to_string());
+        } else if !c.is_whitespace() {
+            rest.push(c);
+        }
+    }
+    if !rest.is_empty() {
+        keys.push(rest);
+    }
+    keys
+}
+
+/// Paint `shortcut` as a row of small keycaps ending at `right` (vertically centred on it). Returns the width used.
+pub fn keycaps(painter: &Painter, theme: &Theme, right: Pos2, shortcut: &str) -> f32 {
+    const H: f32 = 18.0;
+    const GAP: f32 = 3.0;
+    let font = FontId::proportional(crate::theme::TEXT_CAPTION - 0.5);
+    let galleys: Vec<_> = split_keys(shortcut).into_iter().map(|k| painter.layout_no_wrap(k, font.clone(), theme.text_dim)).collect();
+    let widths: Vec<f32> = galleys.iter().map(|g| (g.size().x + 10.0).max(H)).collect();
+    let total = widths.iter().sum::<f32>() + GAP * widths.len().saturating_sub(1) as f32;
+    let mut x = right.x - total;
+    for (g, w) in galleys.into_iter().zip(widths) {
+        let r = Rect::from_min_size(pos2(x, right.y - H / 2.0), vec2(w, H));
+        // a cap: the face, a hairline edge and a slightly heavier lower edge, as printed keys look
+        painter.rect_filled(r.translate(vec2(0.0, 1.0)), crate::theme::RADIUS_SMALL, theme.border_strong);
+        painter.rect(r, crate::theme::RADIUS_SMALL, theme.surface, Stroke::new(1.0, theme.border_strong), egui::StrokeKind::Inside);
+        painter.galley(pos2(r.center().x - g.size().x / 2.0, r.center().y - g.size().y / 2.0), g, theme.text_dim);
+        x += w + GAP;
+    }
+    total
+}
+
+/// The small "x" of a close button, drawn thin and round-capped so it reads as a control rather than a cross.
+pub fn close_glyph(painter: &Painter, center: Pos2, half: f32, color: Color32) {
+    let s = Stroke::new(1.25, color);
+    painter.line_segment([center + vec2(-half, -half), center + vec2(half, half)], s);
+    painter.line_segment([center + vec2(-half, half), center + vec2(half, -half)], s);
 }
 
 /// A flat square button holding one icon. Dim until hovered.
@@ -137,4 +192,18 @@ pub fn primary_button(ui: &mut Ui, theme: &Theme, icon: Icon, label: &str, tip: 
         ui.painter().galley(pos2(rect.left() + 9.0 + 12.0 + 6.0, rect.center().y - galley.size().y / 2.0), galley, theme.text);
     }
     resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(tip)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_keys;
+
+    #[test]
+    fn shortcuts_split_into_keys() {
+        assert_eq!(split_keys("⇧⌘S"), ["⇧", "⌘", "S"]);
+        assert_eq!(split_keys("Ctrl+Shift+Enter"), ["Ctrl", "Shift", "Enter"]);
+        assert_eq!(split_keys("F1"), ["F1"]);
+        assert_eq!(split_keys("+"), ["+"]);
+        assert!(split_keys("").is_empty());
+    }
 }
