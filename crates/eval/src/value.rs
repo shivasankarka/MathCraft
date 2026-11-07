@@ -264,3 +264,43 @@ impl fmt::Display for Value {
         }
     }
 }
+
+impl Value {
+    /// LaTeX for values we can typeset: expressions, lists and matrices of them (a list of equal-length lists is a
+    /// matrix), arrays, booleans and `None`. Other values have no LaTeX form.
+    pub fn latex(&self) -> Option<String> {
+        use mathcraft_core::latex::latex;
+        let matrix = |rows: Vec<Vec<String>>| {
+            let body = rows.into_iter().map(|r| r.join(" & ")).collect::<Vec<_>>().join(" \\\\\n  ");
+            format!("\\begin{{bmatrix}}\n  {body}\n\\end{{bmatrix}}")
+        };
+        match self {
+            Value::Expr(e) => Some(latex(e)),
+            Value::List(items) | Value::Tuple(items) => {
+                let tuple = matches!(self, Value::Tuple(_));
+                if !tuple && let Some(rows) = latex_rows(items) {
+                    return Some(matrix(rows));
+                }
+                let parts: Vec<String> = items.iter().map(|i| i.latex().unwrap_or_else(|| format!("\\text{{{i}}}"))).collect();
+                let (open, close) = if tuple { ("\\left(", "\\right)") } else { ("\\left[", "\\right]") };
+                Some(format!("{open}{}{close}", parts.join(",\\,")))
+            }
+            Value::Array(a) if !a.is_empty() => Some(matrix(a.rows_of_exprs().iter().map(|r| r.iter().map(latex).collect()).collect())),
+            Value::Bool(_) | Value::None => Some(format!("\\text{{{self}}}")),
+            _ => None,
+        }
+    }
+}
+
+fn latex_rows(items: &[Value]) -> Option<Vec<Vec<String>>> {
+    let mut width = None;
+    let mut rows = Vec::new();
+    for item in items {
+        let Value::List(cells) = item else { return None };
+        if cells.is_empty() || *width.get_or_insert(cells.len()) != cells.len() {
+            return None;
+        }
+        rows.push(cells.iter().map(|c| if let Value::Expr(e) = c { Some(mathcraft_core::latex::latex(e)) } else { None }).collect::<Option<Vec<_>>>()?);
+    }
+    (!rows.is_empty()).then_some(rows)
+}
