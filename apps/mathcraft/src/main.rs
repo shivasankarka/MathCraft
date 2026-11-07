@@ -1723,6 +1723,36 @@ fn value_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, v: &Value) {
         return;
     }
     value_math(ui, env, cell, v);
+    if let Some(note) = unevaluated_note(v) {
+        ui.add_space(4.0);
+        ui.label(RichText::new(note).size(11.5).color(env.theme.text_faint));
+    }
+}
+
+/// A fade from the background colour into transparent over the edge of `rect`: the right edge if `right`, else the left.
+fn edge_fade(ui: &egui::Ui, rect: egui::Rect, right: bool, bg: Color32) {
+    const WIDTH: f32 = 36.0;
+    let (x0, x1) = if right { (rect.right() - WIDTH, rect.right()) } else { (rect.left(), rect.left() + WIDTH) };
+    let (c0, c1) = if right { (Color32::TRANSPARENT, bg) } else { (bg, Color32::TRANSPARENT) };
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(egui::pos2(x0, rect.top()), c0);
+    mesh.colored_vertex(egui::pos2(x1, rect.top()), c1);
+    mesh.colored_vertex(egui::pos2(x1, rect.bottom()), c1);
+    mesh.colored_vertex(egui::pos2(x0, rect.bottom()), c0);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    ui.painter().add(egui::Shape::mesh(mesh));
+}
+
+/// A result that is still an unevaluated call means no closed form was found; say so rather than leave it unexplained.
+fn unevaluated_note(v: &Value) -> Option<&'static str> {
+    let Value::Expr(e) = v else { return None };
+    match e.kind() {
+        mathcraft_core::Kind::Call(name, _) if &**name == "integrate" => {
+            Some("No closed form found. A definite integral, integrate(f, (x, a, b)), is computed numerically.")
+        }
+        _ => None,
+    }
 }
 
 /// A vector or matrix: typeset, with its kind, shape and element type underneath.
@@ -1738,7 +1768,16 @@ fn value_math(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, v: &Value) {
         Some(layout) => {
             let theme = env.theme;
             let resp = if layout.width + 8.0 > ui.available_width() {
-                egui::ScrollArea::horizontal().id_salt(("out", cell.id)).show(ui, |ui| math_view::show(ui, &layout, theme, math_view::SIZE)).inner
+                let shown = egui::ScrollArea::horizontal().id_salt(("out", cell.id)).show(ui, |ui| math_view::show(ui, &layout, theme, math_view::SIZE));
+                // a soft edge on the side that has more, so a cut-off result reads as scrollable
+                let view = shown.inner_rect;
+                if shown.state.clamped_offset().x > 1.0 {
+                    edge_fade(ui, view, false, theme.bg);
+                }
+                if shown.state.clamped_offset().x + view.width() < shown.content_size.x - 1.0 {
+                    edge_fade(ui, view, true, theme.bg);
+                }
+                shown.inner
             } else {
                 math_view::show(ui, &layout, theme, math_view::SIZE)
             };
