@@ -67,6 +67,15 @@ pub struct Vim {
     pending_g: bool,
     pending_find: Option<char>,
     pending_replace: bool,
+    /// `i` or `a` after an operator or in visual mode, waiting for the object (`w`, `"`, `(` ...).
+    pending_obj: Option<char>,
+    /// Dot repeat: the keys of the command being typed, whether it is worth recording, and whether it changed text.
+    rec: Vec<Key>,
+    rec_ok: bool,
+    dirty: bool,
+    insert_from: usize,
+    last_change: Option<(Vec<Key>, String)>,
+    replaying: bool,
     reg: String,
     reg_linewise: bool,
     undo: Vec<(String, usize)>,
@@ -275,6 +284,13 @@ impl Vim {
             pending_g: false,
             pending_find: None,
             pending_replace: false,
+            pending_obj: None,
+            rec: Vec::new(),
+            rec_ok: false,
+            dirty: false,
+            insert_from: 0,
+            last_change: None,
+            replaying: false,
             reg: String::new(),
             reg_linewise: false,
             undo: Vec::new(),
@@ -314,6 +330,7 @@ impl Vim {
             pending.push('g');
         }
         pending.extend(self.pending_find);
+        pending.extend(self.pending_obj);
         if self.mode == Mode::Command {
             return format!("{}{}", self.cmd_kind, self.cmd);
         }
@@ -332,6 +349,18 @@ impl Vim {
         self.pending_g = false;
         self.pending_find = None;
         self.pending_replace = false;
+        self.pending_obj = None;
+    }
+
+    /// Nothing typed yet for the next command.
+    fn idle(&self) -> bool {
+        self.mode == Mode::Normal
+            && self.count == 0
+            && self.op.is_none()
+            && !self.pending_g
+            && self.pending_find.is_none()
+            && !self.pending_replace
+            && self.pending_obj.is_none()
     }
 
     /// Feed one key. `text` and `cursor` (char index) are edited in place.
@@ -340,6 +369,12 @@ impl Vim {
             if key == Key::Esc || key == Key::Ctrl('[') {
                 let chars: Vec<char> = text.chars().collect();
                 let cur = (*cursor).min(chars.len());
+                if self.rec_ok && !self.replaying {
+                    // what was typed, for `.` (a plain run of insertions; edits with backspace are not replayed)
+                    let typed = if cur >= self.insert_from { text_of(&chars, self.insert_from, cur) } else { String::new() };
+                    self.last_change = Some((std::mem::take(&mut self.rec), typed));
+                }
+                self.rec_ok = false;
                 self.mode = Mode::Normal;
                 // like Vim, the cursor steps back onto the last typed character
                 *cursor = if cur > line_start(&chars, cur) { cur - 1 } else { cur };
@@ -348,9 +383,43 @@ impl Vim {
             }
             return Reply::Pass;
         }
+        if key == Key::Char('.')
+            && self.mode == Mode::Normal
+            && self.op.is_none()
+            && !self.pending_g
+            && self.pending_find.is_none()
+            && !self.pending_replace
+            && self.pending_obj.is_none()
+            && !self.replaying
+        {
+            self.repeat(text, cursor);
+            return Reply::Eaten;
+        }
+        if !self.replaying {
+            if self.idle() {
+                self.rec.clear();
+                self.rec_ok = true;
+                self.dirty = false;
+            }
+            if self.rec_ok {
+                self.rec.push(key);
+            }
+        }
         let mut st = State { chars: text.chars().collect(), cur: (*cursor).min(text.chars().count()) };
         let before = st.chars.len();
         let reply = if self.mode == Mode::Command { self.command_key(&mut st, key) } else { self.normal_key(&mut st, key) };
+        if !self.replaying {
+            if matches!(self.mode, Mode::Visual | Mode::VisualLine | Mode::Command) {
+                self.rec_ok = false;
+            } else if self.mode == Mode::Insert {
+                self.insert_from = st.cur;
+            } else if self.rec_ok && self.idle() {
+                if self.dirty {
+                    self.last_change = Some((std::mem::take(&mut self.rec), String::new()));
+                }
+                self.rec_ok = false;
+            }
+        }
         // keep the cursor on a real character outside insert mode
         if self.mode != Mode::Insert && self.mode != Mode::Command {
             st.cur = st.cur.min(last_in_line(&st.chars, st.cur.min(st.chars.len())));
@@ -364,7 +433,36 @@ impl Vim {
         reply
     }
 
+    /// `.`: run the last change again, typing its inserted text if it entered insert mode.
+    fn repeat(&mut self, text: &mut String, cursor: &mut usize) {
+        let Some((keys, typed)) = self.last_change.clone() else { return };
+        self.replaying = true;
+        let times = self.count1();
+        self.count = 0;
+        for _ in 0..times {
+            self.replay(&keys, &typed, text, cursor);
+        }
+        self.replaying = false;
+    }
+
+    fn replay(&mut self, keys: &[Key], typed: &str, text: &mut String, cursor: &mut usize) {
+        for k in keys {
+            self.handle(text, cursor, *k);
+        }
+        if self.mode == Mode::Insert {
+            let mut chars: Vec<char> = text.chars().collect();
+            let at = (*cursor).min(chars.len());
+            for (i, ch) in typed.chars().enumerate() {
+                chars.insert(at + i, ch);
+            }
+            *cursor = at + typed.chars().count();
+            *text = chars.into_iter().collect();
+            self.handle(text, cursor, Key::Esc);
+        }
+    }
+
     fn snapshot(&mut self, st: &State) {
+        self.dirty = true;
         self.undo.push((st.chars.iter().collect(), st.cur));
         if self.undo.len() > MAX_UNDO {
             self.undo.remove(0);
@@ -474,6 +572,23 @@ impl Vim {
         if c.is_ascii_digit() && (c != '0' || self.count > 0) {
             let d = c.to_digit(10).unwrap_or(0) as usize;
             self.count = (self.count * 10 + d).min(MAX_COUNT);
+            return Reply::Eaten;
+        }
+
+        if let Some(kind) = self.pending_obj.take() {
+            if let Some((a, b)) = object(&st.chars, st.cur, kind == 'a', c) {
+                if visual {
+                    self.anchor = a;
+                    st.cur = b.saturating_sub(1).max(a);
+                } else if let Some(op) = self.op {
+                    self.operate(st, op, a, b, false);
+                }
+            }
+            self.clear_pending();
+            return Reply::Eaten;
+        }
+        if (self.op.is_some() || visual) && matches!(c, 'i' | 'a') {
+            self.pending_obj = Some(c);
             return Reply::Eaten;
         }
 
@@ -840,6 +955,85 @@ impl Vim {
     }
 }
 
+/// The range `[a, b)` of a text object around `cur`: `w` (word), a quote (`"`, `'`, `` ` ``) or a bracket pair
+/// (`(` `)` `b`, `[` `]`, `{` `}` `B`, `<` `>`). `around` includes the delimiters (or the trailing space of a word).
+fn object(c: &[char], cur: usize, around: bool, kind: char) -> Option<(usize, usize)> {
+    match kind {
+        'w' => {
+            let here = class(at(c, cur));
+            let (mut a, mut b) = (cur, cur + 1);
+            while a > line_start(c, cur) && class(at(c, a - 1)) == here {
+                a -= 1;
+            }
+            while b < line_end(c, cur) && class(at(c, b)) == here {
+                b += 1;
+            }
+            if around && here != Class::Space {
+                let end = b;
+                while b < line_end(c, cur) && class(at(c, b)) == Class::Space {
+                    b += 1;
+                }
+                if b == end {
+                    while a > line_start(c, cur) && class(at(c, a - 1)) == Class::Space {
+                        a -= 1;
+                    }
+                }
+            }
+            (cur < c.len()).then_some((a, b))
+        }
+        '"' | '\'' | '`' => {
+            let (s, e) = (line_start(c, cur), line_end(c, cur));
+            let marks: Vec<usize> = (s..e).filter(|i| at(c, *i) == Some(kind) && (*i == s || at(c, *i - 1) != Some('\\'))).collect();
+            let pair = marks.chunks(2).find(|p| p.len() == 2 && p.first().is_some_and(|a| *a <= cur) && p.get(1).is_some_and(|b| cur <= *b))?;
+            let (a, b) = (*pair.first()?, *pair.get(1)?);
+            Some(if around { (a, b + 1) } else { (a + 1, b) })
+        }
+        '(' | ')' | 'b' | '[' | ']' | '{' | '}' | 'B' | '<' | '>' => {
+            let (open, close) = match kind {
+                '(' | ')' | 'b' => ('(', ')'),
+                '[' | ']' => ('[', ']'),
+                '{' | '}' | 'B' => ('{', '}'),
+                _ => ('<', '>'),
+            };
+            // the nearest unmatched opener at or before the cursor
+            let mut depth = 0usize;
+            let mut a = None;
+            for i in (0..=cur.min(c.len().saturating_sub(1))).rev() {
+                match at(c, i) {
+                    Some(ch) if ch == close && i != cur => depth += 1,
+                    Some(ch) if ch == open => {
+                        if depth == 0 {
+                            a = Some(i);
+                            break;
+                        }
+                        depth -= 1;
+                    }
+                    _ => {}
+                }
+            }
+            let a = a?;
+            let mut depth = 0usize;
+            let b = (a + 1..c.len()).find(|i| match at(c, *i) {
+                Some(ch) if ch == open => {
+                    depth += 1;
+                    false
+                }
+                Some(ch) if ch == close => {
+                    if depth == 0 {
+                        true
+                    } else {
+                        depth -= 1;
+                        false
+                    }
+                }
+                _ => false,
+            })?;
+            Some(if around { (a, b + 1) } else { (a + 1, b) })
+        }
+        _ => None,
+    }
+}
+
 fn flip(kind: char) -> char {
     match kind {
         'f' => 'F',
@@ -960,6 +1154,35 @@ mod tests {
         assert_eq!(text("abc", 0, "vlcX<Esc>"), "Xc");
         assert_eq!(run("abc", 0, "v").2.mode(), Mode::Visual);
         assert_eq!(run("abc", 0, "v<Esc>").2.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn text_objects() {
+        assert_eq!(text("foo bar baz", 5, "diw"), "foo  baz");
+        assert_eq!(text("foo bar baz", 5, "daw"), "foo baz");
+        assert_eq!(text("foo bar", 5, "daw"), "foo", "no trailing space: takes the leading one");
+        assert_eq!(text("foo bar baz", 5, "ciwX<Esc>"), "foo X baz");
+        assert_eq!(text("f(a, b) + 1", 3, "di("), "f() + 1");
+        assert_eq!(text("f(a, b) + 1", 3, "da("), "f + 1");
+        assert_eq!(text("f(g(x), y)", 4, "di("), "f(g(), y)", "innermost pair");
+        assert_eq!(text("say \"hi there\" ok", 6, "di\""), "say \"\" ok");
+        assert_eq!(text("say \"hi\" ok", 6, "da\""), "say  ok");
+        assert_eq!(text("x = [1, 2]", 6, "yi[$p"), "x = [1, 2]1, 2");
+        assert_eq!(text("a (b c) d", 4, "vi(d"), "a () d");
+        assert_eq!(text("no pair here", 3, "di("), "no pair here");
+    }
+
+    #[test]
+    fn dot_repeats_the_last_change() {
+        assert_eq!(text("a b c d", 0, "dw."), "c d");
+        assert_eq!(text("a b c d e", 0, "dw2."), "d e", "2. repeats it twice");
+        assert_eq!(text("one two three", 0, "cwX<Esc>w."), "X X three");
+        assert_eq!(text("a\nb\nc", 0, "dd."), "c");
+        assert_eq!(text("abc", 0, "x."), "c");
+        assert_eq!(text("a b", 0, "Ax<Esc>0."), "a bxx");
+        assert_eq!(text("foo(a) bar(b)", 4, "ci(Z<Esc>f(l."), "foo(Z) bar(Z)");
+        // yank and motions are not changes
+        assert_eq!(text("a b c", 0, "xwyw."), "  c", "a yank is not a change, so . repeats the x");
     }
 
     #[test]
