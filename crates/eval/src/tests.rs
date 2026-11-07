@@ -292,3 +292,15 @@ fn quartics_match_known_roots_and_float_sqrt_is_imaginary() {
     let r = ev("abs(subs(x**4 + x + 1, x, N(solve(x**4 + x + 1, x)[3]))) < 1e-9");
     assert_eq!(r, "True");
 }
+
+#[test]
+fn electron_positron_to_muons_cross_section() {
+    // the textbook tree-level result sigma = 4 pi alpha^2 / (3 s)
+    let src = "\
+LH = contract(gamma_trace(slash(p2), gamma(mu), slash(p1), gamma(nu)) * gamma_trace(slash(p3), gamma(mu), slash(p4), gamma(nu)))
+dots = [(pdot(p1, p2), s/2), (pdot(p3, p4), s/2), (pdot(p1, p3), -t/2), (pdot(p2, p4), -t/2), (pdot(p1, p4), -u/2), (pdot(p2, p3), -u/2)]
+M2 = g**4 / s**2 * subs(LH, dots) / 4
+M2c = simplify(subs(M2, [(t, -s*(1 - c)/2), (u, -s*(1 + c)/2)]))
+simplify(subs(2*pi*integrate(M2c/(64*pi**2*s), (c, -1, 1)), g, sqrt(4*pi*a)))";
+    assert_eq!(ev(src), "4*a**2*pi/(3*s)");
+}
