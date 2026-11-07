@@ -167,7 +167,7 @@ pub fn show(ui: &mut Ui, source: &str, theme: &Theme) -> Response {
                         let (bar, _) = ui.allocate_exact_size(egui::vec2(3.0, 18.0), Sense::hover());
                         ui.painter().rect_filled(bar, 1.5, theme.border_strong);
                         let width = ui.available_width();
-                        ui.label(job(&inline(q.trim()), BODY, theme, theme.text_dim, width));
+                        ui.add(egui::Label::new(job(&inline(q.trim()), BODY, theme, theme.text_dim, width)).wrap());
                     });
                 } else {
                     if !para.is_empty() {
@@ -194,7 +194,7 @@ fn list_item(ui: &mut Ui, indent: usize, marker: &str, text: &str, theme: &Theme
         ui.label(RichText::new(marker).size(BODY).color(theme.text_faint));
         ui.add_space(6.0);
         let width = ui.available_width();
-        ui.label(job(&inline(text.trim()), BODY, theme, theme.text, width));
+        ui.add(egui::Label::new(job(&inline(text.trim()), BODY, theme, theme.text, width)).wrap());
     });
 }
 
