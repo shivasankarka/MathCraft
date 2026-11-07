@@ -77,6 +77,11 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("ceil", "ceil(x)", "smallest integer not below x"),
     ("factorial", "factorial(n)", "n! as an exact integer"),
     ("binomial", "binomial(n, k)", "number of ways to choose k of n"),
+    ("summation", "summation(f, (k, a, b))", "the sum of f for k from a to b: numeric bounds, polynomials in k, geometric series (b = oo assumes |ratio| < 1)"),
+    ("isprime", "isprime(n)", "is n a prime number"),
+    ("nextprime", "nextprime(n)", "the smallest prime greater than n"),
+    ("totient", "totient(n)", "Euler's totient: how many of 1..n are coprime to n"),
+    ("factorint", "factorint(n)", "prime factorisation as [(prime, exponent), ...]"),
     ("gcd", "gcd(a, b)", "greatest common divisor of integers or of integer polynomials"),
     ("lcm", "lcm(a, b)", "least common multiple of integers"),
     ("sin", "sin(x)", "sine (radians); exact for multiples of pi/6 and pi/4"),
@@ -92,6 +97,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("acosh", "acosh(x)", "inverse hyperbolic cosine"),
     ("atanh", "atanh(x)", "inverse hyperbolic tangent"),
     ("erf", "erf(x)", "error function, 2/sqrt(pi) times the integral of exp(-t**2) from 0 to x"),
+    ("Gamma", "Gamma(x)", "the Gamma function (capital G; gamma is the Dirac matrix); exact for integers and half-integers"),
     ("sec", "sec(x)", "secant, 1/cos(x)"),
     ("csc", "csc(x)", "cosecant, 1/sin(x)"),
     ("cot", "cot(x)", "cotangent, cos(x)/sin(x)"),
@@ -138,6 +144,10 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("shape", "shape(a)", "dimensions of a vector or matrix"),
     ("dot", "dot(u, v)", "dot product of two vectors"),
     ("norm", "norm(v)", "Euclidean length of a vector"),
+    ("eigenvals", "eigenvals(matrix)", "eigenvalues of an exact matrix, repeated by multiplicity"),
+    ("eigenvects", "eigenvects(matrix)", "[(eigenvalue, multiplicity, [eigenvectors])] of an exact matrix"),
+    ("nullspace", "nullspace(matrix)", "a basis of the vectors v with matrix @ v == 0"),
+    ("charpoly", "charpoly(matrix, x)", "det(matrix - x*I), the characteristic polynomial"),
     ("det", "det(matrix)", "determinant"),
     ("inv", "inv(matrix)", "inverse of a square matrix"),
     ("transpose", "transpose(matrix)", "swap rows and columns"),
@@ -601,6 +611,33 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             }
             Ok(Value::Expr(Expr::big(acc)))
         }
+        "summation" => {
+            a.limits(name, 2, 2)?;
+            let f = a.expr(0)?;
+            let (Value::Tuple(range) | Value::List(range)) = a.get(1)? else { return err("summation(f, (k, a, b)) sums f over k = a..b") };
+            let [k, lo, hi] = range.as_slice() else { return err("the range is written (k, a, b)") };
+            match alg::summation(&f, &as_symbol(k)?, &lo.to_expr()?, &hi.to_expr()?)? {
+                Some(s) => Ok(Value::from_expr(s)),
+                None => err("no closed form found for this sum"),
+            }
+        }
+        "isprime" | "nextprime" | "totient" | "factorint" => {
+            a.limits(name, 1, 1)?;
+            let n = a.int(0)?;
+            let Ok(n) = u64::try_from(n) else { return err(format!("{name}() needs a non-negative integer that fits in 64 bits")) };
+            let stuck = || EvalError::new(format!("{name}({n}): the number has no small factors and the search ran out of budget"));
+            match name {
+                "isprime" => Ok(Value::Bool(crate::numtheory::is_prime(n))),
+                "nextprime" => crate::numtheory::next_prime(n).map(|p| Value::Expr(Expr::big(IBig::from(p)))).ok_or_else(stuck),
+                "totient" => crate::numtheory::totient(n).map(|p| Value::Expr(Expr::big(IBig::from(p)))).ok_or_else(stuck),
+                _ => {
+                    let f = crate::numtheory::factor(n).ok_or_else(stuck)?;
+                    Ok(Value::list(
+                        f.into_iter().map(|(p, k)| Value::Tuple(Arc::new(vec![Value::Expr(Expr::big(IBig::from(p))), Value::int(i64::from(k))]))).collect(),
+                    ))
+                }
+            }
+        }
         "gcd" | "lcm" => {
             a.limits(name, 2, 2)?;
             if let (Some(Value::Expr(p)), Some(Value::Expr(q))) = (a.pos.first(), a.pos.get(1))
@@ -644,7 +681,7 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             })?;
             check_depth(it, out)
         }
-        "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh" | "erf" | "exp" | "sqrt" => {
+        "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh" | "erf" | "Gamma" | "exp" | "sqrt" => {
             unary_math(name, &a, it)
         }
         "sec" | "csc" | "cot" => {
@@ -932,6 +969,27 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
                 "inv" => Ok(Value::Array(Arc::new(arr.inverse()?))),
                 "transpose" => Ok(Value::Array(Arc::new(arr.transpose()))),
                 _ => Ok(Value::int(i64::try_from(arr.rank()?).unwrap_or(0))),
+            }
+        }
+        "eigenvals" | "eigenvects" | "nullspace" | "charpoly" if matches!(a.pos.first(), Some(Value::Array(_))) => {
+            let Value::Array(arr) = a.get(0)? else { return err("expected a matrix") };
+            match name {
+                "eigenvals" => {
+                    a.limits(name, 1, 1)?;
+                    arr.eigenvals()
+                }
+                "eigenvects" => {
+                    a.limits(name, 1, 1)?;
+                    arr.eigenvects()
+                }
+                "nullspace" => {
+                    a.limits(name, 1, 1)?;
+                    arr.nullspace()
+                }
+                _ => {
+                    a.limits(name, 2, 2)?;
+                    arr.charpoly(&as_symbol(a.get(1)?)?)
+                }
             }
         }
         "vec" | "matrix" => {
