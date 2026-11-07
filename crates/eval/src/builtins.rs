@@ -74,7 +74,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("ceil", "ceil(x)", "smallest integer not below x"),
     ("factorial", "factorial(n)", "n! as an exact integer"),
     ("binomial", "binomial(n, k)", "number of ways to choose k of n"),
-    ("gcd", "gcd(a, b)", "greatest common divisor of integers"),
+    ("gcd", "gcd(a, b)", "greatest common divisor of integers or of integer polynomials"),
     ("lcm", "lcm(a, b)", "least common multiple of integers"),
     ("sin", "sin(x)", "sine (radians); exact for multiples of pi/6 and pi/4"),
     ("cos", "cos(x)", "cosine"),
@@ -95,6 +95,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("symbols", "symbols('x y z')", "declare symbols (also names of unknown functions): x, y = symbols('x y')"),
     ("Eq", "Eq(lhs, rhs)", "an equation, for solve()"),
     ("expand", "expand(expr)", "multiply out products and powers of sums"),
+    ("cancel", "cancel(expr)", "cancel common factors of a fraction (any number of symbols)"),
     ("factor", "factor(poly)", "factor a polynomial over the rationals (rational roots)"),
     ("simplify", "simplify(expr)", "try expanding, factoring and sin^2+cos^2=1; keep the smallest form"),
     ("N", "N(expr)", "numeric approximation; symbols are kept"),
@@ -133,6 +134,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
 
 const METHODS: &[&str] = &[
     "expand",
+    "cancel",
     "factor",
     "simplify",
     "subs",
@@ -566,6 +568,15 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
         }
         "gcd" | "lcm" => {
             a.limits(name, 2, 2)?;
+            if let (Some(Value::Expr(p)), Some(Value::Expr(q))) = (a.pos.first(), a.pos.get(1))
+                && !(p.as_i64().is_some() && q.as_i64().is_some())
+            {
+                let r = if name == "gcd" { alg::poly_gcd(p, q)? } else { alg::poly_lcm(p, q)? };
+                return match r {
+                    Some(e) => Ok(Value::Expr(e)),
+                    None => err(format!("{name}() of expressions needs polynomials with integer coefficients")),
+                };
+            }
             let (mut x, mut y) = (i128::from(a.int(0)?).abs(), i128::from(a.int(1)?).abs());
             let product = x * y;
             while y != 0 {
@@ -623,12 +634,13 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             a.limits(name, 2, 2)?;
             Ok(Value::Expr(Expr::eq(a.expr(0)?, a.expr(1)?)))
         }
-        "expand" | "simplify" | "factor" => {
+        "expand" | "simplify" | "factor" | "cancel" => {
             a.limits(name, 1, 1)?;
             let out = broadcast(a.get(0)?, &mut |e| {
                 Ok(match name {
                     "expand" => alg::expand(e)?,
                     "simplify" => alg::simplify(e)?,
+                    "cancel" => alg::cancel(e)?,
                     _ => alg::factor(e)?,
                 })
             })?;

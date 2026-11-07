@@ -269,6 +269,12 @@ fn exports_functions_as_python_and_rust() {
     assert_eq!(ev("len(nroots(x**5 - x - 1))"), "5");
     assert_eq!(ev("solve(log(x) + log(x - 1) - log(2), x)"), "[2]");
     assert_eq!(ev("solve(2**x - 8, x)"), "[3]");
+    assert_eq!(ev("gcd(x**2 - y**2, x**2 + 2*x*y + y**2)"), "x + y");
+    assert_eq!(ev("lcm(x**2 - 1, x**2 + x)"), "x**3 - x");
+    assert_eq!(ev("gcd(6*x*y, 4*x*z)"), "2*x");
+    assert_eq!(ev("gcd(12, 18)"), "6");
+    assert_eq!(ev("cancel((x**2 - y**2)/(x**2 + 2*x*y + y**2))"), "(x - y)/(x + y)");
+    assert_eq!(ev("cancel((x**3 - y**3)/(x - y))"), "x**2 + x*y + y**2");
     assert_eq!(ev("diff(x^3 + x^2, x)"), ev("diff(x**3 + x**2, x)"), "^ is a power");
     assert_eq!(ev("latex(x**2/3)"), "'\\frac{x^{2}}{3}'");
     assert!(ev("latex([[1, 2], [3, x]])").contains("\\begin{bmatrix}\n  1 & 2 \\\\\n  3 & x\n\\end{bmatrix}"));
