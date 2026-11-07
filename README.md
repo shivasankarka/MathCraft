@@ -62,7 +62,7 @@ Use `**` for powers (`^` is XOR in Python and gives a helpful error). Declare sy
 
 ## Limitations
 
-- No classes, imports, dicts, sets, slices or f-strings in the language yet (a clear message names the line).
+- No classes, imports, dicts or sets in the language yet (a clear message names the line).
 - `solve` handles polynomials up to degree 4 in closed form (`nroots` for any degree), simple log/exp/trig equations
   and linear systems; no nonlinear systems or inequalities.
 - `integrate` has no special functions; an integral with no closed form stays as `integrate(...)`.
