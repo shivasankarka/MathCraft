@@ -2114,7 +2114,8 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder()
             .with_size(vec2(900.0, 600.0))
             .build_ui_state(|ui, app: &mut Option<App>| app.get_or_insert_with(|| App::with_context(ui.ctx().clone(), None)).show(ui), None);
-        harness.run();
+        // the welcome notebook is still running (a spinner repaints), so do not wait for the UI to settle
+        harness.run_steps(4);
         if let Some(app) = harness.state_mut() {
             app.replace_notebook(Notebook::from_text("# %%\n"), None);
         }
@@ -2179,11 +2180,10 @@ mod tests {
         h.run();
         h.key_press_modifiers(Modifiers::SHIFT, Key::Enter);
         let start = Instant::now();
-        while h.state().as_ref().is_some_and(App::busy) && start.elapsed() < Duration::from_secs(20) {
-            h.run();
+        while code_cell(&h).map(|c| c.state) != Some(CellState::Fresh) && start.elapsed() < Duration::from_secs(20) {
+            h.run_steps(2);
             std::thread::sleep(Duration::from_millis(10));
         }
-        h.run();
         assert_eq!(code_cell(&h).map(|c| c.state), Some(CellState::Fresh));
     }
 
@@ -2270,17 +2270,17 @@ mod tests {
         let mut h = egui_kittest::Harness::builder()
             .with_size(vec2(900.0, 400.0))
             .build_ui_state(|ui, app: &mut Option<App>| app.get_or_insert_with(|| App::with_context(ui.ctx().clone(), None)).show(ui), None);
-        h.run();
+        h.run_steps(6);
         if let Some(app) = h.state_mut() {
             app.vim = true;
             let text: String = (0..150).map(|i| format!("# %%\nx{i} = {i}\n")).collect();
             app.replace_notebook(Notebook::from_text(&text), None);
             app.cur.set_view(View::Text);
         }
-        h.run();
+        h.run_steps(6);
         let editor = |h: &egui_kittest::Harness<'_, Option<App>>| h.get_by_role(egui::accesskit::Role::MultilineTextInput).rect().top();
         h.get_by_role(egui::accesskit::Role::MultilineTextInput).focus();
-        h.run();
+        h.run_steps(6);
         let before = editor(&h);
         h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text(&"j".repeat(120));
         h.run_steps(4);
