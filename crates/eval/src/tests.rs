@@ -555,3 +555,12 @@ fn integrates_quartics_that_split_over_sqrt() {
     let a = ev("integrate(1/(x**4 + 1), x)");
     assert!(a.contains("atan") && a.contains("log"), "{a}");
 }
+
+#[test]
+fn limits_of_polynomial_differences_and_log_pairs() {
+    assert_eq!(ev("limit((x**2 + 3*x)/(x**2 - 3*x), x, oo)"), "1");
+    assert_eq!(ev("limit(x**3 - 5*x, x, -oo)"), "-oo");
+    assert_eq!(ev("limit(log(x**2 + x) - log(x**2), x, oo)"), "0");
+    assert_eq!(ev("integrate(1/(x**4 + 1), (x, 0, oo))"), "pi*sqrt(2)/4");
+    assert_eq!(ev("integrate(1/(x**4 + 1), (x, -oo, oo))"), "pi*sqrt(2)/2");
+}
