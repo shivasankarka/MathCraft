@@ -245,6 +245,7 @@ fn at_infinity(e: &Expr, x: &Expr, s: i8, depth: u32) -> MathResult<Lim> {
                 ("log", Lim::Inf(1)) => Ok(Lim::Inf(1)),
                 ("atan", Lim::Inf(d)) => Ok(Lim::Fin(Expr::mul(vec![Expr::rational(i64::from(d), 2).unwrap_or_else(Expr::zero), Expr::pi()]))),
                 ("tanh" | "erf", Lim::Inf(d)) => Ok(Lim::Fin(Expr::int(i64::from(d)))),
+                ("Si", Lim::Inf(d)) => Ok(Lim::Fin(Expr::mul(vec![Expr::rational(i64::from(d), 2).unwrap_or_else(Expr::zero), Expr::pi()]))),
                 ("asinh", Lim::Inf(d)) => Ok(Lim::Inf(d)),
                 ("acosh", Lim::Inf(1)) => Ok(Lim::Inf(1)),
                 _ => Err(MathError::domain(format!("`{name}` has no limit here (it oscillates or is undefined)"))),
