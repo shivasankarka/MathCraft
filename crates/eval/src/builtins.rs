@@ -131,7 +131,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("pattern_match", "pattern_match(expr, pattern)", "what each wildcard (a_, b_, ...) matches, as a list of a_ == value; None if there is no match"),
     ("findall", "findall(expr, pattern)", "every subexpression that matches the pattern"),
     ("cancel", "cancel(expr)", "cancel common factors of a fraction (any number of symbols)"),
-    ("factor", "factor(poly)", "factor a polynomial over the rationals (rational roots)"),
+    ("factor", "factor(poly)", "factor a polynomial with integer coefficients into irreducibles (any number of variables)"),
     ("simplify", "simplify(expr)", "try expanding, factoring and sin^2+cos^2=1; keep the smallest form"),
     ("N", "N(expr)", "numeric approximation; symbols are kept"),
     ("subs", "subs(expr, old, new) | subs(expr, [x == 1, y == 2])", "substitute values or expressions"),
