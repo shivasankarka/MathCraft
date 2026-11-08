@@ -9,7 +9,7 @@ use crate::{Mono, Poly, PolyError, exponent, shift};
 use dashu::integer::IBig;
 
 /// The integer gcd (never negative).
-fn int_gcd(a: &IBig, b: &IBig) -> IBig {
+pub(crate) fn int_gcd(a: &IBig, b: &IBig) -> IBig {
     let (mut x, mut y) = (if *a < IBig::ZERO { -a } else { a.clone() }, if *b < IBig::ZERO { -b } else { b.clone() });
     while y != IBig::ZERO {
         let r = &x % &y;
