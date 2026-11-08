@@ -16,6 +16,7 @@ mod palette;
 mod session;
 mod settings;
 mod sidebar;
+mod slider;
 mod tabs;
 mod text_view;
 mod theme;
@@ -1138,7 +1139,9 @@ impl App {
                 .show_separator_line(false)
                 .frame(egui::Frame::new().fill(theme.bg))
                 .show(root, |ui| {
+                    let busy = self.cur.busy();
                     let mut env = Env {
+                        busy,
                         theme: &theme,
                         math: &mut self.cur.math,
                         generations: &self.cur.generations,
@@ -1174,7 +1177,9 @@ impl App {
                             ui.set_width(width);
                             ui.spacing_mut().item_spacing.y = 0.0;
                             let names: Vec<String> = self.cur.nb.cells().iter().flat_map(|c| c.defs().cloned()).collect();
+                            let busy = self.cur.busy();
                             let mut env = Env {
+                                busy,
                                 theme: &theme,
                                 math: &mut self.cur.math,
                                 generations: &self.cur.generations,
@@ -1242,6 +1247,8 @@ fn configure_style(ctx: &egui::Context) {
 
 /// Everything a cell needs from the app while it is drawn.
 struct Env<'a> {
+    /// The kernel is working (a dragged slider then waits instead of queueing more runs).
+    busy: bool,
     theme: &'a Theme,
     math: &'a mut MathCache,
     generations: &'a HashMap<CellId, u64>,
@@ -1496,6 +1503,7 @@ fn cell_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, index: usize, nb: &Not
                 match cell.kind {
                     CellKind::Code => {
                         editor(ui, env, cell, true);
+                        slider_row(ui, env, cell);
                         for p in &cell.problems {
                             ui.add_space(6.0);
                             banner(ui, theme, Icon::Warning, theme.warn, Some(p.code()), &p.message());
@@ -1588,6 +1596,41 @@ fn cell_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, index: usize, nb: &Not
         if icons::button(&mut tools, theme, Icon::Close, "Delete this cell").clicked() {
             env.actions.push(Action::Delete(cell.id));
         }
+    }
+}
+
+/// The slider under a `name = slider(lo, hi, value)` cell. It rewrites the cell's value as it moves and re-runs the
+/// cell (and its dependents), but while the kernel is still busy with the last value it waits instead of queueing
+/// more runs; releasing the handle always runs the final value.
+fn slider_row(ui: &mut egui::Ui, env: &mut Env, cell: &Cell) {
+    let Some(spec) = slider::parse(&cell.source) else { return };
+    ui.add_space(6.0);
+    let mut value = spec.value;
+    let r = ui
+        .horizontal(|ui| {
+            ui.label(RichText::new(&spec.name).monospace().color(env.theme.text_faint));
+            ui.spacing_mut().slider_width = (ui.available_width() - 110.0).clamp(120.0, 420.0);
+            let mut s = egui::Slider::new(&mut value, spec.lo..=spec.hi).smart_aim(false);
+            if let Some(step) = spec.step {
+                s = s.step_by(step);
+            }
+            if spec.whole {
+                s = s.integer();
+            }
+            ui.add(s)
+        })
+        .inner;
+    if r.changed() {
+        let text = spec.with_value(value);
+        if text != cell.source {
+            env.actions.push(Action::SetSource(cell.id, text));
+            if !r.dragged() || !env.busy {
+                env.actions.push(Action::Run(cell.id));
+            }
+        }
+    }
+    if r.drag_stopped() {
+        env.actions.push(Action::Run(cell.id));
     }
 }
 
@@ -2209,6 +2252,29 @@ mod tests {
         wait(&ctx, &mut app);
         assert!(last(&app).contains("51"), "{}", last(&app));
         assert!(app.cur.dirty);
+    }
+
+    #[test]
+    fn moving_a_slider_reruns_its_dependents() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        app.replace_notebook(Notebook::from_text("# %%\na = slider(0, 10, 2)\n# %%\nb = a * 10\n# %%\nb + 1\n"), None);
+        let wait = |ctx: &egui::Context, app: &mut App| {
+            let start = Instant::now();
+            while app.busy() || start.elapsed() < Duration::from_millis(200) {
+                frame(ctx, app);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        wait(&ctx, &mut app);
+        let last = |app: &App| app.cur.nb.cells().last().and_then(|c| c.output.as_ref()).map(|o| format!("{:?}", o.result)).unwrap_or_default();
+        assert!(last(&app).contains("21"), "{}", last(&app));
+        let first = app.cur.nb.cells().first().map(|c| (c.id, c.source.clone())).unwrap();
+        let spec = slider::parse(&first.1).expect("a slider cell");
+        app.apply(vec![Action::SetSource(first.0, spec.with_value(7.2)), Action::Run(first.0)]);
+        wait(&ctx, &mut app);
+        assert_eq!(app.cur.nb.cells().first().map(|c| c.source.as_str()), Some("a = slider(0, 10, 7)"));
+        assert!(last(&app).contains("71"), "{}", last(&app));
     }
 
     #[test]
