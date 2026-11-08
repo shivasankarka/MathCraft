@@ -18,6 +18,8 @@ pub const MAX_CALL_DEPTH: usize = 120;
 /// Results nested deeper than this are refused, which keeps every later recursive algorithm safe.
 pub const MAX_EXPR_DEPTH: u32 = 1000;
 const MAX_SEQUENCE: usize = 2_000_000;
+/// Private globals named `__assume__<symbol>` hold a symbol's declared assumptions.
+const ASSUME_PREFIX: &str = "__assume__";
 
 enum Flow {
     Next,
@@ -609,6 +611,31 @@ impl Interp<'_> {
     }
 
     // ---- operators ---------------------------------------------------------------------------------------------
+
+    /// What the notebook has declared about the symbols of `e` (`symbols('x', positive=True)`).
+    pub(crate) fn assumptions(&self, es: &[&Expr]) -> mathcraft_algebra::Assumptions {
+        let mut out = mathcraft_algebra::Assumptions::new();
+        for e in es {
+            for name in e.free_symbols() {
+                if let Some(Value::Str(text)) = self.lookup(&format!("{ASSUME_PREFIX}{name}"))
+                    && let Ok(facts) = mathcraft_algebra::Facts::parse(&text)
+                {
+                    out.insert(&name, facts);
+                }
+            }
+        }
+        out
+    }
+
+    /// Record (or clear) the assumptions about a symbol. Stored as a private global so they follow the same
+    /// commit-on-success rule as every other assignment.
+    pub(crate) fn declare(&mut self, name: &str, facts: &mathcraft_algebra::Facts) {
+        let key = format!("{ASSUME_PREFIX}{name}");
+        if facts.is_empty() && self.lookup(&key).is_none() {
+            return;
+        }
+        self.set(&key, Value::Str(Arc::from(facts.encode())));
+    }
 
     pub(crate) fn checked(&self, e: Expr) -> R<Value> {
         if e.depth() > MAX_EXPR_DEPTH { err("the expression became too deeply nested") } else { Ok(Value::from_expr(e)) }
