@@ -32,6 +32,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - `factor` of a fraction cancels it and factors the numerator and denominator; new `together(expr)`.
 - New special functions `Ci`, `Ei`, `erfc`, with `integrate(cos(a*x)/x, x)` (`Ci`), `integrate(exp(a*x)/x, x)` (`Ei`) and exact `LambertW(e)`.
 - The modular gcd copes with large coefficients (it uses up to 48 primes and only tries the exact division once the result has stopped changing): a degree-25 bivariate gcd with 12-digit coefficients takes about 0.1 s.
+- `factor(expr, extension=sqrt(2))` factors a polynomial in one symbol over `Q(sqrt(2))`, `Q(I)` or `Q(2**(1/3))` (any single radical): `factor(x**4 + 1, extension=sqrt(2))` is `(x**2 - sqrt(2)*x + 1)*(x**2 + sqrt(2)*x + 1)`.
 
 ## 0.1.1 (2026-11-08)
 
