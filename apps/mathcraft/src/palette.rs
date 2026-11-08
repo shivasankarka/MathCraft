@@ -20,6 +20,8 @@ pub struct PaletteState {
     pub open: bool,
     pub query: String,
     pub selected: usize,
+    /// The last choice was made with Shift+Enter (a function is then inserted instead of looked up).
+    pub alt: bool,
     fresh: bool,
 }
 
@@ -101,14 +103,17 @@ pub fn show<T>(ctx: &egui::Context, theme: &Theme, state: &mut PaletteState, ite
     }
     let hits = filter(items, &state.query);
     state.selected = state.selected.min(hits.len().saturating_sub(1));
-    let (up, down, enter, esc) = ctx.input_mut(|i| {
+    let (up, down, alt_enter, enter, esc) = ctx.input_mut(|i| {
         (
             i.consume_key(Modifiers::NONE, Key::ArrowUp) || i.consume_key(Modifiers::CTRL, Key::K),
             i.consume_key(Modifiers::NONE, Key::ArrowDown) || i.consume_key(Modifiers::CTRL, Key::J),
+            i.consume_key(Modifiers::SHIFT, Key::Enter),
             i.consume_key(Modifiers::NONE, Key::Enter),
             i.consume_key(Modifiers::NONE, Key::Escape),
         )
     });
+    state.alt = alt_enter;
+    let enter = enter || alt_enter;
     if esc {
         state.open = false;
         return None;
