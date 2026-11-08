@@ -234,6 +234,9 @@ fn ints_to_exprs(v: &[i128]) -> Vec<Expr> {
 /// Factor a polynomial in one symbol over the rationals as far as rational roots allow.
 /// Expressions it cannot handle are returned unchanged.
 pub fn factor(e: &Expr) -> MathResult<Expr> {
+    if let Some(f) = crate::sparse::factor(e)? {
+        return Ok(f);
+    }
     let syms = e.free_symbols();
     let [name] = syms.iter().collect::<Vec<_>>()[..] else { return Ok(e.clone()) };
     let x = Expr::sym(name);
