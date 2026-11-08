@@ -62,13 +62,14 @@ impl Converter {
                 None => None,
             },
             Kind::Add(terms) => {
-                let mut acc = Poly::zero(n);
+                // gather every term and merge once: adding one child at a time is quadratic for a long sum
+                let mut all = Vec::new();
                 for t in terms {
                     let Some(p) = self.convert(t)? else { return Ok(None) };
-                    let Some(sum) = self.lift(acc.add(&p))? else { return Ok(None) };
-                    acc = sum;
+                    all.extend(p.terms().iter().cloned());
+                    budget::tick()?;
                 }
-                Some(acc)
+                Some(Poly::from_terms(n, all))
             }
             Kind::Mul(factors) => {
                 let mut acc = Poly::constant(n, 1.into());
