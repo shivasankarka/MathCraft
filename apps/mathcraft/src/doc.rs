@@ -3,7 +3,7 @@
 use crate::math_view::MathCache;
 use eframe::egui;
 use mathcraft_notebook::format::{self, CellText};
-use mathcraft_notebook::{CellId, CellKind, CellState, Event, Kernel, Notebook, RunRequest};
+use mathcraft_notebook::{CellId, CellKind, CellState, Event, Kernel, Layout, Notebook, RunRequest};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -30,7 +30,12 @@ pub struct Doc {
     pub view: View,
     /// The file text while in Text view (the notebook is kept in step with it as it changes).
     pub text: String,
+    /// Cell orders from before each add, delete or move, newest last (text edits have their own undo in the editor).
+    undo: Vec<Layout>,
+    redo: Vec<Layout>,
 }
+
+const UNDO_DEPTH: usize = 200;
 
 impl Doc {
     /// A document with a fresh kernel; every cell is queued to run.
@@ -47,9 +52,52 @@ impl Doc {
             generations: HashMap::new(),
             view: View::Notebook,
             text: String::new(),
+            undo: Vec::new(),
+            redo: Vec::new(),
         };
         doc.run(RunRequest::All);
         doc
+    }
+
+    /// Remember the cell order before a structural change.
+    pub fn checkpoint(&mut self) {
+        self.undo.push(self.nb.layout());
+        self.redo.clear();
+        if self.undo.len() > UNDO_DEPTH {
+            self.undo.remove(0);
+        }
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
+    /// Undo the last add, delete or move. Returns false when there is nothing to undo.
+    pub fn undo_structure(&mut self) -> bool {
+        let Some(prev) = self.undo.pop() else { return false };
+        self.redo.push(self.nb.layout());
+        self.apply_layout(&prev);
+        true
+    }
+
+    pub fn redo_structure(&mut self) -> bool {
+        let Some(next) = self.redo.pop() else { return false };
+        self.undo.push(self.nb.layout());
+        self.apply_layout(&next);
+        true
+    }
+
+    fn apply_layout(&mut self, layout: &Layout) {
+        for gone in self.nb.restore(layout) {
+            self.kernel.forget_cell(gone);
+            self.editing_md.remove(&gone);
+        }
+        self.dirty = true;
+        self.run(RunRequest::Stale);
     }
 
     pub fn run(&mut self, req: RunRequest) {
