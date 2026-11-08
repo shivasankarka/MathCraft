@@ -210,3 +210,20 @@ fn kernel_thread_runs_jobs_and_can_be_interrupted() {
     assert_eq!(state(&nb, ids[1]), CellState::Error);
     assert!(out(&nb, ids[1]).contains("cancelled"), "{}", out(&nb, ids[1]));
 }
+
+#[test]
+fn restore_brings_back_deleted_cells_and_keeps_typing() {
+    let mut nb = Notebook::from_text("# %%\nx = 1\n# %%\ny = x\n");
+    let ids: Vec<CellId> = nb.cells().iter().map(|c| c.id).collect();
+    let before = nb.layout();
+    nb.delete_cell(ids[1]);
+    nb.set_source(ids[0], "x = 2");
+    let removed = nb.restore(&before);
+    assert!(removed.is_empty());
+    assert_eq!(nb.cells().iter().map(|c| c.id).collect::<Vec<_>>(), ids);
+    assert_eq!(nb.cells().first().map(|c| c.source.as_str()), Some("x = 2"));
+    assert_eq!(nb.cells().get(1).map(|c| c.source.as_str()), Some("y = x"));
+    let after = nb.layout();
+    nb.add_cell(None, CellKind::Code, "z = 1");
+    assert_eq!(nb.restore(&after).len(), 1);
+}
