@@ -36,6 +36,9 @@ pub fn solve(f: &Expr, x: &Expr) -> MathResult<Vec<Expr>> {
         let roots = solve(&g, x)?;
         return Ok(filter(f, x, roots));
     }
+    if let Some(roots) = lambert(&target, x)? {
+        return Ok(filter(f, x, roots));
+    }
     let mut roots = match isolate(&target, &Expr::zero(), x, 0)? {
         Some(r) => r,
         None => match substitute(&target, x)? {
@@ -558,6 +561,33 @@ fn collect_atoms(e: &Expr, x: &Expr, out: &mut Vec<Expr>) {
     for c in e.children() {
         collect_atoms(&c, x, out);
     }
+}
+
+/// `A*x*exp(k*x) + B == 0` with `A`, `B`, `k` free of `x`: the one real root `W(-k*B/A)/k`.
+fn lambert(target: &Expr, x: &Expr) -> MathResult<Option<Vec<Expr>>> {
+    let mut atoms = Vec::new();
+    collect_atoms(target, x, &mut atoms);
+    let exps: Vec<&Expr> = atoms.iter().filter(|a| matches!(a.kind(), Kind::Pow(..))).collect();
+    let [first] = exps[..] else { return Ok(None) };
+    if atoms.iter().any(|a| !matches!(a.kind(), Kind::Pow(..))) {
+        return Ok(None);
+    }
+    let Some(k) = exp_step(first) else { return Ok(None) };
+    let step = k;
+    let u = Expr::sym("_lw");
+    let Some(replaced) = replace_exp(target, x, &step, &u) else { return Ok(None) };
+    let Some(c) = to_poly(&replaced, &u)? else { return Ok(None) };
+    let [c0, c1] = &c[..] else { return Ok(None) };
+    let a = crate::expand::expand(&c1.div(x))?;
+    if a.contains(x) || c0.contains(x) || a.is_zero() {
+        return Ok(None);
+    }
+    let arg = Expr::mul(vec![step.clone(), c0.neg(), Expr::pow(&a, &Expr::int(-1))]);
+    // W is real only for arguments of at least -1/e
+    if eval_f64(&arg, &|_| None).is_ok_and(|v| v < -(-1.0_f64).exp()) {
+        return Ok(Some(Vec::new()));
+    }
+    Ok(Some(vec![Expr::call("LambertW", vec![arg]).div(&step)]))
 }
 
 /// For `exp(c*x)`: the coefficient `c`.
