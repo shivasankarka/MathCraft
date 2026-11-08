@@ -13,6 +13,7 @@ mod icons;
 mod markdown;
 mod math_view;
 mod palette;
+mod session;
 mod settings;
 mod sidebar;
 mod tabs;
@@ -31,7 +32,7 @@ use mathcraft_notebook::{Cell, CellId, CellKind, CellState, Notebook, RunMode, R
 use palette::{Item, PaletteState};
 use sidebar::{OpenFile, SideAction};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tabs::{TabAction, TabInfo};
 use theme::Theme;
@@ -130,14 +131,82 @@ struct App {
     config: Option<PathBuf>,
     saved: settings::Settings,
     accent: Option<String>,
+    /// Recently opened files (newest first) and the session as last written to disk.
+    recent: Vec<PathBuf>,
+    saved_session: session::Session,
 }
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, path: Option<PathBuf>) -> Self {
+        let path_given = path.is_some();
         let mut app = Self::with_context(cc.egui_ctx.clone(), path);
         app.unified_title_bar = cfg!(target_os = "macos");
         app.load_settings(settings::config_dir());
+        app.load_session(path_given);
         app
+    }
+
+    /// Bring back the last session's tabs and folder (unless a file or folder was named on the command line), and
+    /// the recent files.
+    fn load_session(&mut self, path_given: bool) {
+        let Some(dir) = self.config.clone() else { return };
+        let s = session::Session::load(&dir);
+        self.recent = s.recent.clone();
+        if !path_given {
+            self.restore_session(&s);
+        }
+        self.saved_session = self.current_session();
+    }
+
+    fn restore_session(&mut self, s: &session::Session) {
+        if let Some(f) = s.folder.as_ref().filter(|f| f.is_dir()) {
+            self.set_folder(f.clone());
+            self.show_sidebar = s.sidebar;
+            self.status.clear();
+        }
+        let files: Vec<&PathBuf> = s.files.iter().filter(|p| p.is_file()).collect();
+        let Some((first, rest)) = files.split_first() else { return };
+        // The welcome notebook gives way to the first restored file.
+        match std::fs::read_to_string(first) {
+            Ok(t) => self.replace_notebook(Notebook::from_text(&t), Some((*first).clone())),
+            Err(_) => return,
+        }
+        for p in rest {
+            self.open_path((*p).clone());
+        }
+        if let Some(active) = s.files.get(s.active).and_then(|p| self.id_of(p)) {
+            self.select_tab(active);
+        }
+        self.status = format!("Restored {} {}", files.len(), if files.len() == 1 { "tab" } else { "tabs" });
+    }
+
+    fn id_of(&self, p: &Path) -> Option<u64> {
+        std::iter::once(&self.cur).chain(&self.others).find(|d| d.path.as_deref() == Some(p)).map(|d| d.id)
+    }
+
+    fn current_session(&self) -> session::Session {
+        let files: Vec<PathBuf> = self.order.iter().filter_map(|id| self.doc(*id)?.path.clone()).collect();
+        let active = self.cur.path.as_ref().and_then(|p| files.iter().position(|f| f == p)).unwrap_or(0);
+        session::Session { files, active, folder: self.folder.clone(), sidebar: self.show_sidebar, recent: self.recent.clone() }
+    }
+
+    /// Save the session when it changed since the last save.
+    fn persist_session(&mut self) {
+        let now = self.current_session();
+        if now != self.saved_session {
+            if let Some(dir) = &self.config
+                && let Err(e) = now.save(dir)
+            {
+                self.status = format!("Could not save session: {e}");
+            }
+            self.saved_session = now;
+        }
+    }
+
+    fn remember(&mut self, p: &Path) {
+        let mut s = session::Session { recent: std::mem::take(&mut self.recent), ..Default::default() };
+        s.remember(p);
+        self.recent = s.recent;
     }
 
     /// Adopt the saved settings and start saving changes to `dir`.
@@ -224,6 +293,8 @@ impl App {
             config: None,
             saved: settings::Settings::default(),
             accent: None,
+            recent: Vec::new(),
+            saved_session: session::Session::default(),
         }
     }
 
@@ -344,6 +415,7 @@ impl App {
         match std::fs::read_to_string(&p) {
             Ok(t) => {
                 self.status = format!("Opened {}", file_name(&p));
+                self.remember(&p);
                 self.open_in_tab(Notebook::from_text(&t), Some(p));
             }
             Err(e) => self.status = format!("Could not open {}: {e}", file_name(&p)),
@@ -387,6 +459,9 @@ impl App {
             v.push(item("Accent colour", &format!("Accent: {name}"), String::new(), Cmd::Accent(Some(name))));
         }
         v.push(item("Theme", "Reload theme.json", String::new(), Cmd::ReloadTheme));
+        for p in self.recent.iter().filter(|p| p.is_file()) {
+            v.push(item("Recent", &file_name(p), p.parent().map(|d| d.display().to_string()).unwrap_or_default(), Cmd::File(p.clone())));
+        }
         if self.folder.is_some() {
             v.push(item("File", "New notebook in the folder", String::new(), Cmd::NewInFolder));
         }
@@ -534,6 +609,7 @@ impl App {
         match result {
             Ok(()) => {
                 self.status = format!("Saved {}", file_name(&target));
+                self.remember(&target);
                 self.cur.path = Some(target);
                 self.cur.dirty = false;
                 self.rescan();
@@ -727,6 +803,17 @@ impl App {
                 if Self::menu_item(ui, &ctx, "Save As…", None) {
                     self.save(true);
                 }
+                let recent: Vec<PathBuf> = self.recent.iter().filter(|p| p.is_file()).cloned().collect();
+                ui.add_enabled_ui(!recent.is_empty(), |ui| {
+                    ui.menu_button("Open recent", |ui| {
+                        for p in &recent {
+                            if ui.button(file_name(p)).on_hover_text(p.display().to_string()).clicked() {
+                                self.open_path(p.clone());
+                                ui.close();
+                            }
+                        }
+                    });
+                });
             });
             ui.menu_button("Edit", |ui| {
                 ui.add_enabled_ui(self.cur.can_undo(), |ui| {
@@ -958,6 +1045,7 @@ impl App {
         let ctx = &ctx;
         self.poll_kernel();
         self.persist_settings();
+        self.persist_session();
         self.shortcuts(ctx);
         let theme = self.theme(ctx);
 
@@ -2019,6 +2107,46 @@ mod tests {
         assert_eq!(ctx2.options(|o| o.theme_preference), ThemePreference::Dark);
         assert_eq!(again.dark.accent, egui::Color32::from_rgb(168, 128, 255));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_session_comes_back_with_tabs_folder_and_recent_files() {
+        let base = std::env::temp_dir().join(format!("mathcraft-app-session-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (cfg, work) = (base.join("cfg"), base.join("work"));
+        std::fs::create_dir_all(&work).unwrap();
+        for f in ["a.py", "b.py", "c.py"] {
+            std::fs::write(work.join(f), "# %%\nx = 1\n").unwrap();
+        }
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        app.load_settings(Some(cfg.clone()));
+        app.set_folder(work.clone());
+        app.open_path(work.join("a.py"));
+        app.open_path(work.join("b.py"));
+        app.open_path(work.join("c.py"));
+        app.open_path(work.join("b.py"));
+        frame(&ctx, &mut app);
+        let saved = session::Session::load(&cfg);
+        assert_eq!(saved.files.len(), 3);
+        assert_eq!(saved.folder.as_deref(), Some(work.as_path()));
+        assert_eq!(saved.recent.first(), Some(&work.join("c.py")));
+        // a file deleted since is skipped; the active tab (b) is selected again
+        std::fs::remove_file(work.join("a.py")).unwrap();
+        let ctx2 = egui::Context::default();
+        let mut again = App::with_context(ctx2.clone(), None);
+        again.load_settings(Some(cfg.clone()));
+        again.load_session(false);
+        assert_eq!(again.order.len(), 2);
+        assert_eq!(again.cur.path.as_deref(), Some(work.join("b.py").as_path()));
+        assert_eq!(again.folder.as_deref(), Some(work.as_path()));
+        assert!(again.recent.contains(&work.join("a.py")));
+        // a file named on the command line wins: no tabs are restored
+        let mut named = App::with_context(egui::Context::default(), None);
+        named.load_settings(Some(cfg.clone()));
+        named.load_session(true);
+        assert_eq!(named.order.len(), 1);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
