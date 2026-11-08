@@ -124,6 +124,40 @@ fn matrix(items: &[Value]) -> Option<Doc> {
     (!rows.is_empty()).then_some(Doc::Matrix(rows))
 }
 
+/// Typeset text from a markdown cell (`$x**2/2$`): the source is a MathCraft expression, evaluated on its own with a
+/// tight time and work budget (so `$9**9**9$` just shows as text) and cached by its text. `None` when it is not a
+/// plain expression or cannot be laid out.
+pub fn inline_layout(ctx: &Context, source: &str, size: f32) -> Option<Arc<Layout>> {
+    type Cache = HashMap<(String, u32), Option<Arc<Layout>>>;
+    let id = egui::Id::unique("markdown-math");
+    let key = (source.to_owned(), size.to_bits());
+    if let Some(hit) = ctx.data_mut(|d| d.get_temp::<Arc<Cache>>(id).and_then(|c| c.get(&key).cloned())) {
+        return hit;
+    }
+    let made = (|| {
+        if source.len() > 300 {
+            return None;
+        }
+        let _guard = mathcraft_core::budget::install(mathcraft_core::budget::Budget::new(
+            Some(std::time::Duration::from_millis(40)),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            200_000,
+        ));
+        let out = mathcraft_eval::run_source(&mut HashMap::new(), source, false);
+        let Ok(Some(Value::Expr(e))) = out.result else { return None };
+        layout(ctx, &Doc::Expr(e), size).map(Arc::new)
+    })();
+    ctx.data_mut(|d| {
+        let mut cache = d.get_temp::<Arc<Cache>>(id).map(|c| (*c).clone()).unwrap_or_default();
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(key, made.clone());
+        d.insert_temp(id, Arc::new(cache));
+    });
+    made
+}
+
 /// Typeset results cached per cell: laying out is cheap but not free, and the output only changes when the cell runs.
 #[derive(Default)]
 pub struct MathCache {
