@@ -234,6 +234,14 @@ fn ints_to_exprs(v: &[i128]) -> Vec<Expr> {
 /// Factor a polynomial in one symbol over the rationals as far as rational roots allow.
 /// Expressions it cannot handle are returned unchanged.
 pub fn factor(e: &Expr) -> MathResult<Expr> {
+    // a fraction: cancel it, then factor the numerator and the denominator
+    if matches!(e.kind(), Kind::Mul(_) | Kind::Add(_) | Kind::Pow(..)) {
+        let (_, d) = crate::rational::together(e)?;
+        if !d.is_one() {
+            let (n, d) = crate::rational::together(&crate::rational::cancel(e)?)?;
+            return Ok(factor(&n)?.div(&factor(&d)?));
+        }
+    }
     if let Some(f) = crate::sparse::factor(e)? {
         return Ok(f);
     }
