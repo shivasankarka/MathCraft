@@ -4,7 +4,8 @@ use crate::expr::{Expr, Kind, SYM_E, SYM_PI};
 use crate::number::Num;
 use dashu::integer::IBig;
 
-const UNARY: &[&str] = &["sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "erf", "Gamma", "log", "abs"];
+const UNARY: &[&str] =
+    &["sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "erf", "Gamma", "LambertW", "Si", "log", "abs"];
 
 pub fn is_builtin_function(name: &str) -> bool {
     matches!(name, "sqrt" | "exp") || UNARY.contains(&name)
@@ -28,7 +29,7 @@ enum Parity {
 
 fn parity(name: &str) -> Parity {
     match name {
-        "sin" | "tan" | "asin" | "atan" | "sinh" | "tanh" | "asinh" | "atanh" | "erf" => Parity::Odd,
+        "sin" | "tan" | "asin" | "atan" | "sinh" | "tanh" | "asinh" | "atanh" | "erf" | "Si" => Parity::Odd,
         "cos" | "cosh" | "abs" => Parity::Even,
         _ => Parity::Neither,
     }
@@ -51,6 +52,8 @@ pub fn f64_unary(name: &str, v: f64) -> Option<f64> {
         "atanh" => v.atanh(),
         "erf" => erf(v),
         "Gamma" => gamma_fn(v),
+        "LambertW" => lambert_w(v),
+        "Si" => sine_integral(v),
         "log" => v.ln(),
         "abs" => v.abs(),
         _ => return None,
@@ -98,6 +101,78 @@ pub(crate) fn euler(exp: &Expr) -> Option<Expr> {
     let angle = Expr::mul(vec![Expr::num(c), Expr::pi()]);
     let (co, si) = (pi_multiple("cos", &angle)?, pi_multiple("sin", &angle)?);
     Some(Expr::add(vec![co, Expr::mul(vec![si, Expr::imag()])]))
+}
+
+/// The sine integral `Si(x)`: its Maclaurin series for small arguments, a complex continued fraction beyond.
+fn sine_integral(x: f64) -> f64 {
+    let t = x.abs();
+    let r = if t < 2.0 {
+        let (mut term, mut sum, mut n) = (t, t, 0.0_f64);
+        while term.abs() > 1e-17 * sum.abs() && n < 100.0 {
+            n += 1.0;
+            term *= -t * t / ((2.0 * n) * (2.0 * n + 1.0));
+            sum += term / (2.0 * n + 1.0);
+        }
+        sum
+    } else {
+        // Lentz's method for exp(-i t) times the continued fraction of E1(i t)
+        let tiny = 1e-300;
+        let (mut b, mut c) = ((1.0, t), (1.0 / tiny, 0.0));
+        let cdiv = |p: (f64, f64), q: (f64, f64)| {
+            let m = q.0 * q.0 + q.1 * q.1;
+            ((p.0 * q.0 + p.1 * q.1) / m, (p.1 * q.0 - p.0 * q.1) / m)
+        };
+        let cmul = |p: (f64, f64), q: (f64, f64)| (p.0 * q.0 - p.1 * q.1, p.0 * q.1 + p.1 * q.0);
+        let mut d = cdiv((1.0, 0.0), b);
+        let mut h = d;
+        for i in 2..10_000 {
+            let a = -f64::from((i - 1) * (i - 1));
+            b = (b.0 + 2.0, b.1);
+            d = cdiv((1.0, 0.0), (a * d.0 + b.0, a * d.1 + b.1));
+            let q = cdiv((a, 0.0), c);
+            c = (b.0 + q.0, b.1 + q.1);
+            let del = cmul(c, d);
+            h = cmul(h, del);
+            if (del.0 - 1.0).abs() + del.1.abs() < 1e-16 {
+                break;
+            }
+        }
+        let h = cmul((t.cos(), -t.sin()), h);
+        std::f64::consts::FRAC_PI_2 + h.1
+    };
+    if x < 0.0 { -r } else { r }
+}
+
+/// The principal branch of the Lambert W function (the inverse of `w * exp(w)`), by Halley iteration; `NaN` below `-1/e`.
+fn lambert_w(x: f64) -> f64 {
+    let branch = -(-1.0_f64).exp();
+    if x < branch - 1e-15 {
+        return f64::NAN;
+    }
+    let x = x.max(branch);
+    let mut w = if x < -0.3 {
+        // near the branch point, the series in p = sqrt(2 (e x + 1))
+        let p = (2.0 * (std::f64::consts::E * x + 1.0)).max(0.0).sqrt();
+        -1.0 + p - p * p / 3.0 + 11.0 / 72.0 * p * p * p
+    } else if x < 3.0 {
+        0.5 * (1.0 + x).ln()
+    } else {
+        x.ln() - x.ln().ln()
+    };
+    for _ in 0..64 {
+        let ew = w.exp();
+        let f = w * ew - x;
+        let denom = ew * (w + 1.0) - (w + 2.0) * f / (2.0 * w + 2.0);
+        if denom == 0.0 {
+            break;
+        }
+        let step = f / denom;
+        w -= step;
+        if step.abs() <= 1e-16 * (1.0 + w.abs()) {
+            break;
+        }
+    }
+    w
 }
 
 /// The Gamma function: Lanczos approximation (g = 7) with the reflection formula for `x < 1/2`; `None` at the poles.
@@ -183,7 +258,7 @@ fn exact_value(name: &str, n: &Num) -> Option<Expr> {
     let zero = n.is_zero();
     let one = n.is_one();
     match name {
-        "sin" | "tan" | "asin" | "atan" | "sinh" | "tanh" | "asinh" | "atanh" | "erf" if zero => Some(Expr::zero()),
+        "sin" | "tan" | "asin" | "atan" | "sinh" | "tanh" | "asinh" | "atanh" | "erf" | "Si" if zero => Some(Expr::zero()),
         "cos" | "cosh" if zero => Some(Expr::one()),
         "acos" | "acosh" | "log" if one => Some(Expr::zero()),
         "atan" if one => Some(Expr::mul(vec![Expr::rational(1, 4)?, Expr::pi()])),
@@ -203,6 +278,7 @@ fn exact_value(name: &str, n: &Num) -> Option<Expr> {
             Some(Expr::mul(vec![Expr::rational(s, 6)?, Expr::pi()]))
         }
         "Gamma" => gamma_exact(n),
+        "LambertW" if zero => Some(Expr::zero()),
         "abs" => Some(Expr::num(if n.is_negative() { n.neg() } else { n.clone() })),
         // log of a negative number: log(|n|) + I*pi
         "log" if n.is_negative() => Some(Expr::add(vec![unary("log", &Expr::num(n.neg())), Expr::mul(vec![Expr::imag(), Expr::pi()])])),
