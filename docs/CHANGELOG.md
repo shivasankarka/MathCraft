@@ -18,6 +18,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - Linear algebra: `eigenvals`, `eigenvects`, `nullspace` and `charpoly` for exact matrices.
 - Number theory: `isprime`, `nextprime`, `totient`, `factorint`. Special functions: `Gamma` (exact for integers and half-integers; `gamma` stays the Dirac matrix).
 - `summation(f, (k, a, b))`: sums with numeric bounds, polynomials in k (symbolic upper limit), geometric series (also to `oo`).
+- Assumptions: `x = symbols('x', positive=True)` (also `negative`, `nonnegative`, `nonpositive`, `nonzero`, `integer`). With them `simplify(sqrt(x**2))` is `x`, `log(x**3)` is `3*log(x)`, `abs(x)` is `x`, `solve` drops roots that contradict them, and `sin(n*pi)` is 0 for integer `n`. New `refine(expr)` and `is_positive`, `is_negative`, `is_nonnegative`, `is_nonpositive`, `is_nonzero`, `is_integer` (True, False, or None when unknown). Without assumptions every symbol is still real.
 
 ## 0.1.1 (2026-11-08)
 
