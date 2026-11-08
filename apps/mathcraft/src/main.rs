@@ -1750,6 +1750,9 @@ fn editor(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, code: bool) -> bool {
         let at = out.galley_pos + out.galley.pos_from_cursor(range.primary).left_bottom().to_vec2();
         edited |= completion_popup(&ctx, theme, id, &mut text, env.names, at);
     }
+    if code && !edited {
+        hover_help(&out, &text, theme);
+    }
     if edited {
         env.actions.push(Action::SetSource(cell.id, text));
     }
@@ -1759,6 +1762,22 @@ fn editor(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, code: bool) -> bool {
         env.actions.push(Action::Run(cell.id));
     }
     run_advance && !code
+}
+
+/// A tooltip with the signature and summary of the built-in function under the pointer.
+fn hover_help(out: &egui::text_edit::TextEditOutput, text: &str, theme: &Theme) {
+    let Some(pos) = out.response.hover_pos() else { return };
+    let at = usize::from(out.galley.cursor_from_pos(pos - out.galley_pos).index);
+    if complete::in_comment_or_string(text, at) {
+        return;
+    }
+    let Some((name, (sig, summary))) = complete::word_at(text, at).and_then(|w| complete::doc_for(&w).map(|d| (w, d))) else { return };
+    egui::Response::clone(&out.response).on_hover_ui(|ui| {
+        ui.set_max_width(380.0);
+        ui.label(RichText::new(sig).monospace().color(theme.accent));
+        ui.label(RichText::new(summary).color(theme.text_dim));
+        ui.label(RichText::new(format!("help('{name}') shows more")).size(11.5).color(theme.text_faint));
+    });
 }
 
 /// What the completion list offers right now.
@@ -2853,6 +2872,27 @@ mod tests {
         h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
         h.run();
         assert_eq!(source(&h), "abc def");
+    }
+
+    #[test]
+    fn pointing_at_a_function_shows_its_signature() {
+        let mut h = typing_harness();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("y = diff(x, x)");
+        h.run();
+        let rect = h.get_by_role(egui::accesskit::Role::MultilineTextInput).rect();
+        // two characters into the function name, vertically in the first row
+        let font = 8.0;
+        h.hover_at(egui::pos2(rect.left() + EDITOR_PAD_X + font * 6.5, rect.top() + 14.0));
+        for _ in 0..12 {
+            h.run_steps(2);
+        }
+        assert!(h.query_by_label_contains("diff(f, x[, n])").is_some(), "the tooltip names the signature");
+        // away from any name: nothing
+        h.hover_at(egui::pos2(rect.right() - 20.0, rect.top() + 14.0));
+        for _ in 0..4 {
+            h.run_steps(2);
+        }
+        assert!(h.query_by_label_contains("diff(f, x[, n])").is_none());
     }
 
     #[test]
