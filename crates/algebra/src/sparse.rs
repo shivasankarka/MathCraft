@@ -163,6 +163,27 @@ pub(crate) fn gcd(a: &Expr, b: &Expr) -> MathResult<Option<Expr>> {
     Ok(Some(conv.to_expr(&g)?))
 }
 
+/// `e` factored into irreducibles over the integers, if it is a polynomial with integer coefficients in plain symbols
+/// (`None` when it is not, or the search is too costly).
+pub(crate) fn factor(e: &Expr) -> MathResult<Option<Expr>> {
+    let Some(mut conv) = Converter::for_expr(e) else { return Ok(None) };
+    if conv.vars.is_empty() {
+        return Ok(None);
+    }
+    let Some(p) = conv.convert(e)? else { return Ok(None) };
+    let mut stop = || conv.stop();
+    let r = p.factor_with(&mut stop);
+    let Some(Some(f)) = conv.lift(r)? else { return Ok(None) };
+    let mut parts = Vec::with_capacity(f.factors.len() + 1);
+    if f.content != 1.into() {
+        parts.push(Expr::big(f.content.clone()));
+    }
+    for (g, k) in &f.factors {
+        parts.push(Expr::pow(&conv.to_expr(g)?, &Expr::int(i64::from(*k))));
+    }
+    Ok(Some(Expr::mul(parts)))
+}
+
 /// The least common multiple, `a / gcd * b` (positive leading coefficient).
 pub(crate) fn lcm(a: &Expr, b: &Expr) -> MathResult<Option<Expr>> {
     let Some(mut conv) = Converter::for_all(&[a, b]) else { return Ok(None) };
