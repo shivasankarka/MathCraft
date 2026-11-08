@@ -21,6 +21,8 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - Assumptions: `x = symbols('x', positive=True)` (also `negative`, `nonnegative`, `nonpositive`, `nonzero`, `integer`). With them `simplify(sqrt(x**2))` is `x`, `log(x**3)` is `3*log(x)`, `abs(x)` is `x`, `solve` drops roots that contradict them, and `sin(n*pi)` is 0 for integer `n`. New `refine(expr)` and `is_positive`, `is_negative`, `is_nonnegative`, `is_nonpositive`, `is_nonzero`, `is_integer` (True, False, or None when unknown). Without assumptions every symbol is still real.
 - Pattern matching and rewrite rules: names ending in `_` are wildcards. `replace(expr, pattern, new)` (or a list of `(pattern, new)` rules) rewrites every match, e.g. `replace(sin(t)**2 + cos(t)**2 + 5, sin(a_)**2 + cos(a_)**2, 1)` is 6. `pattern_match(expr, pattern)` shows what each wildcard matched and `findall(expr, pattern)` lists the matching subexpressions. Sums and products match in any order and a pattern may match part of a longer sum or product.
 - `factor` is now a real factoriser: any polynomial with integer coefficients, in one or several variables, splits into irreducibles over the integers (`x**4 + 4`, `x**8 - 1`, `x**2*y - y**3`, `x**3 + y**3 + z**3 - 3*x*y*z`). It used to find only rational roots, and only in one variable.
+- `gcd`, `lcm` and `cancel` are much faster on large multi-variable polynomials: a sparse modular (Zippel-style) gcd now runs before the Euclidean method, so gcds of products with tens of thousands of terms in 7 variables finish in a few seconds instead of giving up.
+- Converting a long sum into a polynomial is no longer quadratic, which also speeds up `expand`, `cancel` and `factor` on large sums.
 
 ## 0.1.1 (2026-11-08)
 
