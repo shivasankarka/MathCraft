@@ -4,6 +4,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- Sliders: `a = slider(0, 10, 2)` (optionally a step, `slider(0, 1, 0.5, 0.05)`) shows a slider under the cell. Dragging it rewrites the value in the cell and re-runs everything that uses `a`; while the kernel is busy a drag waits instead of piling up runs. See `examples/sliders.py`.
 - Session restore: MathCraft reopens the tabs, the active tab, the folder and the sidebar from last time (unless you start it with a file or folder). File > Open recent and the command palette list the last 12 files.
 - Undo and redo for cell changes: Cmd+Z / Cmd+Shift+Z (when no editor has focus), the Edit menu or the palette bring back a deleted cell or put a moved or added one back. Typing in other cells is never undone.
 - Slices: `xs[1:3]`, `xs[::-1]`, `s[:4]` on lists, tuples, strings, ranges and vectors, with Python's rules for negative and out-of-range bounds.
