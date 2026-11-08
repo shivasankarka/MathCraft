@@ -16,6 +16,8 @@ pub enum TabAction {
     Select(u64),
     Close(u64),
     New,
+    /// Dragged to a new place in the strip (the tab, its new index).
+    Move(u64, usize),
 }
 
 const TAB_HEIGHT: f32 = 30.0;
@@ -41,13 +43,19 @@ pub fn tab_strip(ui: &mut egui::Ui, theme: &Theme, tabs: &[TabInfo], active: u64
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 let active_index = tabs.iter().position(|t| t.id == active);
+                let mut spans: Vec<(f32, f32)> = Vec::new();
+                let mut dragged: Option<usize> = None;
                 for (i, tab) in tabs.iter().enumerate() {
                     let selected = tab.id == active;
                     let label = shorten(&tab.name, 26);
                     let font = egui::FontId::new(theme::TEXT_UI - 0.5, if selected { fonts::strong_family() } else { egui::FontFamily::Proportional });
                     let galley = ui.painter().layout_no_wrap(label, font, if selected { theme.text } else { theme.text_dim });
                     let width = (galley.size().x + 2.0 * SLOT + 8.0).clamp(MIN_WIDTH, MAX_WIDTH);
-                    let (rect, resp) = ui.allocate_exact_size(vec2(width, TAB_HEIGHT), Sense::click());
+                    let (rect, resp) = ui.allocate_exact_size(vec2(width, TAB_HEIGHT), Sense::click_and_drag());
+                    spans.push((rect.left(), rect.right()));
+                    if resp.dragged() {
+                        dragged = Some(i);
+                    }
                     let close = egui::Rect::from_center_size(egui::pos2(rect.left() + SLOT / 2.0 + 2.0, rect.center().y), vec2(16.0, 16.0));
                     let close_resp = ui.interact(close, resp.id.with("close"), Sense::click());
                     let hovered = resp.hovered() || close_resp.hovered();
@@ -86,11 +94,20 @@ pub fn tab_strip(ui: &mut egui::Ui, theme: &Theme, tabs: &[TabInfo], active: u64
                     let close_clicked = close_resp.clicked();
                     close_resp.on_hover_text(if tab.dirty { "Close (unsaved changes)" } else { "Close" });
                     let resp = resp.on_hover_text(&tab.tip);
+                    if resp.dragged() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    }
                     if close_clicked || resp.middle_clicked() {
                         action = Some(TabAction::Close(tab.id));
-                    } else if resp.clicked() {
+                    } else if resp.clicked() || resp.drag_started() {
                         action = Some(TabAction::Select(tab.id));
                     }
+                }
+                if let (Some(cur), Some(px)) = (dragged, ui.input(|i| i.pointer.hover_pos().map(|p| p.x)))
+                    && let Some(to) = drop_index(&spans, cur, px)
+                    && let Some(tab) = tabs.get(cur)
+                {
+                    action = Some(TabAction::Move(tab.id, to));
                 }
                 ui.add_space(4.0);
                 let (rect, resp) = ui.allocate_exact_size(vec2(TAB_HEIGHT, TAB_HEIGHT), Sense::click());
@@ -128,6 +145,26 @@ pub fn tab_strip(ui: &mut egui::Ui, theme: &Theme, tabs: &[TabInfo], active: u64
     action
 }
 
+/// Where a tab being dragged should go, given every tab's `(left, right)` span and the pointer's x. The tab moves
+/// past a neighbour only once the pointer crosses that neighbour's centre, so it does not flicker between two
+/// slots of different widths. `None` when it should stay where it is.
+fn drop_index(spans: &[(f32, f32)], cur: usize, px: f32) -> Option<usize> {
+    let centre = |i: usize| spans.get(i).map(|(l, r)| (l + r) / 2.0);
+    if let Some(next) = cur.checked_add(1).filter(|n| *n < spans.len())
+        && centre(next).is_some_and(|c| px > c)
+    {
+        let to = (next..spans.len()).take_while(|i| centre(*i).is_some_and(|c| px > c)).last().unwrap_or(next);
+        return Some(to);
+    }
+    if let Some(prev) = cur.checked_sub(1)
+        && centre(prev).is_some_and(|c| px < c)
+    {
+        let to = (0..=prev).rev().take_while(|i| centre(*i).is_some_and(|c| px < c)).last().unwrap_or(prev);
+        return Some(to);
+    }
+    None
+}
+
 /// Shorten a name in the middle so the extension stays visible.
 fn shorten(name: &str, max: usize) -> String {
     let n = name.chars().count();
@@ -141,7 +178,19 @@ fn shorten(name: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::shorten;
+    use super::{drop_index, shorten};
+
+    #[test]
+    fn a_dragged_tab_moves_only_past_a_neighbours_centre() {
+        let spans = [(0.0, 100.0), (100.0, 200.0), (200.0, 300.0)];
+        assert_eq!(drop_index(&spans, 0, 120.0), None, "not past the middle of the next tab");
+        assert_eq!(drop_index(&spans, 0, 160.0), Some(1));
+        assert_eq!(drop_index(&spans, 0, 290.0), Some(2), "several slots at once");
+        assert_eq!(drop_index(&spans, 2, 140.0), Some(1));
+        assert_eq!(drop_index(&spans, 2, 20.0), Some(0));
+        assert_eq!(drop_index(&spans, 1, 150.0), None);
+        assert_eq!(drop_index(&[], 0, 5.0), None);
+    }
 
     #[test]
     fn long_names_keep_their_ending() {
