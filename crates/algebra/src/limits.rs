@@ -2,6 +2,7 @@
 
 use crate::calculus::diff;
 use crate::expand::expand;
+use crate::poly::to_poly;
 use crate::util::{guard, has_singularity, is_zero_expr, require_symbol, sign_of, split_fraction, subs};
 use mathcraft_core::{Expr, Kind, MathError, MathResult};
 
@@ -156,6 +157,20 @@ fn at_infinity(e: &Expr, x: &Expr, s: i8, depth: u32) -> MathResult<Lim> {
                     Lim::Inf(d) => match inf {
                         None => inf = Some(d),
                         Some(p) if p == d => {}
+                        // a polynomial: the leading term decides
+                        Some(_) if let Some(c) = to_poly(e, x)? => {
+                            let n = c.len().saturating_sub(1);
+                            let sign = c.last().and_then(sign_of).ok_or_else(unsupported)?;
+                            let flip = if s < 0 && n % 2 == 1 { -1 } else { 1 };
+                            return Ok(Lim::Inf(sign * flip));
+                        }
+                        // oo - oo between logarithms with the same coefficient: c*log(A) - c*log(B) = c*log(A/B)
+                        Some(_) if depth < MAX_DEPTH / 2 && merge_logs(ts).is_some() => {
+                            return match merge_logs(ts) {
+                                Some(m) => at_infinity(&m, x, s, depth + 8),
+                                None => Err(unsupported()),
+                            };
+                        }
                         // oo - oo with radicals: factor the dominant power out of each root, then out of the sum.
                         Some(_) if s > 0 && depth < MAX_DEPTH / 2 && factor_out_x(e, x)?.is_some() => {
                             return match factor_out_x(e, x)? {
@@ -253,6 +268,57 @@ fn at_infinity(e: &Expr, x: &Expr, s: i8, depth: u32) -> MathResult<Lim> {
         }
         _ => Err(unsupported()),
     }
+}
+
+/// `c*log(A)` as `(c, A)`, with `c` the product of the other factors.
+fn log_term(t: &Expr) -> Option<(Expr, Expr)> {
+    let parts = match t.kind() {
+        Kind::Mul(v) => v.clone(),
+        _ => vec![t.clone()],
+    };
+    let mut found: Option<Expr> = None;
+    let mut rest = Vec::new();
+    for f in parts {
+        match f.kind() {
+            Kind::Call(name, args) if &**name == "log" && found.is_none() => found = args.first().cloned(),
+            _ => rest.push(f),
+        }
+    }
+    Some((Expr::mul(rest), found?))
+}
+
+/// Merge pairs of logarithms in a sum whose coefficients are equal or opposite into one logarithm each.
+/// `None` when no pair merges.
+fn merge_logs(terms: &[Expr]) -> Option<Expr> {
+    let mut logs: Vec<Option<(Expr, Expr)>> = terms.iter().map(log_term).collect();
+    let mut out: Vec<Expr> = Vec::new();
+    let mut merged = false;
+    for i in 0..logs.len() {
+        let Some((c, a)) = logs.get(i).cloned().flatten() else { continue };
+        let mut arg = a;
+        for j in i + 1..logs.len() {
+            let Some((cj, aj)) = logs.get(j).cloned().flatten() else { continue };
+            if cj == c {
+                arg = Expr::mul(vec![arg, aj]);
+            } else if cj == c.neg() {
+                arg = Expr::mul(vec![arg, Expr::pow(&aj, &Expr::int(-1))]);
+            } else {
+                continue;
+            }
+            if let Some(slot) = logs.get_mut(j) {
+                *slot = None;
+            }
+            merged = true;
+        }
+        out.push(Expr::mul(vec![c, Expr::call("log", vec![arg])]));
+    }
+    let others = terms.iter().zip(logs_any(terms)).filter(|(_, is_log)| !is_log).map(|(t, _)| t.clone());
+    out.extend(others);
+    merged.then(|| Expr::add(out))
+}
+
+fn logs_any(terms: &[Expr]) -> Vec<bool> {
+    terms.iter().map(|t| log_term(t).is_some()).collect()
 }
 
 /// For `x -> +oo`: rewrite every root `b ** (p/q)` of a polynomial `b` of degree `n` as `x ** (n*p/q) * (b / x**n) ** (p/q)`,
