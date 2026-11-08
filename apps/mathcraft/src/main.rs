@@ -125,6 +125,8 @@ struct App {
     pretty: bool,
     vim_status: String,
     palette: PaletteState,
+    /// The code cell whose editor had the keyboard last (where the palette inserts a function).
+    last_cell: Option<CellId>,
     /// The toolbar is also the window's title bar (macOS, real window only): leave room for the window buttons.
     unified_title_bar: bool,
     /// Height of the toolbar last frame, to centre the window buttons in it.
@@ -290,6 +292,7 @@ impl App {
             pretty: true,
             vim_status: String::new(),
             palette: PaletteState::default(),
+            last_cell: None,
             unified_title_bar: false,
             toolbar_height: 40.0,
             dark,
@@ -489,7 +492,7 @@ impl App {
             v.push(item("Open", &rel, String::new(), Cmd::File(p)));
         }
         for (name, sig, _) in DOCS {
-            v.push(item("Function", sig, String::new(), Cmd::Help((*name).to_owned())));
+            v.push(item("Function", sig, "⇧↵ insert".to_owned(), Cmd::Help((*name).to_owned())));
         }
         v
     }
@@ -535,6 +538,22 @@ impl App {
                 self.show_help = true;
             }
         }
+    }
+
+    /// Put `name(` into the code cell that was being edited, at its cursor.
+    fn insert_function(&mut self, name: &str, ctx: &egui::Context) {
+        let target = self.last_cell.and_then(|id| self.cur.nb.cell(id)).filter(|c| c.kind == CellKind::Code);
+        let Some(cell) = target else {
+            self.status = "Click into a code cell first, then insert a function".into();
+            return;
+        };
+        let (id, mut text) = (cell.id, cell.source.clone());
+        if !insert_at_cursor(ctx, editor_id(id), &mut text, &format!("{name}(")) {
+            text.push_str(&format!("{name}("));
+        }
+        self.apply(vec![Action::SetSource(id, text)]);
+        self.cur.focus = Some(id);
+        self.status = format!("Inserted {name}(");
     }
 
     /// A Vim `:` command.
@@ -1051,6 +1070,9 @@ impl App {
         self.poll_kernel();
         self.persist_settings();
         self.persist_session();
+        if let Some(c) = self.cur.nb.cells().iter().find(|c| ctx.memory(|m| m.has_focus(editor_id(c.id)))) {
+            self.last_cell = Some(c.id);
+        }
         self.shortcuts(ctx);
         let theme = self.theme(ctx);
 
@@ -1220,7 +1242,10 @@ impl App {
             if let Some(i) = chosen
                 && let Some(item) = items.into_iter().nth(i)
             {
-                self.run_command(item.payload, ctx);
+                match item.payload {
+                    Cmd::Help(name) if self.palette.alt => self.insert_function(&name, ctx),
+                    other => self.run_command(other, ctx),
+                }
             }
         }
 
@@ -2872,6 +2897,31 @@ mod tests {
         h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
         h.run();
         assert_eq!(source(&h), "abc def");
+    }
+
+    #[test]
+    fn the_palette_inserts_a_function_into_the_last_cell() {
+        let mut h = typing_harness();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("y = ");
+        h.run();
+        h.key_press_modifiers(Modifiers::COMMAND, Key::P);
+        h.run();
+        h.get_by_role(egui::accesskit::Role::TextInput).type_text("diff(f");
+        h.run();
+        h.key_press_modifiers(Modifiers::SHIFT, Key::Enter);
+        h.run();
+        h.run();
+        assert_eq!(source(&h), "y = diff(");
+        assert!(!h.state().as_ref().is_some_and(|a| a.palette.open), "the palette closed");
+        // Enter alone only opens the function list
+        h.key_press_modifiers(Modifiers::COMMAND, Key::P);
+        h.run();
+        h.get_by_role(egui::accesskit::Role::TextInput).type_text("integrate(f");
+        h.run();
+        h.key_press(Key::Enter);
+        h.run();
+        assert_eq!(source(&h), "y = diff(");
+        assert!(h.state().as_ref().is_some_and(|a| a.show_help));
     }
 
     #[test]
