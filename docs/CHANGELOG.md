@@ -4,6 +4,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- Drag a tab to reorder it; the order is kept in the restored session.
 - Cmd+Alt+Up / Cmd+Alt+Down move the keyboard to the previous or next code cell. Printed output longer than 24 lines is folded to 20 with a "Show N more lines" button.
 - Command palette: Shift+Enter on a function inserts `name(` into the cell you were editing; Enter still opens the function list for it.
 - Hover help: point at a built-in function name in a cell (`diff`, `integrate`, ...) to see its signature and summary.
