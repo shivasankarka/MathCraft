@@ -93,6 +93,8 @@ fn derivative_of(name: &str, u: &Expr) -> Option<Expr> {
         "acosh" => Expr::pow(&Expr::add(vec![Expr::pow(u, &two), Expr::int(-1)]), &Expr::rational(-1, 2)?),
         "atanh" => Expr::pow(&one_minus_u2(), &Expr::int(-1)),
         "erf" => Expr::mul(vec![Expr::int(2), Expr::pow(&Expr::pi(), &Expr::rational(-1, 2)?), Expr::pow(&Expr::e(), &Expr::pow(u, &two).neg())]),
+        "LambertW" => c("LambertW").div(&Expr::mul(vec![u.clone(), Expr::add(vec![one.clone(), c("LambertW")])])),
+        "Si" => c("sin").div(u),
         "log" => Expr::pow(u, &Expr::int(-1)),
         "abs" => u.div(&c("abs")),
         _ => return None,
@@ -133,7 +135,10 @@ fn int(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
             if !consts.is_empty() {
                 return Ok(int(&Expr::mul(vars), x, depth)?.map(|r| Expr::mul(vec![Expr::mul(consts), r])));
             }
-            by_parts(fs, x, depth)?
+            match sinc(fs, x)? {
+                Some(r) => Some(r),
+                None => by_parts(fs, x, depth)?,
+            }
         }
         _ => elementary(e, x)?,
     };
@@ -167,6 +172,21 @@ fn int(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
         }
     }
     if depth < MAX_INT_DEPTH { u_substitution(e, x, depth) } else { Ok(None) }
+}
+
+/// `sin(a*x)/x` is `Si(a*x)`.
+fn sinc(fs: &[Expr], x: &Expr) -> MathResult<Option<Expr>> {
+    let [a, b] = fs else { return Ok(None) };
+    let (s, inv) = if matches!(a.kind(), Kind::Call(..)) { (a, b) } else { (b, a) };
+    let Kind::Call(name, args) = s.kind() else { return Ok(None) };
+    let [u] = args.as_slice() else { return Ok(None) };
+    if &**name != "sin" || inv != &Expr::pow(x, &Expr::int(-1)) {
+        return Ok(None);
+    }
+    Ok(match linear_in(u, x)? {
+        Some((_, shift)) if shift.is_zero() => Some(Expr::call("Si", vec![u.clone()])),
+        _ => None,
+    })
 }
 
 /// Antiderivatives of single elementary terms with a linear inner argument.
@@ -615,40 +635,46 @@ pub fn series(e: &Expr, x: &Expr, x0: &Expr, order: u32) -> MathResult<Expr> {
     if order > 64 {
         return Err(MathError::too_large("series order is limited to 64"));
     }
-    let coeffs = match taylor_coefficients(e, x, x0, order) {
-        Ok(c) => c,
+    let (shift, coeffs) = match taylor_coefficients(e, x, x0, order) {
+        Ok(c) => (0, c),
         Err(direct) => series_of_quotient(e, x, x0, order).map_err(|_| direct)?,
     };
     let dx = Expr::add(vec![x.clone(), x0.neg()]);
-    Ok(Expr::add(coeffs.into_iter().enumerate().map(|(k, c)| Expr::mul(vec![c, Expr::pow(&dx, &Expr::int(k as i64))])).collect()))
+    Ok(Expr::add(coeffs.into_iter().enumerate().map(|(k, c)| Expr::mul(vec![c, Expr::pow(&dx, &Expr::int(k as i64 + shift))])).collect()))
 }
 
-fn series_of_quotient(e: &Expr, x: &Expr, x0: &Expr, order: u32) -> MathResult<Vec<Expr>> {
+/// Index of the first nonzero coefficient, or `None` when all of them are zero.
+fn valuation(c: &[Expr]) -> Option<usize> {
+    c.iter().position(|v| !v.is_zero())
+}
+
+/// Series of a quotient by dividing the series of top and bottom. Returns the power of `(x - x0)` of the first
+/// coefficient (negative for a pole, which gives a Laurent series) and the coefficients up to `(x - x0) ** order`.
+fn series_of_quotient(e: &Expr, x: &Expr, x0: &Expr, order: u32) -> MathResult<(i64, Vec<Expr>)> {
     let (num, den) = split_fraction(e);
-    let extra = 16u32;
-    let n = taylor_coefficients(&num, x, x0, order + extra)?;
-    let d = taylor_coefficients(&den, x, x0, order + extra)?;
-    let mut m = 0usize;
-    while d.get(m).is_some_and(Expr::is_zero) {
-        m += 1;
-        if m > extra as usize {
-            return Err(MathError::unsupported("the denominator vanishes to too high an order"));
-        }
+    let probe = 12u32;
+    let (n0, d0) = (taylor_coefficients(&num, x, x0, probe)?, taylor_coefficients(&den, x, x0, probe)?);
+    let k = valuation(&n0).ok_or_else(|| MathError::unsupported("cannot expand this quotient"))?;
+    let m = valuation(&d0).ok_or_else(|| MathError::unsupported("the denominator vanishes to too high an order"))?;
+    let shift = k as i64 - m as i64;
+    let count = i64::from(order) - shift + 1;
+    if count <= 0 {
+        return Ok((0, vec![Expr::zero()]));
     }
-    if n.iter().take(m).any(|c| !c.is_zero()) {
-        return Err(MathError::domain("the function has a pole at the expansion point (a Laurent series is not supported yet)"));
-    }
+    let count = count as usize;
+    let n = taylor_coefficients(&num, x, x0, (k + count) as u32)?;
+    let d = taylor_coefficients(&den, x, x0, (m + count) as u32)?;
     let lead = d.get(m).cloned().ok_or_else(|| MathError::unsupported("cannot expand this quotient"))?;
     let mut q: Vec<Expr> = Vec::new();
-    for i in 0..=(order as usize) {
-        let mut acc = n.get(i + m).cloned().unwrap_or_else(Expr::zero);
+    for i in 0..count {
+        let mut acc = n.get(i + k).cloned().unwrap_or_else(Expr::zero);
         for j in 1..=i {
             let (dj, qj) = (d.get(j + m).cloned().unwrap_or_else(Expr::zero), q.get(i - j).cloned().unwrap_or_else(Expr::zero));
             acc = Expr::add(vec![acc, Expr::mul(vec![dj, qj]).neg()]);
         }
         q.push(expand(&acc.div(&lead))?);
     }
-    Ok(q)
+    Ok((shift, q))
 }
 
 #[cfg(test)]
