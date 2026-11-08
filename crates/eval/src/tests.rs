@@ -571,3 +571,16 @@ fn factor_cancels_fractions_and_together_combines() {
     assert_eq!(ev("factor((x**2 - y**2)/(x**2 + 2*x*y + y**2))"), "(x - y)/(x + y)");
     assert_eq!(ev("together(1/x + 1/y)"), "(x + y)/(x*y)");
 }
+
+#[test]
+fn more_special_functions() {
+    assert!(ev("N(Ci(1))").starts_with("0.3374039229009"));
+    assert!(ev("N(Ei(1))").starts_with("1.89511781635593"));
+    assert!(ev("N(Ei(-1))").starts_with("-0.21938393439552"));
+    assert!(ev("N(erfc(0.5))").starts_with("0.47950012218695"));
+    assert_eq!(ev("erfc(x)"), "-erf(x) + 1");
+    assert_eq!(ev("LambertW(exp(1))"), "1");
+    assert_eq!(ev("integrate(cos(2*x)/x, x)"), "Ci(2*x)");
+    assert_eq!(ev("integrate(exp(x)/x, x)"), "Ei(x)");
+    assert_eq!(ev("limit(Ci(x), x, oo)"), "0");
+}
