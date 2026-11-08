@@ -36,6 +36,10 @@ pub fn solve(f: &Expr, x: &Expr) -> MathResult<Vec<Expr>> {
         let roots = solve(&g, x)?;
         return Ok(filter(f, x, roots));
     }
+    if let Some(g) = equal_powers(&target, x) {
+        let roots = solve(&g, x)?;
+        return Ok(filter(f, x, roots));
+    }
     if let Some(roots) = lambert(&target, x)? {
         return Ok(filter(f, x, roots));
     }
@@ -563,6 +567,25 @@ fn collect_atoms(e: &Expr, x: &Expr, out: &mut Vec<Expr>) {
     }
 }
 
+/// `c1 * a**f + c2 * b**g == 0` with constant bases: taking logarithms gives `f*log(a) - g*log(b) - log(-c2/c1) == 0`.
+fn equal_powers(target: &Expr, x: &Expr) -> Option<Expr> {
+    let Kind::Add(terms) = target.kind() else { return None };
+    let [t1, t2] = terms.as_slice() else { return None };
+    let parts = |t: &Expr| -> Option<(Num, Expr, Expr)> {
+        let (c, rest) = t.split_coeff();
+        let Kind::Pow(b, e) = rest.kind() else { return None };
+        let positive = eval_f64(b, &|_| None).ok().filter(|v| *v > 0.0)?;
+        (!b.contains(x) && e.contains(x) && (positive - 1.0).abs() > 1e-12).then(|| (c, b.clone(), e.clone()))
+    };
+    let ((c1, a, f), (c2, b, g)) = (parts(t1)?, parts(t2)?);
+    let ratio = c2.neg().mul(&c1.recip()?);
+    if ratio.is_negative() || ratio.is_zero() {
+        return None;
+    }
+    let (la, lb) = (Expr::call("log", vec![a]), Expr::call("log", vec![b]));
+    Some(Expr::add(vec![Expr::mul(vec![f, la]), Expr::mul(vec![g, lb]).neg(), Expr::call("log", vec![Expr::num(ratio)]).neg()]))
+}
+
 /// `A*x*exp(k*x) + B == 0` with `A`, `B`, `k` free of `x`: the one real root `W(-k*B/A)/k`.
 fn lambert(target: &Expr, x: &Expr) -> MathResult<Option<Vec<Expr>>> {
     let mut atoms = Vec::new();
@@ -591,7 +614,7 @@ fn lambert(target: &Expr, x: &Expr) -> MathResult<Option<Vec<Expr>>> {
 }
 
 /// For `exp(c*x)`: the coefficient `c`.
-fn exp_step(g: &Expr) -> Option<Expr> {
+pub(crate) fn exp_step(g: &Expr) -> Option<Expr> {
     match g.kind() {
         Kind::Pow(b, k) if b.as_sym() == Some(mathcraft_core::expr::SYM_E) => {
             let (c, _) = k.split_coeff();
@@ -602,7 +625,7 @@ fn exp_step(g: &Expr) -> Option<Expr> {
 }
 
 /// Rewrite `exp(n*step*x)` as `u ** n` throughout; `None` when some exponent is not a whole multiple of `step`.
-fn replace_exp(e: &Expr, x: &Expr, step: &Expr, u: &Expr) -> Option<Expr> {
+pub(crate) fn replace_exp(e: &Expr, x: &Expr, step: &Expr, u: &Expr) -> Option<Expr> {
     if !e.contains(x) {
         return Some(e.clone());
     }
