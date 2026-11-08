@@ -137,7 +137,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("findall", "findall(expr, pattern)", "every subexpression that matches the pattern"),
     ("together", "together(expr)", "combine a sum of fractions into one fraction (nothing is cancelled)"),
     ("cancel", "cancel(expr)", "cancel common factors of a fraction (any number of symbols)"),
-    ("factor", "factor(poly)", "factor a polynomial with integer coefficients into irreducibles (any number of variables)"),
+    ("factor", "factor(poly[, extension=sqrt(2)])", "factor a polynomial with integer coefficients into irreducibles (any number of variables)"),
     ("simplify", "simplify(expr)", "try expanding, factoring and sin^2+cos^2=1; keep the smallest form"),
     ("N", "N(expr)", "numeric approximation; symbols are kept"),
     ("subs", "subs(expr, old, new) | subs(expr, [x == 1, y == 2])", "substitute values or expressions"),
@@ -879,6 +879,22 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
         "contract" => {
             a.limits(name, 1, 1)?;
             check_depth(it, Value::Expr(amp::contract(&a.expr(0)?)?))
+        }
+        "factor" if a.opt(1, "extension").is_some() => {
+            if a.pos.len() > 2 || a.kw.iter().any(|(k, _)| k != "extension") {
+                return err("factor(expr, extension=sqrt(2))");
+            }
+            let ext = a.opt(1, "extension").ok_or_else(|| EvalError::new("missing extension"))?.to_expr()?;
+            let out = broadcast(a.get(0)?, &mut |e| Ok(alg::factor_over(e, &ext)?))?;
+            check_depth(it, out)
+        }
+        "factor" if a.opt(1, "extension").is_some() => {
+            if a.pos.len() > 2 || a.kw.iter().any(|(k, _)| k != "extension") {
+                return err("factor(expr, extension=sqrt(2))");
+            }
+            let ext = a.opt(1, "extension").ok_or_else(|| EvalError::new("missing extension"))?.to_expr()?;
+            let out = broadcast(a.get(0)?, &mut |e| Ok(alg::factor_over(e, &ext)?))?;
+            check_depth(it, out)
         }
         "expand" | "simplify" | "factor" | "cancel" | "together" | "refine" => {
             a.limits(name, 1, 1)?;
