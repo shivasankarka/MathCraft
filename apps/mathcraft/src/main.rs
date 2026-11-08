@@ -359,6 +359,14 @@ impl App {
         }
     }
 
+    /// Put a tab at index `to` in the strip.
+    fn move_tab(&mut self, id: u64, to: usize) {
+        if let Some(from) = self.order.iter().position(|o| *o == id) {
+            let tab = self.order.remove(from);
+            self.order.insert(to.min(self.order.len()), tab);
+        }
+    }
+
     fn doc(&self, id: u64) -> Option<&Doc> {
         if self.cur.id == id { Some(&self.cur) } else { self.others.iter().find(|d| d.id == id) }
     }
@@ -1138,6 +1146,7 @@ impl App {
                 Some(TabAction::Select(id)) => self.select_tab(id),
                 Some(TabAction::Close(id)) => self.close_tab(id),
                 Some(TabAction::New) => self.new_file(),
+                Some(TabAction::Move(id, to)) => self.move_tab(id, to),
                 None => {}
             }
         }
@@ -2444,6 +2453,21 @@ mod tests {
         wait(&ctx, &mut app);
         assert_eq!(app.cur.nb.cells().first().map(|c| c.source.as_str()), Some("a = slider(0, 10, 7)"));
         assert!(last(&app).contains("71"), "{}", last(&app));
+    }
+
+    #[test]
+    fn tabs_can_be_reordered_and_the_order_is_remembered() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        app.open_in_tab(Notebook::from_text("# %%\na = 1\n"), Some(PathBuf::from("/tmp/mc_r1.py")));
+        app.open_in_tab(Notebook::from_text("# %%\nb = 2\n"), Some(PathBuf::from("/tmp/mc_r2.py")));
+        let before = app.order.clone();
+        app.move_tab(before[2], 0);
+        assert_eq!(app.order, vec![before[2], before[0], before[1]]);
+        app.move_tab(before[2], 99);
+        assert_eq!(app.order, vec![before[0], before[1], before[2]]);
+        assert_eq!(app.order.len(), 3);
+        frame(&ctx, &mut app);
     }
 
     #[test]
