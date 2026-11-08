@@ -499,3 +499,18 @@ fn assumption_queries() {
 fn redeclaring_a_symbol_clears_its_assumptions() {
     assert_eq!(ev("x = symbols('x', positive=True)\nx = symbols('x')\nabs(x)"), "abs(x)");
 }
+
+#[test]
+fn pattern_matching_and_rewrite_rules() {
+    assert_eq!(ev("t = symbols('t')\nreplace(sin(t)**2 + cos(t)**2 + 5, sin(a_)**2 + cos(a_)**2, 1)"), "6");
+    assert_eq!(ev("replace(sin(2*t) + sin(x), sin(a_), a_**2)"), "4*t**2 + x**2");
+    assert_eq!(ev("replace(exp(a)*exp(b), exp(u_)*exp(v_), exp(u_ + v_))"), "exp(a + b)");
+    assert_eq!(ev("replace(log(x*y), log(a_*b_), log(a_) + log(b_))"), "log(x) + log(y)");
+    assert_eq!(ev("replace(x**2 + y**2, [(x, 1), (y, 2)])"), "5");
+    assert_eq!(ev("f = symbols('f')\nreplace(f(x) + f(y), f(a_), a_**2)"), "x**2 + y**2");
+    assert_eq!(ev("pattern_match(3*x*y, a_*x)"), "[a_ == 3*y]");
+    assert_eq!(ev("pattern_match(x**3, x**n_)"), "[n_ == 3]");
+    assert_eq!(ev("print(pattern_match(sin(x), cos(a_)))"), "None");
+    assert_eq!(ev("findall(sin(x) + sin(y)*cos(x), sin(a_))"), "[sin(y), sin(x)]");
+    assert!(ev("replace(x, [x])").contains("pair"));
+}
