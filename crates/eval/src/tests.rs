@@ -460,3 +460,42 @@ fn eigen_number_theory_and_sums() {
     assert_eq!(ev("summation(x**k, (k, 0, oo))"), "1/(-x + 1)");
     assert!(ev("summation(2**k, (k, 0, oo))").contains("does not converge"));
 }
+
+#[test]
+fn assumptions_refine_results() {
+    let decl = "x = symbols('x', positive=True)\nn = symbols('n', integer=True)\ny = symbols('y')\n";
+    let ev = |s: &str| ev(&format!("{decl}{s}"));
+    assert_eq!(ev("simplify(sqrt(x**2))"), "x");
+    assert_eq!(ev("simplify(sqrt(y**2))"), "abs(y)");
+    assert_eq!(ev("simplify(sqrt(x**2*y**2))"), "x*abs(y)");
+    assert_eq!(ev("abs(x)"), "x");
+    assert_eq!(ev("abs(y)"), "abs(y)");
+    assert_eq!(ev("log(x**3)"), "3*log(x)");
+    assert_eq!(ev("log(y**2)"), "log(y**2)");
+    assert_eq!(ev("solve(x**2 - 4, x)"), "[2]");
+    assert_eq!(ev("solve(y**2 - 4, y)"), "[-2, 2]");
+    assert_eq!(ev("solve(x + 3, x)"), "[]");
+    assert_eq!(ev("sin(n*pi)"), "0");
+    assert_eq!(ev("cos(n*pi)"), "(-1)**n");
+    assert_eq!(ev("simplify(cos(2*n*pi))"), "1");
+    assert_eq!(ev("sin(y*pi)"), "sin(pi*y)");
+}
+
+#[test]
+fn assumption_queries() {
+    let decl = "x = symbols('x', positive=True)\nn = symbols('n', integer=True)\ny = symbols('y')\n";
+    let ev = |s: &str| ev(&format!("{decl}{s}"));
+    assert_eq!(ev("is_positive(x + 1)"), "True");
+    assert_eq!(ev("print(is_positive(y))"), "None");
+    assert_eq!(ev("is_negative(-x)"), "True");
+    assert_eq!(ev("is_positive(-x)"), "False");
+    assert_eq!(ev("is_integer(n + 1)"), "True");
+    assert_eq!(ev("is_integer(1/2)"), "False");
+    assert_eq!(ev("is_nonzero(x)"), "True");
+    assert!(ev("symbols('z', blah=True)").contains("unknown assumption"));
+}
+
+#[test]
+fn redeclaring_a_symbol_clears_its_assumptions() {
+    assert_eq!(ev("x = symbols('x', positive=True)\nx = symbols('x')\nabs(x)"), "abs(x)");
+}
