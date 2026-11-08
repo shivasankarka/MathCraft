@@ -28,6 +28,10 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - New `Si(x)`, the sine integral: `integrate(sin(a*x)/x, x)` is `Si(a*x)` and `integrate(sin(x)/x, (x, 0, oo))` is `pi/2`.
 - `series` gives Laurent series at poles: `series(1/sin(x), x, 0, 4)` is `1/x + x/6 + 7*x**3/360`.
 - `integrate` handles `1/(x**4 + 1)` and other quartics `x**4 + b*x**2 + c` that split over a square root (log and arctangent forms).
+- Limits at infinity: polynomials such as `x**2 - 3*x` (the leading term decides) and pairs of logarithms with the same coefficient (`log(x**2 + x) - log(x**2)`). With this, `integrate(1/(x**4 + 1), (x, 0, oo))` is `pi*sqrt(2)/4`.
+- `factor` of a fraction cancels it and factors the numerator and denominator; new `together(expr)`.
+- New special functions `Ci`, `Ei`, `erfc`, with `integrate(cos(a*x)/x, x)` (`Ci`), `integrate(exp(a*x)/x, x)` (`Ei`) and exact `LambertW(e)`.
+- The modular gcd copes with large coefficients (it uses up to 48 primes and only tries the exact division once the result has stopped changing): a degree-25 bivariate gcd with 12-digit coefficients takes about 0.1 s.
 
 ## 0.1.1 (2026-11-08)
 
