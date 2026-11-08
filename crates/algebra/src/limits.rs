@@ -164,6 +164,14 @@ fn at_infinity(e: &Expr, x: &Expr, s: i8, depth: u32) -> MathResult<Lim> {
                             let flip = if s < 0 && n % 2 == 1 { -1 } else { 1 };
                             return Ok(Lim::Inf(sign * flip));
                         }
+                        // oo - oo between two square roots: multiply by the conjugate
+                        Some(_)
+                            if depth < MAX_DEPTH / 2
+                                && let Some(q) = sqrt_conjugate(ts)
+                                && let Ok(l) = at_infinity(&q, x, s, depth + 8) =>
+                        {
+                            return Ok(l);
+                        }
                         // oo - oo between logarithms with the same coefficient: c*log(A) - c*log(B) = c*log(A/B)
                         Some(_) if depth < MAX_DEPTH / 2 && merge_logs(ts).is_some() => {
                             return match merge_logs(ts) {
@@ -191,11 +199,22 @@ fn at_infinity(e: &Expr, x: &Expr, s: i8, depth: u32) -> MathResult<Lim> {
         Kind::Mul(fs) => {
             let (num, den) = split_fraction(e);
             if !den.is_one() {
+                if is_bounded(&num, x) && matches!(at_infinity(&den, x, s, depth + 1), Ok(Lim::Inf(_))) {
+                    return Ok(Lim::Fin(Expr::zero()));
+                }
                 return ratio(&num, &den, x, s, depth + 1);
             }
             let (mut finite, mut zeros, mut infs, mut sign) = (Vec::new(), Vec::new(), Vec::new(), 1i8);
+            let mut bounded = false;
             for f in fs {
-                match at_infinity(f, x, s, depth + 1)? {
+                let lim = match at_infinity(f, x, s, depth + 1) {
+                    Err(_) if is_bounded(f, x) => {
+                        bounded = true;
+                        continue;
+                    }
+                    other => other?,
+                };
+                match lim {
                     Lim::Fin(v) if is_zero_expr(&v)? => zeros.push(f.clone()),
                     Lim::Fin(v) => finite.push(v),
                     Lim::Inf(d) => {
@@ -203,6 +222,10 @@ fn at_infinity(e: &Expr, x: &Expr, s: i8, depth: u32) -> MathResult<Lim> {
                         infs.push(f.clone());
                     }
                 }
+            }
+            if bounded {
+                // a bounded oscillating factor times something that tends to zero
+                return if infs.is_empty() && !zeros.is_empty() { Ok(Lim::Fin(Expr::zero())) } else { Err(unsupported()) };
             }
             if infs.is_empty() {
                 return Ok(Lim::Fin(if zeros.is_empty() { Expr::mul(finite) } else { Expr::zero() }));
@@ -270,6 +293,44 @@ fn at_infinity(e: &Expr, x: &Expr, s: i8, depth: u32) -> MathResult<Lim> {
             }
         }
         _ => Err(unsupported()),
+    }
+}
+
+/// `c * sqrt(P)` as `(c, P)`, with `c` a number.
+fn sqrt_term(t: &Expr) -> Option<(Expr, Expr)> {
+    match t.kind() {
+        Kind::Pow(p, k) if k.as_num().is_some_and(|n| n.parts().is_some_and(|(a, b)| a == 1.into() && b == 2u8.into())) => Some((Expr::one(), p.clone())),
+        Kind::Mul(fs) => {
+            let [c, r] = fs.as_slice() else { return None };
+            let (coef, root) = if c.is_num() { (c, r) } else { (r, c) };
+            let (_, p) = sqrt_term(root)?;
+            coef.is_num().then(|| (coef.clone(), p))
+        }
+        _ => None,
+    }
+}
+
+/// `A + B` with `A = c1 sqrt(P1)`, `B = c2 sqrt(P2)` as `(c1^2 P1 - c2^2 P2) / (A - B)`.
+fn sqrt_conjugate(ts: &[Expr]) -> Option<Expr> {
+    let [a, b] = ts else { return None };
+    let ((c1, p1), (c2, p2)) = (sqrt_term(a)?, sqrt_term(b)?);
+    let square = |c: &Expr, p: &Expr| Expr::mul(vec![Expr::pow(c, &Expr::int(2)), p.clone()]);
+    let num = crate::expand::expand(&Expr::add(vec![square(&c1, &p1), square(&c2, &p2).neg()])).ok()?;
+    let den = Expr::add(vec![a.clone(), b.neg()]);
+    Some(num.div(&den))
+}
+
+/// `true` when `e` stays between fixed bounds as its argument grows (sines, cosines, arctangents and their sums,
+/// products and integer powers), so that it only oscillates or settles.
+fn is_bounded(e: &Expr, x: &Expr) -> bool {
+    if !e.contains(x) {
+        return true;
+    }
+    match e.kind() {
+        Kind::Call(name, _) => matches!(name.as_ref(), "sin" | "cos" | "atan" | "tanh" | "erf"),
+        Kind::Add(v) | Kind::Mul(v) => v.iter().all(|t| is_bounded(t, x)),
+        Kind::Pow(b, k) => k.as_i64().is_some_and(|k| k > 0) && is_bounded(b, x),
+        _ => false,
     }
 }
 
