@@ -30,6 +30,27 @@ pub fn word_before(text: &str, cursor: usize) -> Option<(usize, String)> {
     Some((start, word))
 }
 
+/// The identifier that covers char index `at` (a position between or on its letters), for hover help.
+pub fn word_at(text: &str, at: usize) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let is_word = |c: &char| c.is_alphanumeric() || *c == '_';
+    let mut start = at.min(chars.len());
+    while start > 0 && chars.get(start - 1).is_some_and(is_word) {
+        start -= 1;
+    }
+    let mut end = at.min(chars.len());
+    while chars.get(end).is_some_and(is_word) {
+        end += 1;
+    }
+    let word: String = chars.get(start..end)?.iter().collect();
+    (!word.is_empty() && !word.starts_with(|c: char| c.is_ascii_digit())).then_some(word)
+}
+
+/// Signature and one-line summary of a built-in function.
+pub fn doc_for(name: &str) -> Option<(&'static str, &'static str)> {
+    DOCS.iter().find(|(n, _, _)| *n == name).map(|(_, sig, summary)| (*sig, *summary))
+}
+
 /// Whether the cursor sits in a comment or string on its line, where completion would only get in the way.
 pub fn in_comment_or_string(text: &str, cursor: usize) -> bool {
     let before: String = text.chars().take(cursor).collect();
@@ -85,6 +106,18 @@ mod tests {
         assert_eq!(word_before("12ab", 4), None);
         assert_eq!(word_before("diff(x", 3), Some((0, "dif".to_owned())));
         assert_eq!(word_before("δx_1", 4), Some((0, "δx_1".to_owned())));
+    }
+
+    #[test]
+    fn finds_the_word_under_the_pointer() {
+        assert_eq!(word_at("y = diff(x, x)", 6), Some("diff".to_owned()));
+        assert_eq!(word_at("y = diff(x, x)", 4), Some("diff".to_owned()), "at the start");
+        assert_eq!(word_at("y = diff(x, x)", 8), Some("diff".to_owned()), "at the end");
+        assert_eq!(word_at("a + 12", 5), None);
+        assert_eq!(word_at("a + b", 3), None);
+        assert_eq!(word_at("", 0), None);
+        assert!(doc_for("integrate").is_some_and(|(sig, _)| sig.starts_with("integrate(")));
+        assert!(doc_for("nope").is_none());
     }
 
     #[test]
