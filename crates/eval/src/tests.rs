@@ -514,3 +514,15 @@ fn pattern_matching_and_rewrite_rules() {
     assert_eq!(ev("findall(sin(x) + sin(y)*cos(x), sin(a_))"), "[sin(y), sin(x)]");
     assert!(ev("replace(x, [x])").contains("pair"));
 }
+
+#[test]
+fn factoring_over_the_integers() {
+    assert_eq!(ev("factor(x**4 + 4)"), "(x**2 - 2*x + 2)*(x**2 + 2*x + 2)");
+    assert_eq!(ev("factor(x**8 - 1)"), "(x - 1)*(x + 1)*(x**2 + 1)*(x**4 + 1)");
+    assert_eq!(ev("factor(x**4 + x**2 + 1)"), "(x**2 + x + 1)*(x**2 - x + 1)");
+    assert_eq!(ev("factor(x**4 - 10*x**2 + 1)"), "x**4 - 10*x**2 + 1");
+    assert_eq!(ev("factor(x**2*y - y**3)"), "y*(x + y)*(x - y)");
+    assert_eq!(ev("factor(x**3 + y**3 + z**3 - 3*x*y*z)"), "(x + y + z)*(x**2 - x*y - x*z + y**2 - y*z + z**2)");
+    assert_eq!(ev("factor(a*x**2 - a)"), "a*(x - 1)*(x + 1)");
+    assert_eq!(ev("factor(expand((x**3+x+1)*(x**4-3*x+7)*(2*x**5+x**2-9)))"), "(2*x**5 + x**2 - 9)*(x**3 + x + 1)*(x**4 - 3*x + 7)");
+}
