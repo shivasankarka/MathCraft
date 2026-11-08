@@ -38,7 +38,7 @@ pub fn poly_lcm(a: &mathcraft_core::Expr, b: &mathcraft_core::Expr) -> mathcraft
 pub use limits::{Side, limit, limit_side};
 pub use pattern::{Bindings, find_all, match_expr, replace};
 pub use poly::{factor, from_poly, linear_in, solve_polynomial, to_poly};
-pub use rational::{apart, cancel};
+pub use rational::{apart, cancel, together};
 pub use simplify::simplify;
 pub use solve::{nroots, solve};
 pub use sums::summation;
