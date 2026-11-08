@@ -95,6 +95,8 @@ fn derivative_of(name: &str, u: &Expr) -> Option<Expr> {
         "erf" => Expr::mul(vec![Expr::int(2), Expr::pow(&Expr::pi(), &Expr::rational(-1, 2)?), Expr::pow(&Expr::e(), &Expr::pow(u, &two).neg())]),
         "LambertW" => c("LambertW").div(&Expr::mul(vec![u.clone(), Expr::add(vec![one.clone(), c("LambertW")])])),
         "Si" => c("sin").div(u),
+        "Ci" => c("cos").div(u),
+        "Ei" => c("exp").div(u),
         "log" => Expr::pow(u, &Expr::int(-1)),
         "abs" => u.div(&c("abs")),
         _ => return None,
@@ -174,19 +176,33 @@ fn int(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
     if depth < MAX_INT_DEPTH { u_substitution(e, x, depth) } else { Ok(None) }
 }
 
-/// `sin(a*x)/x` is `Si(a*x)`.
+/// `sin(a*x)/x` is `Si(a*x)`, `cos(a*x)/x` is `Ci(a*x)` (for `a > 0`) and `exp(a*x)/x` is `Ei(a*x)`.
 fn sinc(fs: &[Expr], x: &Expr) -> MathResult<Option<Expr>> {
     let [a, b] = fs else { return Ok(None) };
-    let (s, inv) = if matches!(a.kind(), Kind::Call(..)) { (a, b) } else { (b, a) };
-    let Kind::Call(name, args) = s.kind() else { return Ok(None) };
-    let [u] = args.as_slice() else { return Ok(None) };
-    if &**name != "sin" || inv != &Expr::pow(x, &Expr::int(-1)) {
+    let inverse = Expr::pow(x, &Expr::int(-1));
+    let s = if b == &inverse {
+        a
+    } else if a == &inverse {
+        b
+    } else {
+        return Ok(None);
+    };
+    let (kind, u) = match s.kind() {
+        Kind::Call(name, args) if matches!(&**name, "sin" | "cos") && args.len() == 1 => (&**name, args[0].clone()),
+        Kind::Pow(base, u) if base.as_sym() == Some(mathcraft_core::expr::SYM_E) => ("exp", u.clone()),
+        _ => return Ok(None),
+    };
+    let Some((slope, shift)) = linear_in(&u, x)? else { return Ok(None) };
+    if !shift.is_zero() {
         return Ok(None);
     }
-    Ok(match linear_in(u, x)? {
-        Some((_, shift)) if shift.is_zero() => Some(Expr::call("Si", vec![u.clone()])),
-        _ => None,
-    })
+    let name = match kind {
+        "sin" => "Si",
+        "exp" => "Ei",
+        _ if sign_of(&slope) == Some(1) => "Ci",
+        _ => return Ok(None),
+    };
+    Ok(Some(Expr::call(name, vec![u])))
 }
 
 /// Antiderivatives of single elementary terms with a linear inner argument.
