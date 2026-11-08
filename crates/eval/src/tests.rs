@@ -564,3 +564,10 @@ fn limits_of_polynomial_differences_and_log_pairs() {
     assert_eq!(ev("integrate(1/(x**4 + 1), (x, 0, oo))"), "pi*sqrt(2)/4");
     assert_eq!(ev("integrate(1/(x**4 + 1), (x, -oo, oo))"), "pi*sqrt(2)/2");
 }
+
+#[test]
+fn factor_cancels_fractions_and_together_combines() {
+    assert_eq!(ev("factor((x**2 - 1)/(x**2 + 2*x + 1))"), "(x - 1)/(x + 1)");
+    assert_eq!(ev("factor((x**2 - y**2)/(x**2 + 2*x*y + y**2))"), "(x - y)/(x + y)");
+    assert_eq!(ev("together(1/x + 1/y)"), "(x + y)/(x*y)");
+}
