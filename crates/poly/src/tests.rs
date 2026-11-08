@@ -278,3 +278,77 @@ fn factors_in_several_variables() {
     let irr = a.mul(&a).unwrap().add(&b.mul(&b).unwrap()).unwrap().add(&one).unwrap();
     assert_eq!(factor_degrees(&irr), vec![2]);
 }
+
+/// A small deterministic random polynomial in `n` variables of total degree at most `deg`.
+fn random_poly(n: usize, deg: u32, terms: usize, seed: &mut u64) -> Poly {
+    let mut next = move |m: u64| {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        *seed % m
+    };
+    let mut ts = Vec::new();
+    for _ in 0..terms {
+        let mut exps = vec![0u32; n];
+        let mut left = deg;
+        for e in exps.iter_mut() {
+            *e = next(u64::from(left) + 1) as u32;
+            left -= *e;
+        }
+        let k = next(19) as i64 - 9;
+        if k != 0 {
+            ts.push((pack(&exps).unwrap(), IBig::from(k)));
+        }
+    }
+    Poly::from_terms(n, ts)
+}
+
+#[test]
+fn modular_gcd_matches_euclid_on_random_inputs() {
+    let mut seed = 0x1234_5678_9abc_def1u64;
+    let mut checked = 0;
+    for (n, dg, da) in [(2usize, 3u32, 3u32), (3, 3, 3), (3, 4, 2), (4, 3, 2), (5, 2, 2)] {
+        for _ in 0..6 {
+            let (g, a, b) = (random_poly(n, dg, 12, &mut seed), random_poly(n, da, 10, &mut seed), random_poly(n, da, 10, &mut seed));
+            if g.is_zero() || a.is_zero() || b.is_zero() {
+                continue;
+            }
+            let (f1, f2) = (a.mul(&g).unwrap(), b.mul(&g).unwrap());
+            let Some(v) = (0..n).find(|v| f1.degree_in(*v) > 0 && f2.degree_in(*v) > 0) else { continue };
+            // both primitive in x_v, as the caller guarantees
+            let prim = |p: &Poly| {
+                let c = p.coeffs_in(v).iter().fold(Poly::zero(n), |c, k| c.gcd(k).unwrap());
+                p.div_exact(&c).unwrap().unwrap()
+            };
+            let (p1, p2) = (prim(&f1), prim(&f2));
+            let want = p1.gcd(&p2).unwrap();
+            let got = modgcd::gcd_primitive(&p1, &p2, v, 0, &mut || false).unwrap();
+            if let Some(got) = got {
+                assert_eq!(got, want, "n={n}");
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked >= 10, "the modular method should apply to most of these, applied to {checked}");
+}
+
+#[test]
+fn modular_gcd_combines_primes_for_large_coefficients() {
+    // the leading coefficient 10^27 does not fit one 62-bit prime
+    let (x, y, z) = (x(3, 0), x(3, 1), x(3, 2));
+    let big = IBig::from(10).pow(9);
+    let g = x.scale(&big).add(&y).unwrap().add(&z).unwrap().add(&c(3, 1)).unwrap().pow(3).unwrap();
+    let f1 = g.mul(&x.add(&y).unwrap()).unwrap();
+    let f2 = g.mul(&x.sub(&z).unwrap().add(&c(3, 2)).unwrap()).unwrap();
+    let got = modgcd::gcd_primitive(&f1, &f2, 0, 0, &mut || false).unwrap();
+    assert_eq!(got, Some(g.clone()));
+    assert_eq!(f1.gcd(&f2).unwrap(), g);
+}
+
+#[test]
+fn modular_gcd_of_coprime_inputs_is_one() {
+    let (x, y, z) = (x(3, 0), x(3, 1), x(3, 2));
+    let f = x.pow(3).unwrap().add(&y.mul(&z).unwrap()).unwrap().add(&c(3, 1)).unwrap();
+    let g = x.pow(2).unwrap().add(&y.pow(2).unwrap()).unwrap().add(&z).unwrap();
+    assert_eq!(modgcd::gcd_primitive(&f, &g, 0, 0, &mut || false).unwrap(), Some(c(3, 1)));
+}
