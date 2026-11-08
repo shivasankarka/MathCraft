@@ -584,3 +584,12 @@ fn more_special_functions() {
     assert_eq!(ev("integrate(exp(x)/x, x)"), "Ei(x)");
     assert_eq!(ev("limit(Ci(x), x, oo)"), "0");
 }
+
+#[test]
+fn factors_over_algebraic_extensions() {
+    assert_eq!(ev("factor(x**4 + 1, extension=sqrt(2))"), "(x**2 - x*sqrt(2) + 1)*(x**2 + x*sqrt(2) + 1)");
+    assert_eq!(ev("factor(x**2 - 2, sqrt(2))"), "(x + sqrt(2))*(x - sqrt(2))");
+    assert_eq!(ev("factor(x**2 + 1, extension=I)"), "(x + I)*(x - I)");
+    assert_eq!(ev("factor(x**3 - 2, extension=2**(1/3))"), "(x - 2**(1/3))*(x**2 + x*2**(1/3) + 4**(1/3))");
+    assert_eq!(ev("factor((x**2 - 2)**2*(x + 1), sqrt(2))"), "(x + sqrt(2))**2*(x - sqrt(2))**2*(x + 1)");
+}
