@@ -123,6 +123,13 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("is_nonpositive", "is_nonpositive(expr)", "like is_positive, for <= 0"),
     ("is_nonzero", "is_nonzero(expr)", "True or False when known from the assumptions, else None"),
     ("is_integer", "is_integer(expr)", "True or False when known (symbols('n', integer=True)), else None"),
+    (
+        "replace",
+        "replace(expr, pattern, new) | replace(expr, [(p1, r1), (p2, r2)])",
+        "rewrite every match of a pattern; names ending in _ are wildcards: replace(sin(t)**2 + cos(t)**2, sin(a_)**2 + cos(a_)**2, 1)",
+    ),
+    ("pattern_match", "pattern_match(expr, pattern)", "what each wildcard (a_, b_, ...) matches, as a list of a_ == value; None if there is no match"),
+    ("findall", "findall(expr, pattern)", "every subexpression that matches the pattern"),
     ("cancel", "cancel(expr)", "cancel common factors of a fraction (any number of symbols)"),
     ("factor", "factor(poly)", "factor a polynomial over the rationals (rational roots)"),
     ("simplify", "simplify(expr)", "try expanding, factoring and sin^2+cos^2=1; keep the smallest form"),
@@ -181,6 +188,8 @@ const METHODS: &[&str] = &[
     "factor",
     "simplify",
     "refine",
+    "replace",
+    "findall",
     "subs",
     "diff",
     "integrate",
@@ -794,6 +803,47 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
                 },
             };
             Ok(known.map_or(Value::None, Value::Bool))
+        }
+        "replace" => {
+            a.limits(name, 2, 3)?;
+            let mut rules: Vec<(Expr, Expr)> = Vec::new();
+            if a.pos.len() == 3 {
+                rules.push((a.expr(1)?, a.expr(2)?));
+            } else {
+                match a.get(1)? {
+                    Value::List(items) | Value::Tuple(items) => {
+                        for item in items.iter() {
+                            match item {
+                                Value::List(pair) | Value::Tuple(pair) => match pair.as_slice() {
+                                    [p, r] => rules.push((p.to_expr()?, r.to_expr()?)),
+                                    _ => return err("replace(expr, rules): each rule is a pair (pattern, replacement)"),
+                                },
+                                _ => return err("replace(expr, rules): each rule is a pair (pattern, replacement)"),
+                            }
+                        }
+                    }
+                    _ => return err("replace(expr, pattern, new) or replace(expr, [(pattern, new), ...])"),
+                }
+            }
+            let out = broadcast(a.get(0)?, &mut |e| {
+                let mut cur = e.clone();
+                for (p, r) in &rules {
+                    cur = alg::replace(&cur, p, r)?;
+                }
+                Ok(cur)
+            })?;
+            check_depth(it, out)
+        }
+        "pattern_match" => {
+            a.limits(name, 2, 2)?;
+            Ok(match alg::match_expr(&a.expr(0)?, &a.expr(1)?, true)? {
+                Some(b) => Value::list(b.into_iter().map(|(n, v)| Value::Expr(Expr::eq(Expr::sym(&n), v))).collect()),
+                None => Value::None,
+            })
+        }
+        "findall" => {
+            a.limits(name, 2, 2)?;
+            Ok(Value::list(alg::find_all(&a.expr(0)?, &a.expr(1)?)?.into_iter().map(Value::from_expr).collect()))
         }
         "Eq" => {
             a.limits(name, 2, 2)?;
