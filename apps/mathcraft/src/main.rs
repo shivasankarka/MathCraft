@@ -13,6 +13,7 @@ mod icons;
 mod markdown;
 mod math_view;
 mod palette;
+mod plot_export;
 mod session;
 mod settings;
 mod sidebar;
@@ -96,6 +97,8 @@ enum Action {
     AddAfter(Option<CellId>, CellKind),
     Delete(CellId),
     Move(CellId, isize),
+    /// Say something in the status bar.
+    Status(String),
     /// A Vim `:` command line (`w`, `q`, `wq`, ...).
     Command(String),
 }
@@ -672,6 +675,7 @@ impl App {
                     self.cur.nb.move_cell(id, delta);
                     self.cur.dirty = true;
                 }
+                Action::Status(text) => self.status = text,
                 Action::Command(line) => self.ex_command(line.trim()),
             }
         }
@@ -1939,7 +1943,7 @@ fn output_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell) {
                 }
             }
             match &o.result {
-                Ok(Some(Value::Plot(p))) => plot_ui(ui, theme, cell.id, p),
+                Ok(Some(Value::Plot(p))) => plot_ui(ui, theme, cell.id, p, env.actions),
                 Ok(Some(v)) => value_ui(ui, env, cell, v),
                 _ => {}
             }
@@ -2058,27 +2062,42 @@ fn copy_as_menu(ui: &mut egui::Ui, v: &Value) {
     });
 }
 
-fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::PlotSpec) {
+/// Remembers, per plot, that "Reset view" was chosen (applied on the next frame).
+#[derive(Clone, Copy, Default)]
+struct ResetPlot(bool);
+
+/// A plot you can look around in: drag to pan, pinch or Ctrl+scroll to zoom, right-drag a box to zoom into it,
+/// double-click to reset. The coordinates under the pointer show in the corner; the context menu resets the view,
+/// copies the points as CSV or saves the view as an SVG picture.
+fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::PlotSpec, actions: &mut Vec<Action>) {
+    let plot_id = egui::Id::unique(("plot", id));
+    let reset_key = plot_id.with("reset");
     ui.scope(|ui| {
         // The plot draws its frame, labels and legend from the visuals; keep them quiet and on the page colour.
         let v = ui.visuals_mut();
         v.override_text_color = Some(theme.text_dim);
         v.extreme_bg_color = theme.bg;
         v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, theme.border);
-        let mut plot = egui_plot::Plot::new(egui::Id::unique(("plot", id)))
+        let mut plot = egui_plot::Plot::new(plot_id)
             .height(280.0)
             .grid_spacing(80.0..=400.0)
             .x_grid_spacer(nice_grid(1.0))
             .y_grid_spacer(nice_grid(0.25))
             .x_axis_formatter(|m, _| tick_label(m.value))
             .y_axis_formatter(|m, _| tick_label(m.value))
+            .coordinates_formatter(egui_plot::Corner::LeftBottom, egui_plot::CoordinatesFormatter::new(|pt, b| coordinate_text(pt.x, pt.y, b)))
             .allow_scroll(false)
+            .allow_boxed_zoom(true)
             .show_grid(false)
             .x_axis_label(p.x_label.clone());
+        if ui.ctx().data_mut(|d| d.get_temp::<ResetPlot>(reset_key).is_some_and(|r| r.0)) {
+            ui.ctx().data_mut(|d| d.insert_temp(reset_key, ResetPlot(false)));
+            plot = plot.reset();
+        }
         if p.series.len() > 1 {
             plot = plot.legend(egui_plot::Legend::default().position(egui_plot::Corner::RightTop));
         }
-        plot.show(ui, |plot| {
+        let shown = plot.show(ui, |plot| {
             for (i, s) in p.series.iter().enumerate() {
                 let color = theme.plot.get(i % theme.plot.len()).copied().unwrap_or(theme.accent);
                 for seg in &s.segments {
@@ -2086,7 +2105,48 @@ fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::Plo
                 }
             }
         });
+        let b = shown.transform.bounds();
+        let view = [b.min()[0], b.max()[0], b.min()[1], b.max()[1]];
+        shown.response.context_menu(|ui| {
+            if ui.button("Reset view").clicked() {
+                ui.ctx().data_mut(|d| d.insert_temp(reset_key, ResetPlot(true)));
+                ui.close();
+            }
+            if ui.button("Copy points as CSV").clicked() {
+                ui.ctx().copy_text(plot_export::csv(p));
+                actions.push(Action::Status("Copied the plot's points as CSV".into()));
+                ui.close();
+            }
+            if ui.button("Save as SVG…").clicked() {
+                ui.close();
+                actions.push(Action::Status(save_svg(p, view)));
+            }
+        });
     });
+}
+
+/// "x = 1.25   y = -0.5", with as many decimals as the visible range needs.
+fn coordinate_text(x: f64, y: f64, b: &egui_plot::PlotBounds) -> String {
+    let decimals = |span: f64| (3.0 - span.abs().max(f64::MIN_POSITIVE).log10().floor()).clamp(0.0, 10.0) as usize;
+    let fmt = |v: f64, span: f64| {
+        let s = format!("{v:.*}", decimals(span));
+        if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_owned() } else { s }
+    };
+    format!("x = {}   y = {}", fmt(x, b.width()), fmt(y, b.height()))
+}
+
+/// Ask where to save, write the picture, and say what happened.
+fn save_svg(p: &mathcraft_eval::PlotSpec, view: [f64; 4]) -> String {
+    let Some(path) = rfd::FileDialog::new().add_filter("SVG picture", &["svg"]).set_file_name("plot.svg").save_file() else { return "Save cancelled".into() };
+    let sane = view.iter().all(|v| v.is_finite()) && view[1] > view[0] && view[3] > view[2];
+    let view = if sane { view } else { plot_export::data_view(p) };
+    let hex = |c: Color32| format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b());
+    let series: Vec<String> = Theme::light().plot.iter().map(|c| hex(*c)).collect();
+    let colors = plot_export::SvgColors { series: &series, text: "#333333", grid: "#e4e4e8" };
+    match std::fs::write(&path, plot_export::svg(p, view, &colors, &tick_label)) {
+        Ok(()) => format!("Saved {}", file_name(&path)),
+        Err(e) => format!("Could not save the plot: {e}"),
+    }
 }
 
 /// Axis ticks at 1, 2 or 5 times a power of ten, about `fraction` of the plot's minimum grid spacing apart, so an axis
@@ -2190,6 +2250,31 @@ mod tests {
         named.load_session(true);
         assert_eq!(named.order.len(), 1);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn coordinates_use_the_precision_the_view_needs() {
+        let b = |w: f64| egui_plot::PlotBounds::from_min_max([0.0, 0.0], [w, w]);
+        assert_eq!(coordinate_text(1.23456, -0.5, &b(10.0)), "x = 1.23   y = -0.5");
+        assert_eq!(coordinate_text(1.23456, 2.0, &b(0.01)), "x = 1.23456   y = 2");
+        assert_eq!(coordinate_text(1234.4, 7.0, &b(5000.0)), "x = 1234   y = 7");
+    }
+
+    #[test]
+    fn a_plot_cell_draws_and_resets() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        app.replace_notebook(Notebook::from_text("# %%\nplot(sin(x), (x, 0, 6))\n"), None);
+        let start = Instant::now();
+        while app.busy() || start.elapsed() < Duration::from_millis(200) {
+            frame(&ctx, &mut app);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(matches!(app.cur.nb.cells().first().and_then(|c| c.output.as_ref()).map(|o| &o.result), Some(Ok(Some(Value::Plot(_))))));
+        let id = app.cur.nb.cells().first().map(|c| c.id).unwrap_or(0);
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("plot", id)).with("reset"), ResetPlot(true)));
+        frame(&ctx, &mut app);
+        assert!(ctx.data(|d| d.get_temp::<ResetPlot>(egui::Id::unique(("plot", id)).with("reset"))).is_some_and(|r| !r.0), "the request is consumed");
     }
 
     #[test]
