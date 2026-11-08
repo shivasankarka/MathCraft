@@ -132,6 +132,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ),
     ("pattern_match", "pattern_match(expr, pattern)", "what each wildcard (a_, b_, ...) matches, as a list of a_ == value; None if there is no match"),
     ("findall", "findall(expr, pattern)", "every subexpression that matches the pattern"),
+    ("together", "together(expr)", "combine a sum of fractions into one fraction (nothing is cancelled)"),
     ("cancel", "cancel(expr)", "cancel common factors of a fraction (any number of symbols)"),
     ("factor", "factor(poly)", "factor a polynomial with integer coefficients into irreducibles (any number of variables)"),
     ("simplify", "simplify(expr)", "try expanding, factoring and sin^2+cos^2=1; keep the smallest form"),
@@ -187,6 +188,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
 const METHODS: &[&str] = &[
     "expand",
     "cancel",
+    "together",
     "factor",
     "simplify",
     "refine",
@@ -875,7 +877,7 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             a.limits(name, 1, 1)?;
             check_depth(it, Value::Expr(amp::contract(&a.expr(0)?)?))
         }
-        "expand" | "simplify" | "factor" | "cancel" | "refine" => {
+        "expand" | "simplify" | "factor" | "cancel" | "together" | "refine" => {
             a.limits(name, 1, 1)?;
             let out = broadcast(a.get(0)?, &mut |e| {
                 Ok(match name {
@@ -883,6 +885,10 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
                     "simplify" => alg::simplify_with(e, &it.assumptions(&[e]))?,
                     "refine" => alg::refine(e, &it.assumptions(&[e]))?,
                     "cancel" => alg::cancel(e)?,
+                    "together" => {
+                        let (n, d) = alg::together(e)?;
+                        n.div(&d)
+                    }
                     _ => alg::factor(e)?,
                 })
             })?;
