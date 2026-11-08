@@ -4,6 +4,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- Cmd+Alt+Up / Cmd+Alt+Down move the keyboard to the previous or next code cell. Printed output longer than 24 lines is folded to 20 with a "Show N more lines" button.
 - Command palette: Shift+Enter on a function inserts `name(` into the cell you were editing; Enter still opens the function list for it.
 - Hover help: point at a built-in function name in a cell (`diff`, `integrate`, ...) to see its signature and summary.
 - Math in text cells: `$x**2 - 2$` is typeset inline and a line `$$ integrate(1/(x**2+1), x) $$` is typeset on its own, centred. The text between the dollars is a MathCraft expression and it is evaluated (so `$exp(I*pi) + 1$` shows 0); something that is not an expression, or that takes too long, stays as plain text. `$5 and $6` is left alone, and `\$` is a literal dollar.
