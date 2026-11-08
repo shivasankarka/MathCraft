@@ -195,7 +195,12 @@ pub fn integrate_rational(e: &Expr, x: &Expr, rec: &mut dyn FnMut(&Expr) -> Math
     if !d.contains(x) || to_poly(&d, x)?.is_none() {
         return Ok(None);
     }
-    let a = apart(e, x)?;
+    let mut a = apart(e, x)?;
+    if &a == e
+        && let Some(q) = split_quartic(e, x)?
+    {
+        a = q;
+    }
     let split = &a != e;
     let terms = match a.kind() {
         Kind::Add(v) => v.clone(),
@@ -214,6 +219,53 @@ pub fn integrate_rational(e: &Expr, x: &Expr, rec: &mut dyn FnMut(&Expr) -> Math
         }
     }
     Ok(Some(Expr::add(parts)))
+}
+
+/// `N / (x**4 + b*x**2 + c)` with `N` of degree below 4, where the quartic has no rational factor but splits over
+/// `Q(sqrt(..))` as `(x**2 + s*x + r) * (x**2 - s*x + r)` with `r = sqrt(c)` and `s = sqrt(2*r - b)` (`c > 0`,
+/// `2*r > b`; `1/(x**4 + 1)` is the typical case). Returns the sum of two fractions with quadratic denominators.
+fn split_quartic(e: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
+    let (n, d) = together(e)?;
+    let (Some(np), Some(dp)) = (to_poly(&n, x)?, to_poly(&d, x)?) else { return Ok(None) };
+    let [c, c1, b, c3, lead] = dp.as_slice() else { return Ok(None) };
+    if !c1.is_zero() || !c3.is_zero() || np.len() > 4 || lead.contains(x) {
+        return Ok(None);
+    }
+    let (b, c) = (b.div(lead), c.div(lead));
+    let Some(sc) = sign_of(&c) else { return Ok(None) };
+    if sc <= 0 {
+        return Ok(None);
+    }
+    let r = expand(&Expr::pow(&c, &Expr::half()))?;
+    let s2 = expand(&Expr::add(vec![Expr::mul(vec![Expr::int(2), r.clone()]), b.neg()]))?;
+    if sign_of(&s2) != Some(1) {
+        return Ok(None);
+    }
+    let s = Expr::pow(&s2, &Expr::half());
+    let (q1, q2) = (
+        Expr::add(vec![Expr::pow(x, &Expr::int(2)), Expr::mul(vec![s.clone(), x.clone()]), r.clone()]),
+        Expr::add(vec![Expr::pow(x, &Expr::int(2)), Expr::mul(vec![s, x.clone()]).neg(), r]),
+    );
+    let u: Vec<Expr> = (1..=4).map(|i| Expr::sym(&format!("_qf{i}"))).collect();
+    let [u0, u1, u2, u3] = u.as_slice() else { return Ok(None) };
+    let lin = |p: &Expr, q: &Expr| Expr::add(vec![Expr::mul(vec![p.clone(), x.clone()]), q.clone()]);
+    let n_expr = poly_expr(&np, x).div(lead);
+    let equation = expand(&Expr::add(vec![Expr::mul(vec![lin(u0, u1), q2.clone()]), Expr::mul(vec![lin(u2, u3), q1.clone()]), n_expr.neg()]))?;
+    let Some(coeffs) = to_poly(&equation, x)? else { return Ok(None) };
+    let Some(solution) = solve_linear(&coeffs, &u)? else { return Ok(None) };
+    let rules: Vec<(Expr, Expr)> = solution
+        .iter()
+        .filter_map(|eq| match eq.kind() {
+            Kind::Eq(l, r) => Some((l.clone(), r.clone())),
+            _ => None,
+        })
+        .collect();
+    if rules.len() != u.len() {
+        return Ok(None);
+    }
+    let first = expand(&subs(&lin(u0, u1), &rules)?)?.div(&q1);
+    let second = expand(&subs(&lin(u2, u3), &rules)?)?.div(&q2);
+    Ok(Some(Expr::add(vec![first, second])))
 }
 
 /// `(B x + C) / (a x^2 + b x + c)` with an irreducible or irrational-root quadratic: log and arctangent (or log) forms.
