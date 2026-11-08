@@ -67,6 +67,8 @@ enum Cmd {
     RunAll,
     RunStale,
     Interrupt,
+    UndoCell,
+    RedoCell,
     Mode(RunMode),
     View(View),
     ToggleSidebar,
@@ -361,6 +363,8 @@ impl App {
             item("File", "Save as…", String::new(), Cmd::SaveAs),
             item("File", "Close tab", key(Modifiers::COMMAND, Key::W), Cmd::CloseTab),
             item("Run", "Run all cells", key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter), Cmd::RunAll),
+            item("Edit", "Undo cell change (add, delete, move)", key(Modifiers::COMMAND, Key::Z), Cmd::UndoCell),
+            item("Edit", "Redo cell change", key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z), Cmd::RedoCell),
             item("Run", "Run stale cells", String::new(), Cmd::RunStale),
             item("Run", "Interrupt the computation", key(Modifiers::COMMAND, Key::Period), Cmd::Interrupt),
             item("Run", "Dependents run automatically", String::new(), Cmd::Mode(RunMode::Auto)),
@@ -422,6 +426,8 @@ impl App {
             Cmd::RunAll => self.run(RunRequest::All),
             Cmd::RunStale => self.run(RunRequest::Stale),
             Cmd::Interrupt => self.cur.kernel.interrupt(),
+            Cmd::UndoCell => self.undo_cells(),
+            Cmd::RedoCell => self.redo_cells(),
             Cmd::Mode(m) => self.cur.nb.mode = m,
             Cmd::View(v) => self.cur.set_view(v),
             Cmd::ToggleSidebar => self.toggle_sidebar(),
@@ -536,6 +542,14 @@ impl App {
         }
     }
 
+    fn undo_cells(&mut self) {
+        self.status = if self.cur.undo_structure() { "Undid the last cell change".into() } else { "Nothing to undo".into() };
+    }
+
+    fn redo_cells(&mut self) {
+        self.status = if self.cur.redo_structure() { "Redid the cell change".into() } else { "Nothing to redo".into() };
+    }
+
     fn apply(&mut self, actions: Vec<Action>) {
         for a in actions {
             match a {
@@ -550,6 +564,7 @@ impl App {
                     let target = match next {
                         Some(n) => n,
                         None => {
+                            self.cur.checkpoint();
                             self.cur.dirty = true;
                             self.cur.nb.add_cell(Some(id), CellKind::Code, "")
                         }
@@ -557,6 +572,7 @@ impl App {
                     self.cur.focus = Some(target);
                 }
                 Action::AddAfter(after, kind) => {
+                    self.cur.checkpoint();
                     let id = self.cur.nb.add_cell(after, kind, "");
                     if kind == CellKind::Markdown {
                         self.cur.editing_md.insert(id);
@@ -565,6 +581,8 @@ impl App {
                     self.cur.dirty = true;
                 }
                 Action::Delete(id) => {
+                    self.cur.checkpoint();
+                    self.status = "Deleted a cell. Cmd+Z undoes it".into();
                     self.cur.nb.delete_cell(id);
                     self.cur.kernel.forget_cell(id);
                     self.cur.dirty = true;
@@ -573,6 +591,7 @@ impl App {
                     }
                 }
                 Action::Move(id, delta) => {
+                    self.cur.checkpoint();
                     self.cur.nb.move_cell(id, delta);
                     self.cur.dirty = true;
                 }
@@ -598,6 +617,14 @@ impl App {
                 i.consume_key(Modifiers::COMMAND, Key::P) || i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::P),
             )
         });
+        // Cell-level undo only when no text editor has the keyboard (the editor's own undo handles typing).
+        if !ctx.egui_wants_keyboard_input() {
+            if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)) {
+                self.redo_cells();
+            } else if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Z)) {
+                self.undo_cells();
+            }
+        }
         if save {
             self.save(false);
         }
@@ -700,6 +727,18 @@ impl App {
                 if Self::menu_item(ui, &ctx, "Save As…", None) {
                     self.save(true);
                 }
+            });
+            ui.menu_button("Edit", |ui| {
+                ui.add_enabled_ui(self.cur.can_undo(), |ui| {
+                    if Self::menu_item(ui, &ctx, "Undo cell change", Some((Modifiers::COMMAND, Key::Z))) {
+                        self.undo_cells();
+                    }
+                });
+                ui.add_enabled_ui(self.cur.can_redo(), |ui| {
+                    if Self::menu_item(ui, &ctx, "Redo cell change", Some((Modifiers::COMMAND | Modifiers::SHIFT, Key::Z))) {
+                        self.redo_cells();
+                    }
+                });
             });
             ui.menu_button("Run", |ui| {
                 if Self::menu_item(ui, &ctx, "Run all", Some((Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter))) {
@@ -2266,6 +2305,37 @@ mod tests {
         let id = app.cur.nb.cells().first().map(|c| c.id).unwrap_or(0);
         app.apply(vec![Action::Delete(id)]);
         assert_eq!(app.cur.nb.cells().len(), 1);
+        frame(&ctx, &mut app);
+    }
+
+    #[test]
+    fn cell_changes_undo_and_redo_without_losing_typing() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        app.replace_notebook(Notebook::from_text("# %%\nx = 1\n# %%\ny = x + 1\n# %%\nz = 3\n"), None);
+        let ids: Vec<_> = app.cur.nb.cells().iter().map(|c| c.id).collect();
+        app.apply(vec![Action::Delete(ids[1])]);
+        assert_eq!(app.cur.nb.cells().len(), 2);
+        // typing in a remaining cell after the delete must survive the undo
+        app.apply(vec![Action::SetSource(ids[2], "z = 33".into())]);
+        app.undo_cells();
+        let cells = app.cur.nb.cells();
+        assert_eq!(cells.iter().map(|c| c.id).collect::<Vec<_>>(), ids);
+        assert_eq!(cells[1].source, "y = x + 1");
+        assert_eq!(cells[2].source, "z = 33");
+        app.redo_cells();
+        assert_eq!(app.cur.nb.cells().len(), 2);
+        app.undo_cells();
+        app.apply(vec![Action::Move(ids[0], 1)]);
+        assert_eq!(app.cur.nb.cells().first().map(|c| c.id), Some(ids[1]));
+        app.undo_cells();
+        assert_eq!(app.cur.nb.cells().first().map(|c| c.id), Some(ids[0]));
+        // a new change drops the redo history
+        app.apply(vec![Action::Delete(ids[0])]);
+        app.undo_cells();
+        assert!(app.cur.can_redo());
+        app.apply(vec![Action::AddAfter(None, CellKind::Code)]);
+        assert!(!app.cur.can_redo());
         frame(&ctx, &mut app);
     }
 
