@@ -593,3 +593,23 @@ fn factors_over_algebraic_extensions() {
     assert_eq!(ev("factor(x**3 - 2, extension=2**(1/3))"), "(x - 2**(1/3))*(x**2 + x*2**(1/3) + 4**(1/3))");
     assert_eq!(ev("factor((x**2 - 2)**2*(x + 1), sqrt(2))"), "(x + sqrt(2))**2*(x - sqrt(2))**2*(x + 1)");
 }
+
+#[test]
+fn integration_by_parts_substitution_and_repeated_quadratics() {
+    assert_eq!(ev("integrate(log(x)**2, x)"), "x*log(x)**2 - 2*(x*log(x) - x)");
+    assert_eq!(ev("integrate(x*atan(x), x)"), "x**2*atan(x)/2 - x/2 + atan(x)/2");
+    assert_eq!(ev("integrate(log(x)/x, x)"), "log(x)**2/2");
+    assert_eq!(ev("integrate(1/(1 + exp(x)), x)"), "x - log(exp(x) + 1)");
+    assert_eq!(ev("integrate(x*sqrt(x + 1), x)"), "-2*(x + 1)**(3/2)/3 + 2*(x + 1)**(5/2)/5");
+    assert_eq!(ev("integrate(1/(x**2 + 1)**2, (x, -oo, oo))"), "pi/2");
+    assert_eq!(ev("integrate(x**2*exp(-x**2), (x, -oo, oo))"), "sqrt(pi)/2");
+}
+
+#[test]
+fn limits_with_oscillation_and_square_roots_and_equal_power_equations() {
+    assert_eq!(ev("limit(exp(-x)*sin(x), x, oo)"), "0");
+    assert_eq!(ev("limit(sin(x)/x, x, oo)"), "0");
+    assert_eq!(ev("limit(sqrt(x + 1) - sqrt(x), x, oo)"), "0");
+    assert_eq!(ev("limit(sqrt(x**2 + x) - sqrt(x**2 - x), x, oo)"), "1");
+    assert_eq!(ev("solve(3**x - 2**x, x)"), "[0]");
+}
