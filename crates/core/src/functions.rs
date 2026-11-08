@@ -4,8 +4,10 @@ use crate::expr::{Expr, Kind, SYM_E, SYM_PI};
 use crate::number::Num;
 use dashu::integer::IBig;
 
-const UNARY: &[&str] =
-    &["sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "erf", "Gamma", "LambertW", "Si", "log", "abs"];
+const UNARY: &[&str] = &[
+    "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "erf", "Gamma", "LambertW", "Si", "Ci", "Ei", "erfc",
+    "log", "abs",
+];
 
 pub fn is_builtin_function(name: &str) -> bool {
     matches!(name, "sqrt" | "exp") || UNARY.contains(&name)
@@ -14,6 +16,7 @@ pub fn is_builtin_function(name: &str) -> bool {
 pub(crate) fn apply(name: &str, args: Vec<Expr>) -> Expr {
     match (name, args.as_slice()) {
         ("sqrt", [x]) => Expr::pow(x, &Expr::half()),
+        ("erfc", [x]) => Expr::add(vec![Expr::one(), unary("erf", x).neg()]),
         ("exp", [x]) => Expr::pow(&Expr::e(), x),
         (_, [x]) if UNARY.contains(&name) => unary(name, x),
         _ => Expr::raw_call(name, args),
@@ -54,6 +57,9 @@ pub fn f64_unary(name: &str, v: f64) -> Option<f64> {
         "Gamma" => gamma_fn(v),
         "LambertW" => lambert_w(v),
         "Si" => sine_integral(v),
+        "Ci" => cosine_integral(v),
+        "Ei" => exponential_integral(v),
+        "erfc" => 1.0 - erf(v),
         "log" => v.ln(),
         "abs" => v.abs(),
         _ => return None,
@@ -103,7 +109,36 @@ pub(crate) fn euler(exp: &Expr) -> Option<Expr> {
     Some(Expr::add(vec![co, Expr::mul(vec![si, Expr::imag()])]))
 }
 
-/// The sine integral `Si(x)`: its Maclaurin series for small arguments, a complex continued fraction beyond.
+const EULER_GAMMA: f64 = 0.577_215_664_901_532_9;
+
+/// `(Si(t), Ci(t))` for `t >= 2`: Lentz's method for the continued fraction of `E1(i t)`.
+fn cisi_large(t: f64) -> (f64, f64) {
+    let tiny = 1e-300;
+    let cdiv = |p: (f64, f64), q: (f64, f64)| {
+        let m = q.0 * q.0 + q.1 * q.1;
+        ((p.0 * q.0 + p.1 * q.1) / m, (p.1 * q.0 - p.0 * q.1) / m)
+    };
+    let cmul = |p: (f64, f64), q: (f64, f64)| (p.0 * q.0 - p.1 * q.1, p.0 * q.1 + p.1 * q.0);
+    let (mut b, mut c) = ((1.0, t), (1.0 / tiny, 0.0));
+    let mut d = cdiv((1.0, 0.0), b);
+    let mut h = d;
+    for i in 2..10_000 {
+        let a = -f64::from((i - 1) * (i - 1));
+        b = (b.0 + 2.0, b.1);
+        d = cdiv((1.0, 0.0), (a * d.0 + b.0, a * d.1 + b.1));
+        let q = cdiv((a, 0.0), c);
+        c = (b.0 + q.0, b.1 + q.1);
+        let del = cmul(c, d);
+        h = cmul(h, del);
+        if (del.0 - 1.0).abs() + del.1.abs() < 1e-16 {
+            break;
+        }
+    }
+    let h = cmul((t.cos(), -t.sin()), h);
+    (std::f64::consts::FRAC_PI_2 + h.1, -h.0)
+}
+
+/// The sine integral `Si(x)`: its Maclaurin series for small arguments, a continued fraction beyond.
 fn sine_integral(x: f64) -> f64 {
     let t = x.abs();
     let r = if t < 2.0 {
@@ -115,32 +150,101 @@ fn sine_integral(x: f64) -> f64 {
         }
         sum
     } else {
-        // Lentz's method for exp(-i t) times the continued fraction of E1(i t)
-        let tiny = 1e-300;
-        let (mut b, mut c) = ((1.0, t), (1.0 / tiny, 0.0));
-        let cdiv = |p: (f64, f64), q: (f64, f64)| {
-            let m = q.0 * q.0 + q.1 * q.1;
-            ((p.0 * q.0 + p.1 * q.1) / m, (p.1 * q.0 - p.0 * q.1) / m)
-        };
-        let cmul = |p: (f64, f64), q: (f64, f64)| (p.0 * q.0 - p.1 * q.1, p.0 * q.1 + p.1 * q.0);
-        let mut d = cdiv((1.0, 0.0), b);
-        let mut h = d;
-        for i in 2..10_000 {
-            let a = -f64::from((i - 1) * (i - 1));
-            b = (b.0 + 2.0, b.1);
-            d = cdiv((1.0, 0.0), (a * d.0 + b.0, a * d.1 + b.1));
-            let q = cdiv((a, 0.0), c);
-            c = (b.0 + q.0, b.1 + q.1);
-            let del = cmul(c, d);
-            h = cmul(h, del);
-            if (del.0 - 1.0).abs() + del.1.abs() < 1e-16 {
+        cisi_large(t).0
+    };
+    if x < 0.0 { -r } else { r }
+}
+
+/// The cosine integral `Ci(x)` for `x > 0` (`NaN` otherwise).
+fn cosine_integral(x: f64) -> f64 {
+    if x <= 0.0 {
+        return f64::NAN;
+    }
+    if x < 2.0 {
+        let (mut term, mut sum, mut n) = (1.0, 0.0, 0.0_f64);
+        while n < 100.0 {
+            n += 1.0;
+            term *= -x * x / ((2.0 * n - 1.0) * (2.0 * n));
+            let add = term / (2.0 * n);
+            sum += add;
+            if add.abs() < 1e-17 * sum.abs() {
                 break;
             }
         }
-        let h = cmul((t.cos(), -t.sin()), h);
-        std::f64::consts::FRAC_PI_2 + h.1
-    };
-    if x < 0.0 { -r } else { r }
+        EULER_GAMMA + x.ln() + sum
+    } else {
+        cisi_large(x).1
+    }
+}
+
+/// The exponential integral `Ei(x)` (principal value for `x > 0`).
+fn exponential_integral(x: f64) -> f64 {
+    if x == 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    if x < 0.0 {
+        return -e1(-x);
+    }
+    if x <= 40.0 {
+        let (mut term, mut sum, mut k) = (1.0, 0.0, 0.0_f64);
+        while k < 500.0 {
+            k += 1.0;
+            term *= x / k;
+            let add = term / k;
+            sum += add;
+            if add < 1e-17 * sum {
+                break;
+            }
+        }
+        EULER_GAMMA + x.ln() + sum
+    } else {
+        // asymptotic series, summed until its terms stop shrinking
+        let (mut term, mut sum, mut k) = (1.0, 1.0, 0.0_f64);
+        loop {
+            k += 1.0;
+            let next = term * k / x;
+            if next.abs() >= term.abs() || next.abs() < 1e-17 {
+                break;
+            }
+            term = next;
+            sum += term;
+        }
+        x.exp() / x * sum
+    }
+}
+
+/// `E1(t)` for `t > 0`: series below 1, continued fraction above.
+fn e1(t: f64) -> f64 {
+    if t <= 1.0 {
+        let (mut term, mut sum, mut k) = (1.0, 0.0, 0.0_f64);
+        while k < 100.0 {
+            k += 1.0;
+            term *= -t / k;
+            let add = -term / k;
+            sum += add;
+            if add.abs() < 1e-17 * sum.abs() {
+                break;
+            }
+        }
+        -EULER_GAMMA - t.ln() + sum
+    } else {
+        let tiny = 1e-300;
+        let (mut b, mut c) = (t + 1.0, 1.0 / tiny);
+        let mut d = 1.0 / b;
+        let mut h = d;
+        for i in 1..10_000 {
+            let a = -f64::from(i * i);
+            b += 2.0;
+            d = 1.0 / (a * d + b);
+            c = b + a / c;
+            let del = c * d;
+            h *= del;
+            if (del - 1.0).abs() < 1e-16 {
+                break;
+            }
+        }
+        h * (-t).exp()
+    }
 }
 
 /// The principal branch of the Lambert W function (the inverse of `w * exp(w)`), by Halley iteration; `NaN` below `-1/e`.
@@ -250,6 +354,7 @@ fn unary(name: &str, x: &Expr) -> Expr {
         ("log", Kind::Sym(s)) if &**s == SYM_E => Expr::one(),
         ("log", Kind::Pow(b, y)) if b.as_sym() == Some(SYM_E) => y.clone(),
         ("abs", Kind::Call(n, _)) if &**n == "abs" => x.clone(),
+        ("LambertW", Kind::Sym(s)) if &**s == SYM_E => Expr::one(),
         _ => raw(),
     }
 }
