@@ -49,7 +49,8 @@ plot([sin(x), cos(x)], (x, 0, 10))
 ```
 
 Use `**` for powers (`^` is XOR in Python and gives a helpful error). Declare symbols explicitly with
-`x, y = symbols('x y')`, or turn on *Strict* in Settings to require it.
+`x, y = symbols('x y')`, or turn on *Strict* in Settings to require it. Add assumptions with
+`x = symbols('x', positive=True)` (also `integer`, `negative`, `nonzero`, ...) so `sqrt(x**2)` simplifies to `x`.
 
 ## Notebook rules (inspired by marimo)
 
