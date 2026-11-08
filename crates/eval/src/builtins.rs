@@ -112,6 +112,17 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("symbols", "symbols('x y z')", "declare symbols (also names of unknown functions): x, y = symbols('x y')"),
     ("Eq", "Eq(lhs, rhs)", "an equation, for solve()"),
     ("expand", "expand(expr)", "multiply out products and powers of sums"),
+    ("refine", "refine(expr)", "simplify using declared assumptions: x = symbols('x', positive=True) makes sqrt(x**2) just x"),
+    (
+        "is_positive",
+        "is_positive(expr)",
+        "True or False when the sign is known from the assumptions (also is_negative, is_nonnegative, is_nonpositive), else None",
+    ),
+    ("is_negative", "is_negative(expr)", "like is_positive, for < 0"),
+    ("is_nonnegative", "is_nonnegative(expr)", "like is_positive, for >= 0"),
+    ("is_nonpositive", "is_nonpositive(expr)", "like is_positive, for <= 0"),
+    ("is_nonzero", "is_nonzero(expr)", "True or False when known from the assumptions, else None"),
+    ("is_integer", "is_integer(expr)", "True or False when known (symbols('n', integer=True)), else None"),
     ("cancel", "cancel(expr)", "cancel common factors of a fraction (any number of symbols)"),
     ("factor", "factor(poly)", "factor a polynomial over the rationals (rational roots)"),
     ("simplify", "simplify(expr)", "try expanding, factoring and sin^2+cos^2=1; keep the smallest form"),
@@ -169,6 +180,7 @@ const METHODS: &[&str] = &[
     "cancel",
     "factor",
     "simplify",
+    "refine",
     "subs",
     "diff",
     "integrate",
@@ -262,7 +274,10 @@ fn broadcast(v: &Value, f: &mut dyn FnMut(&Expr) -> R<Expr>) -> R<Value> {
 
 fn unary_math(name: &str, a: &Args, it: &Interp<'_>) -> R<Value> {
     a.limits(name, 1, 1)?;
-    let out = broadcast(a.get(0)?, &mut |e| Ok(Expr::call(name, vec![e.clone()])))?;
+    let out = broadcast(a.get(0)?, &mut |e| {
+        let call = Expr::call(name, vec![e.clone()]);
+        if matches!(name, "sqrt" | "sin" | "cos" | "tan") { Ok(alg::refine(&call, &it.assumptions(&[e]))?) } else { Ok(call) }
+    })?;
     check_depth(it, out)
 }
 
@@ -665,7 +680,9 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
         // ---- elementary functions ----
         "abs" => {
             a.limits(name, 1, 1)?;
-            let out = broadcast(a.get(0)?, &mut |e| if e.contains(&Expr::imag()) { Ok(alg::complex_abs(e)?) } else { Ok(Expr::call("abs", vec![e.clone()])) })?;
+            let out = broadcast(a.get(0)?, &mut |e| {
+                if e.contains(&Expr::imag()) { Ok(alg::complex_abs(e)?) } else { Ok(alg::refine(&Expr::call("abs", vec![e.clone()]), &it.assumptions(&[e]))?) }
+            })?;
             check_depth(it, out)
         }
         "re" | "im" | "conjugate" => {
@@ -706,7 +723,7 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             a.limits(name, 1, 2)?;
             let base = a.pos.get(1).map(Value::to_expr).transpose()?;
             let out = broadcast(a.get(0)?, &mut |e| {
-                let ln = Expr::call("log", vec![e.clone()]);
+                let ln = alg::refine(&Expr::call("log", vec![e.clone()]), &it.assumptions(&[e]))?;
                 Ok(match &base {
                     Some(b) => ln.div(&Expr::call("log", vec![b.clone()])),
                     None => ln,
@@ -716,11 +733,67 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
         }
         // ---- algebra ----
         "symbols" => {
-            a.limits(name, 1, 1)?;
+            if a.pos.len() != 1 {
+                return err("symbols() takes a string such as 'x y z', plus keywords like positive=True");
+            }
             let Value::Str(s) = a.get(0)? else { return err("symbols() takes a string such as 'x y z'") };
             let names = parse_symbol_names(s)?;
+            let mut declared = Vec::new();
+            for (k, v) in &a.kw {
+                match v {
+                    Value::Bool(true) => declared.push(k.as_str()),
+                    Value::Bool(false) => {}
+                    _ => return err(format!("{k}= takes True or False")),
+                }
+            }
+            let facts = alg::Facts::from_names(declared).map_err(|bad| {
+                EvalError::new(format!("unknown assumption '{bad}'; use positive, negative, nonnegative, nonpositive, nonzero, integer or real"))
+            })?;
+            for n in &names {
+                it.declare(n, &facts);
+            }
             let mut vals: Vec<Value> = names.iter().map(|n| Value::Expr(Expr::sym(n))).collect();
             if vals.len() == 1 { Ok(vals.swap_remove(0)) } else { Ok(Value::Tuple(Arc::new(vals))) }
+        }
+        "is_positive" | "is_negative" | "is_nonnegative" | "is_nonpositive" | "is_nonzero" | "is_integer" => {
+            a.limits(name, 1, 1)?;
+            let e = a.expr(0)?;
+            let asm = it.assumptions(&[&e]);
+            let sign = alg::sign_of(&e, &asm);
+            use alg::Sign::{Neg, NonNeg, NonPos, Pos, Zero};
+            let known = match name {
+                "is_positive" => match sign {
+                    Some(Pos) => Some(true),
+                    Some(Neg | NonPos | Zero) => Some(false),
+                    _ => None,
+                },
+                "is_negative" => match sign {
+                    Some(Neg) => Some(true),
+                    Some(Pos | NonNeg | Zero) => Some(false),
+                    _ => None,
+                },
+                "is_nonnegative" => match sign {
+                    Some(Pos | NonNeg | Zero) => Some(true),
+                    Some(Neg) => Some(false),
+                    _ => None,
+                },
+                "is_nonpositive" => match sign {
+                    Some(Neg | NonPos | Zero) => Some(true),
+                    Some(Pos) => Some(false),
+                    _ => None,
+                },
+                "is_nonzero" => match sign {
+                    Some(Zero) => Some(false),
+                    _ if alg::is_nonzero(&e, &asm) => Some(true),
+                    _ => None,
+                },
+                _ => match e.as_num() {
+                    Some(n) if n.is_exact() => Some(n.is_integer()),
+                    _ if alg::is_integer(&e, &asm) => Some(true),
+                    _ => None,
+                },
+            };
+            Ok(known.map_or(Value::None, Value::Bool))
         }
         "Eq" => {
             a.limits(name, 2, 2)?;
@@ -751,12 +824,13 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             a.limits(name, 1, 1)?;
             check_depth(it, Value::Expr(amp::contract(&a.expr(0)?)?))
         }
-        "expand" | "simplify" | "factor" | "cancel" => {
+        "expand" | "simplify" | "factor" | "cancel" | "refine" => {
             a.limits(name, 1, 1)?;
             let out = broadcast(a.get(0)?, &mut |e| {
                 Ok(match name {
                     "expand" => alg::expand(e)?,
-                    "simplify" => alg::simplify(e)?,
+                    "simplify" => alg::simplify_with(e, &it.assumptions(&[e]))?,
+                    "refine" => alg::refine(e, &it.assumptions(&[e]))?,
                     "cancel" => alg::cancel(e)?,
                     _ => alg::factor(e)?,
                 })
@@ -828,7 +902,7 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
                     other => {
                         let x = as_symbol(other)?;
                         cur = match alg::integrate(&cur, &x)? {
-                            Some(f) => f,
+                            Some(f) => alg::refine(&f, &it.assumptions(&[&cur]))?,
                             None => Expr::call("integrate", vec![cur, x]),
                         };
                     }
@@ -1126,8 +1200,9 @@ fn solve(it: &Interp<'_>, a: &Args) -> R<Value> {
                 Some(v) => as_symbol(v)?,
                 None => only_symbol(&f, "solve")?,
             };
+            let asm = it.assumptions(&[&f]);
             let roots = alg::solve(&f, &x)?;
-            roots.into_iter().map(|r| it.checked(r)).collect::<R<Vec<_>>>().map(Value::list)
+            roots.into_iter().filter(|r| alg::admissible(r, &x, &asm)).map(|r| it.checked(r)).collect::<R<Vec<_>>>().map(Value::list)
         }
     }
 }
