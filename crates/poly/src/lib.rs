@@ -462,7 +462,9 @@ impl Ord for Entry {
     }
 }
 
+mod factor;
 mod gcd;
+pub use factor::Factorization;
 
 #[cfg(test)]
 mod tests;
