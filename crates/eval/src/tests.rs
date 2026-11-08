@@ -526,3 +526,32 @@ fn factoring_over_the_integers() {
     assert_eq!(ev("factor(a*x**2 - a)"), "a*(x - 1)*(x + 1)");
     assert_eq!(ev("factor(expand((x**3+x+1)*(x**4-3*x+7)*(2*x**5+x**2-9)))"), "(2*x**5 + x**2 - 9)*(x**3 + x + 1)*(x**4 - 3*x + 7)");
 }
+
+#[test]
+fn solve_splits_into_irreducible_factors() {
+    assert_eq!(ev("solve((x**2 - 2)*(x**3 - 3), x)"), "[-sqrt(2), -3**(1/3)/2 - I*243**(1/6)/2, -3**(1/3)/2 + I*243**(1/6)/2, sqrt(2), 3**(1/3)]");
+    assert_eq!(ev("solve(x**6 - 1, x)"), "[-1, -1/2 - I*sqrt(3)/2, -1/2 + I*sqrt(3)/2, 1/2 - I*sqrt(3)/2, 1/2 + I*sqrt(3)/2, 1]");
+}
+
+#[test]
+fn lambert_w_solves_and_evaluates() {
+    assert_eq!(ev("solve(x*exp(x) - 1, x)"), "[LambertW(1)]");
+    assert_eq!(ev("solve(2*x*exp(3*x) - 5, x)"), "[LambertW(15/2)/3]");
+    assert_eq!(ev("solve(x*exp(x) + 1, x)"), "[]");
+    assert_eq!(ev("diff(LambertW(x), x)"), "LambertW(x)/(x*(LambertW(x) + 1))");
+    assert!(ev("N(LambertW(1))").starts_with("0.56714329040978"));
+}
+
+#[test]
+fn sine_integral_and_laurent_series() {
+    assert_eq!(ev("integrate(sin(x)/x, (x, 0, oo))"), "pi/2");
+    assert_eq!(ev("integrate(sin(3*x)/x, x)"), "Si(3*x)");
+    assert!(ev("N(Si(10))").starts_with("1.65834759421887"));
+    assert_eq!(ev("series(1/sin(x), x, 0, 4)"), "7*x**3/360 + x/6 + 1/x");
+}
+
+#[test]
+fn integrates_quartics_that_split_over_sqrt() {
+    let a = ev("integrate(1/(x**4 + 1), x)");
+    assert!(a.contains("atan") && a.contains("log"), "{a}");
+}
