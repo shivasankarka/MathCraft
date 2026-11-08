@@ -8,6 +8,7 @@ mod assume;
 mod calculus;
 mod complex;
 mod expand;
+mod extension;
 mod limits;
 pub mod linalg;
 mod pattern;
@@ -24,6 +25,7 @@ pub use assume::{Assumptions, Facts, Sign, admissible, is_integer, is_nonzero, r
 pub use calculus::{diff, diff_n, integrate, integrate_definite, series};
 pub use complex::{abs as complex_abs, atan2, conjugate, parts as complex_parts};
 pub use expand::expand;
+pub use extension::factor_over;
 
 /// Greatest common divisor of two polynomials with integer coefficients (`None` if they are not such polynomials).
 pub fn poly_gcd(a: &mathcraft_core::Expr, b: &mathcraft_core::Expr) -> mathcraft_core::MathResult<Option<mathcraft_core::Expr>> {
