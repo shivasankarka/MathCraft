@@ -192,3 +192,89 @@ fn gcd_divides_both_and_cofactors_are_coprime() {
         assert_eq!(cf.gcd(&cg).unwrap(), c(3, 1).scale(&cf.gcd(&cg).unwrap().content()), "cofactors are coprime up to an integer");
     }
 }
+
+// ---- factoring -----------------------------------------------------------------------------------------------------
+
+/// A univariate polynomial from coefficients, lowest degree first.
+fn up(coeffs: &[i64]) -> Poly {
+    let terms = coeffs.iter().enumerate().filter(|(_, c)| **c != 0).map(|(i, c)| (pack(&[i as u32]).unwrap(), IBig::from(*c))).collect();
+    Poly::from_terms(1, terms)
+}
+
+/// Factor, check that the factors multiply back, and return the degrees of the factors with multiplicity.
+fn factor_degrees(p: &Poly) -> Vec<u32> {
+    let f = p.factor().unwrap().expect("factorisation gave up");
+    let mut prod = Poly::constant(p.nvars(), f.content.clone());
+    for (g, k) in &f.factors {
+        prod = prod.mul(&g.pow(*k).unwrap()).unwrap();
+    }
+    assert_eq!(&prod, p, "factors do not multiply back");
+    let mut degs: Vec<u32> = f.factors.iter().flat_map(|(g, k)| std::iter::repeat_n(g.total_degree(), *k as usize)).collect();
+    degs.sort_unstable();
+    degs
+}
+
+#[test]
+fn factors_integer_polynomials_in_one_variable() {
+    assert_eq!(factor_degrees(&up(&[4, 0, 0, 0, 1])), vec![2, 2]); // x^4 + 4
+    assert_eq!(factor_degrees(&up(&[1, 0, 1, 0, 1])), vec![2, 2]); // x^4 + x^2 + 1
+    assert_eq!(factor_degrees(&up(&[-1, 0, 0, 0, 0, 0, 0, 0, 1])), vec![1, 1, 2, 4]); // x^8 - 1
+    assert_eq!(factor_degrees(&up(&[-1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])), vec![1, 1, 2, 2, 2, 4]); // x^12 - 1
+    assert_eq!(factor_degrees(&up(&[1, 0, -10, 0, 1])), vec![4]); // splits modulo every prime, irreducible over Z
+    assert_eq!(factor_degrees(&up(&[-2, 0, 0, 0, 1])), vec![4]); // x^4 - 2
+    assert_eq!(factor_degrees(&up(&[1, 0, 1])), vec![2]);
+    assert_eq!(factor_degrees(&up(&[-4, 5, 6])), vec![1, 1]); // 6x^2 + 5x - 4
+    assert_eq!(factor_degrees(&up(&[7])), Vec::<u32>::new());
+}
+
+#[test]
+fn repeated_and_large_factors() {
+    // (x + 1)^5 (x - 2)^3 (2x + 3)
+    let mut p = up(&[2, 3]);
+    for _ in 0..5 {
+        p = p.mul(&up(&[1, 1])).unwrap();
+    }
+    for _ in 0..3 {
+        p = p.mul(&up(&[-2, 1])).unwrap();
+    }
+    assert_eq!(factor_degrees(&p), vec![1; 9]);
+    // (x - 1)(x - 2)...(x - 9) has nine linear factors that must all be recovered
+    let mut w = up(&[1]);
+    for r in 1..=9 {
+        w = w.mul(&up(&[-r, 1])).unwrap();
+    }
+    assert_eq!(factor_degrees(&w), vec![1; 9]);
+    // a product of two quartics with big coefficients
+    let a = up(&[3, -7, 0, 11, 5]);
+    let b = up(&[-13, 2, 9, 0, 1]);
+    assert_eq!(factor_degrees(&a.mul(&b).unwrap()), vec![4, 4]);
+}
+
+#[test]
+fn content_and_sign_are_separated() {
+    let f = up(&[-6, 0, 6]).factor().unwrap().unwrap(); // 6x^2 - 6 = 6 (x - 1)(x + 1)
+    assert_eq!(f.content, IBig::from(6));
+    let g = up(&[6, 0, -6]).factor().unwrap().unwrap();
+    assert_eq!(g.content, IBig::from(-6));
+}
+
+#[test]
+fn factors_in_several_variables() {
+    let (x0, y0, z0) = (x(3, 0), x(3, 1), x(3, 2));
+    // x^2 y - y^3 = y (x - y)(x + y)
+    let p = y0.mul(&x0.mul(&x0).unwrap().sub(&y0.mul(&y0).unwrap()).unwrap()).unwrap();
+    assert_eq!(factor_degrees(&p), vec![1, 1, 1]);
+    // x^3 + y^3 + z^3 - 3xyz = (x + y + z)(x^2 + y^2 + z^2 - xy - yz - zx)
+    let cube = |a: &Poly| a.mul(a).unwrap().mul(a).unwrap();
+    let three_xyz = x0.mul(&y0).unwrap().mul(&z0).unwrap().scale(&IBig::from(3));
+    let p = cube(&x0).add(&cube(&y0)).unwrap().add(&cube(&z0)).unwrap().sub(&three_xyz).unwrap();
+    assert_eq!(factor_degrees(&p), vec![1, 2]);
+    // x^4 y^2 - y^2 + x^2 y^4 - y^4 = y^2 (x^2 - 1)(x^2 + y^2 ... ) style product
+    let (a, b) = (x(2, 0), x(2, 1));
+    let one = c(2, 1);
+    let q = a.mul(&a).unwrap().sub(&one).unwrap().mul(&a.mul(&a).unwrap().add(&b.mul(&b).unwrap()).unwrap()).unwrap();
+    assert_eq!(factor_degrees(&q.mul(&b.mul(&b).unwrap()).unwrap()), vec![1, 1, 1, 1, 2]);
+    // irreducible in two variables
+    let irr = a.mul(&a).unwrap().add(&b.mul(&b).unwrap()).unwrap().add(&one).unwrap();
+    assert_eq!(factor_degrees(&irr), vec![2]);
+}
