@@ -268,8 +268,44 @@ fn split_quartic(e: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
     Ok(Some(Expr::add(vec![first, second])))
 }
 
+/// `(B x + C) / (a x^2 + b x + c) ** m` with `m >= 2` and no real roots: `u = x + b/(2a)` turns it into
+/// `(B u + K) / (a**m (u**2 + s)**m)`, and `∫ du / (u**2 + s)**m` follows from the reduction formula
+/// `I_m = u / (2 s (m-1) (u**2+s)**(m-1)) + (2m-3) / (2 s (m-1)) I_(m-1)`.
+fn repeated_quadratic(t: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
+    let (num, den) = split_fraction(t);
+    let Kind::Pow(q, m) = den.kind() else { return Ok(None) };
+    let Some(m) = m.as_i64().filter(|m| (2..=16).contains(m)) else { return Ok(None) };
+    let (Some(np), Some(qp)) = (to_poly(&num, x)?, to_poly(q, x)?) else { return Ok(None) };
+    let [c, b, a] = qp.as_slice() else { return Ok(None) };
+    if np.len() > 2 || a.is_zero() || a.contains(x) {
+        return Ok(None);
+    }
+    let (c0, c1) = (np.first().cloned().unwrap_or_else(Expr::zero), np.get(1).cloned().unwrap_or_else(Expr::zero));
+    let h = b.div(&Expr::mul(vec![Expr::int(2), a.clone()]));
+    let s = expand(&c.div(a).sub(&Expr::mul(vec![h.clone(), h.clone()])))?;
+    if sign_of(&s) != Some(1) {
+        return Ok(None);
+    }
+    let u = Expr::add(vec![x.clone(), h.clone()]);
+    let k = expand(&c0.sub(&Expr::mul(vec![c1.clone(), h])))?;
+    let w = Expr::add(vec![Expr::pow(&u, &Expr::int(2)), s.clone()]);
+    let root = Expr::pow(&s, &Expr::half());
+    let mut i_k = Expr::call("atan", vec![u.div(&root)]).div(&root);
+    for j in 2..=m {
+        let step = Expr::mul(vec![Expr::int(2), s.clone(), Expr::int(j - 1)]);
+        let first = u.div(&Expr::mul(vec![step.clone(), Expr::pow(&w, &Expr::int(j - 1))]));
+        i_k = Expr::add(vec![first, Expr::mul(vec![Expr::int(2 * j - 3), i_k]).div(&step)]);
+    }
+    let b_part = Expr::mul(vec![c1, Expr::int(-1)]).div(&Expr::mul(vec![Expr::int(2 * (m - 1)), Expr::pow(&w, &Expr::int(m - 1))]));
+    let total = Expr::add(vec![b_part, Expr::mul(vec![k, i_k])]);
+    Ok(Some(total.div(&Expr::pow(a, &Expr::int(m)))))
+}
+
 /// `(B x + C) / (a x^2 + b x + c)` with an irreducible or irrational-root quadratic: log and arctangent (or log) forms.
 fn quadratic_term(t: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
+    if let Some(r) = repeated_quadratic(t, x)? {
+        return Ok(Some(r));
+    }
     let (num, den) = split_fraction(t);
     let (Some(np), Some(dp)) = (to_poly(&num, x)?, to_poly(&den, x)?) else { return Ok(None) };
     let [c, b, a] = dp.as_slice() else { return Ok(None) };
