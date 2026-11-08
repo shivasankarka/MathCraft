@@ -1,7 +1,7 @@
 //! Differentiation, integration, series and limits.
 
 use crate::expand::expand;
-use crate::poly::linear_in;
+use crate::poly::{linear_in, to_poly};
 use crate::util::{guard, has_singularity, require_symbol, sign_of, split_fraction, subs};
 use mathcraft_core::numeric::eval_f64;
 use mathcraft_core::{Expr, Kind, MathError, MathResult};
@@ -139,10 +139,16 @@ fn int(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
             }
             match sinc(fs, x)? {
                 Some(r) => Some(r),
-                None => by_parts(fs, x, depth)?,
+                None => match by_parts(fs, x, depth)? {
+                    Some(r) => Some(r),
+                    None => parts_inverse(fs, x, depth)?,
+                },
             }
         }
-        _ => elementary(e, x)?,
+        _ => match log_power(e, x, depth)? {
+            Some(r) => Some(r),
+            None => elementary(e, x)?,
+        },
     };
     if direct.is_some() {
         return Ok(direct);
@@ -505,6 +511,24 @@ fn by_parts(fs: &[Expr], x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
         let second = xp.div(&Expr::pow(&n1, &Expr::int(2))).neg();
         return Ok(Some(Expr::add(vec![first, second])));
     }
+    if n >= 2
+        && let Kind::Pow(base, k) = g.kind()
+        && base.as_sym() == Some(mathcraft_core::expr::SYM_E)
+        && let Some(poly) = to_poly(k, x)?
+        && let [z0, z1, c2] = poly.as_slice()
+        && z0.is_zero()
+        && z1.is_zero()
+        && !c2.contains(x)
+    {
+        // ∫ x^n e^(c x²) = x^(n-1) e^(c x²) / (2c) - (n-1)/(2c) ∫ x^(n-2) e^(c x²)
+        let rest = Expr::mul(vec![Expr::pow(x, &Expr::int(n - 2)), g.clone()]);
+        if let Some(r) = int(&rest, x, depth + 1)? {
+            let two_c = Expr::mul(vec![Expr::int(2), c2.clone()]);
+            let first = Expr::mul(vec![Expr::pow(x, &Expr::int(n - 1)), g.clone()]).div(&two_c);
+            let second = Expr::mul(vec![Expr::int(n - 1), r]).div(&two_c).neg();
+            return Ok(Some(Expr::add(vec![first, second])));
+        }
+    }
     let by_parts_ok = match g.kind() {
         Kind::Call(name, _) => matches!(name.as_ref(), "sin" | "cos" | "sinh" | "cosh"),
         Kind::Pow(base, _) => base.as_sym() == Some(mathcraft_core::expr::SYM_E),
@@ -519,6 +543,75 @@ fn by_parts(fs: &[Expr], x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
     let Some(r) = int(&rest, x, depth + 1)? else { return Ok(None) };
     let total = Expr::add(vec![Expr::mul(vec![mono.clone(), big_g]), Expr::mul(vec![Expr::int(-n), r])]);
     Ok(Some(expand(&total)?))
+}
+
+/// Functions that are easier to differentiate than to integrate: `log(x)`, `atan(x)`, `asin(x)` and friends.
+fn is_inverse_function(f: &Expr, x: &Expr) -> bool {
+    matches!(f.kind(), Kind::Call(name, args) if matches!(name.as_ref(), "log" | "atan" | "asin" | "acos" | "asinh" | "acosh" | "atanh") && args.first() == Some(x))
+}
+
+/// `p(x) * f(x)` with `f` an inverse function and `p` a power of `x`: by parts with `u = f`, so
+/// `∫ p f = P f - ∫ P f'` where `P = ∫ p`.
+fn parts_inverse(fs: &[Expr], x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
+    let [a, b] = fs else { return Ok(None) };
+    if depth >= MAX_INT_DEPTH {
+        return Ok(None);
+    }
+    for (f, r) in [(a, b), (b, a)] {
+        if !is_inverse_function(f, x) || power_of_x(r, x).is_none_or(|n| n == -1) {
+            continue;
+        }
+        let Some(big_p) = int(r, x, depth + 1)? else { continue };
+        let rest = expand(&Expr::mul(vec![big_p.clone(), d(f, x)?]))?;
+        let Some(ri) = int(&rest, x, depth + 1)? else { continue };
+        return Ok(Some(expand(&Expr::add(vec![Expr::mul(vec![big_p, f.clone()]), ri.neg()]))?));
+    }
+    Ok(None)
+}
+
+/// `log(x) ** k` for an integer `k >= 2`: `∫ log^k = x log^k - k ∫ log^(k-1)`.
+fn log_power(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
+    let Kind::Pow(base, k) = e.kind() else { return Ok(None) };
+    let (Kind::Call(name, args), Some(k)) = (base.kind(), k.as_i64()) else { return Ok(None) };
+    if name.as_ref() != "log" || args.first() != Some(x) || !(2..=12).contains(&k) || depth >= MAX_INT_DEPTH {
+        return Ok(None);
+    }
+    let Some(r) = int(&Expr::pow(base, &Expr::int(k - 1)), x, depth + 1)? else { return Ok(None) };
+    Ok(Some(Expr::add(vec![Expr::mul(vec![x.clone(), e.clone()]), Expr::mul(vec![Expr::int(-k), r])])))
+}
+
+/// Exponentials of one argument `c*x`: `u = exp(c*x)`, `dx = du / (c u)`.
+fn exp_substitution(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
+    fn exponents(e: &Expr, x: &Expr, out: &mut Vec<Expr>) {
+        if let Kind::Pow(b, k) = e.kind()
+            && b.as_sym() == Some(mathcraft_core::expr::SYM_E)
+            && k.contains(x)
+        {
+            out.push(k.clone());
+        }
+        for c in e.children() {
+            exponents(&c, x, out);
+        }
+    }
+    let mut atoms = Vec::new();
+    exponents(e, x, &mut atoms);
+    atoms.dedup();
+    let w = Expr::sym("_u");
+    for atom in atoms {
+        let Some(step) = crate::solve::exp_step(&Expr::pow(&Expr::e(), &atom)) else { continue };
+        if step.is_zero() || atom.split_coeff().1 != *x {
+            continue;
+        }
+        let Some(replaced) = crate::solve::replace_exp(e, x, &step, &w) else { continue };
+        if replaced.contains(x) {
+            continue;
+        }
+        let q = replaced.div(&Expr::mul(vec![step.clone(), w.clone()]));
+        if let Some(f) = int(&q, &w, depth + 1)? {
+            return Ok(Some(subs(&f, &[(w, Expr::pow(&Expr::e(), &Expr::mul(vec![step, x.clone()])))])?));
+        }
+    }
+    Ok(None)
 }
 
 fn power_of_x(e: &Expr, x: &Expr) -> Option<i64> {
@@ -536,7 +629,20 @@ fn u_substitution(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
     cands.sort_by_key(|c| std::cmp::Reverse(c.size()));
     cands.dedup();
     let w = Expr::sym("_u");
+    if let Some(r) = exp_substitution(e, x, depth)? {
+        return Ok(Some(r));
+    }
     for u in cands.into_iter().take(8) {
+        // a linear inner argument a*x + b: x = (u - b)/a, dx = du/a
+        if let Some((a, b)) = linear_in(&u, x)? {
+            let back = Expr::add(vec![w.clone(), b.neg()]).div(&a);
+            let q = expand(&subs(e, &[(x.clone(), back)])?.div(&a))?;
+            if !q.contains(x)
+                && let Some(f) = int(&q, &w, depth + 1)?
+            {
+                return Ok(Some(subs(&f, &[(w, u)])?));
+            }
+        }
         let du = d(&u, x)?;
         if du.is_zero() {
             continue;
@@ -562,7 +668,12 @@ fn collect_inner(e: &Expr, x: &Expr, out: &mut Vec<Expr>) {
                 out.push(k.clone());
             }
         }
-        Kind::Call(_, args) => out.extend(args.iter().filter(|a| a.contains(x) && *a != x).cloned()),
+        Kind::Call(_, args) => {
+            out.extend(args.iter().filter(|a| a.contains(x) && *a != x).cloned());
+            if args.iter().any(|a| a.contains(x)) {
+                out.push(e.clone());
+            }
+        }
         _ => {}
     }
     for c in e.children() {
