@@ -109,7 +109,7 @@ pub(crate) fn euler(exp: &Expr) -> Option<Expr> {
     Some(Expr::add(vec![co, Expr::mul(vec![si, Expr::imag()])]))
 }
 
-const EULER_GAMMA: f64 = 0.577_215_664_901_532_9;
+const EULER_GAMMA: f64 = std::f64::consts::EULER_GAMMA;
 
 /// `(Si(t), Ci(t))` for `t >= 2`: Lentz's method for the continued fraction of `E1(i t)`.
 fn cisi_large(t: f64) -> (f64, f64) {

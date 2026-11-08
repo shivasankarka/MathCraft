@@ -188,7 +188,10 @@ fn sinc(fs: &[Expr], x: &Expr) -> MathResult<Option<Expr>> {
         return Ok(None);
     };
     let (kind, u) = match s.kind() {
-        Kind::Call(name, args) if matches!(&**name, "sin" | "cos") && args.len() == 1 => (&**name, args[0].clone()),
+        Kind::Call(name, args) if matches!(&**name, "sin" | "cos") => match args.as_slice() {
+            [u] => (&**name, u.clone()),
+            _ => return Ok(None),
+        },
         Kind::Pow(base, u) if base.as_sym() == Some(mathcraft_core::expr::SYM_E) => ("exp", u.clone()),
         _ => return Ok(None),
     };
