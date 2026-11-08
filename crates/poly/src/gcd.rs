@@ -25,7 +25,7 @@ impl Poly {
     }
 
     /// This polynomial as a polynomial in variable `v`: entry `i` is the coefficient of `x_v^i`, itself free of `x_v`.
-    fn coeffs_in(&self, v: usize) -> Vec<Poly> {
+    pub(crate) fn coeffs_in(&self, v: usize) -> Vec<Poly> {
         let mut out: Vec<Vec<(Mono, IBig)>> = Vec::new();
         for (m, c) in &self.terms {
             let e = exponent(*m, v) as usize;
@@ -65,11 +65,11 @@ impl Poly {
 }
 
 /// Negate so that the leading coefficient is positive.
-fn positive(p: Poly) -> Poly {
+pub(crate) fn positive(p: Poly) -> Poly {
     if p.terms.first().is_some_and(|(_, c)| *c < IBig::ZERO) { p.neg() } else { p }
 }
 
-fn gcd_rec(a: &Poly, b: &Poly, stop: &mut dyn FnMut() -> bool) -> Result<Poly, PolyError> {
+pub(crate) fn gcd_rec(a: &Poly, b: &Poly, stop: &mut dyn FnMut() -> bool) -> Result<Poly, PolyError> {
     if stop() {
         return Err(PolyError::Stopped);
     }
@@ -112,6 +112,10 @@ fn gcd_rec(a: &Poly, b: &Poly, stop: &mut dyn FnMut() -> bool) -> Result<Poly, P
     let (mut f, mut g) = (primitive(a, &cont_a)?, primitive(b, &cont_b)?);
     if f.coeffs_in(v).len() < g.coeffs_in(v).len() {
         std::mem::swap(&mut f, &mut g);
+    }
+    // large inputs in several variables: interpolate from images modulo primes instead of growing coefficients
+    if let Some(h) = crate::modgcd::gcd_primitive(&f, &g, v, crate::modgcd::MIN_TERMS, stop)? {
+        return Ok(positive(h.mul_with(&cont, stop)?));
     }
     while !g.is_zero() {
         let r = pseudo_remainder(&f, &g, v, stop)?;
