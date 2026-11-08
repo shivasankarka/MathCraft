@@ -177,6 +177,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("transpose", "transpose(matrix)", "swap rows and columns"),
     ("rank", "rank(matrix)", "rank of a matrix"),
     ("eye", "eye(n, dtype=exact)", "n by n identity matrix"),
+    ("slider", "slider(lo, hi, value[, step])", "a number you can drag in the notebook; the cell shows a slider and dependents re-run as it moves"),
     ("gamma", "gamma(mu)", "the Dirac matrix γ^μ; use inside gamma_trace"),
     ("slash", "slash(p)", "the Dirac matrix p-slash for a momentum p (slash(p + q) is linear); use inside gamma_trace"),
     ("gamma_trace", "gamma_trace(a, b, ...)", "trace of a product of gamma(mu) and slash(p) matrices (items may be sums, e.g. slash(p) + m)"),
@@ -218,6 +219,7 @@ const METHODS: &[&str] = &[
     "rank",
     "N",
     "astype",
+    "slider",
     "tolist",
     "shape",
     "dot",
@@ -1163,6 +1165,31 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             };
             let one = i64::from(name != "zeros");
             Ok(Value::Array(Arc::new(array::filled(dt, rows, cols, &|i, j| if name == "eye" { i64::from(i == j) } else { one })?)))
+        }
+        "slider" => {
+            let step = a.opt(3, "step");
+            if a.pos.len() < 2 || a.pos.len() > 4 || a.kw.iter().any(|(k, _)| k != "step" && k != "value") {
+                return err("slider(lo, hi, value) takes a range and a starting value, e.g. a = slider(0, 10, 2)");
+            }
+            let value = a.opt(2, "value").unwrap_or(a.get(0)?);
+            let mut n = Vec::new();
+            for v in [a.get(0)?, a.get(1)?, value].into_iter().chain(step) {
+                match numeric(v).and_then(|e| e.as_num().map(|x| x.to_f64())) {
+                    Some(x) if x.is_finite() => n.push(x),
+                    _ => return err("slider() needs plain numbers, e.g. slider(0, 10, 2)"),
+                }
+            }
+            let [lo, hi, x, ..] = n[..] else { return err("slider() needs a range and a value") };
+            if lo >= hi {
+                return err(format!("slider() needs lo < hi, got {lo} and {hi}"));
+            }
+            if x < lo || x > hi {
+                return err(format!("slider value {x} is outside the range {lo} to {hi}"));
+            }
+            if n.get(3).is_some_and(|s| *s <= 0.0) {
+                return err("slider() step must be positive");
+            }
+            Ok(value.clone())
         }
         "astype" => {
             a.limits(name, 2, 2)?;
