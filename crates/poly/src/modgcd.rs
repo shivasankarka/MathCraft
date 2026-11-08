@@ -21,7 +21,7 @@ type Stop<'a> = &'a mut dyn FnMut() -> bool;
 /// Smallest input (terms of both together) worth the modular method.
 pub(crate) const MIN_TERMS: usize = 40;
 /// Most primes tried before giving up.
-const MAX_PRIMES: usize = 8;
+const MAX_PRIMES: usize = 48;
 /// Fresh random points tried for one prime.
 const MAX_RETRIES: usize = 3;
 
@@ -688,6 +688,7 @@ pub(crate) fn gcd_primitive(f: &Poly, g: &Poly, v: usize, min_terms: usize, stop
     let mut acc: Vec<(Mono, IBig)> = Vec::new();
     let mut modulus = IBig::ONE;
     let mut tried_last: Option<Poly> = None;
+    let mut prev: Option<Poly> = None;
     let mut support: Option<Vec<Vec<Mono>>> = None;
     let mut degree: Option<usize> = None;
     let mut primes_used = 0;
@@ -719,7 +720,7 @@ pub(crate) fn gcd_primitive(f: &Poly, g: &Poly, v: usize, min_terms: usize, stop
         match degree {
             Some(d) if dp > d => continue,
             Some(d) if dp < d => {
-                (acc, modulus, support, tried_last, primes_used) = (Vec::new(), IBig::ONE, None, None, 0);
+                (acc, modulus, support, tried_last, prev, primes_used) = (Vec::new(), IBig::ONE, None, None, None, 0);
                 degree = Some(dp);
                 let _ = d;
             }
@@ -752,7 +753,10 @@ pub(crate) fn gcd_primitive(f: &Poly, g: &Poly, v: usize, min_terms: usize, stop
         let half = &modulus >> 1;
         let lifted: Vec<(Mono, IBig)> = acc.iter().map(|(m, c)| (*m, if *c > half { c - &modulus } else { c.clone() })).collect();
         let h = Poly::from_terms(n, lifted);
-        if tried_last.as_ref() == Some(&h) || h.is_zero() {
+        // the exact trial division is costly: only try once another prime has left the lifted result unchanged
+        let stable = prev.as_ref() == Some(&h);
+        prev = Some(h.clone());
+        if !stable || tried_last.as_ref() == Some(&h) || h.is_zero() {
             continue;
         }
         tried_last = Some(h.clone());
