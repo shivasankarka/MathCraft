@@ -613,3 +613,14 @@ fn limits_with_oscillation_and_square_roots_and_equal_power_equations() {
     assert_eq!(ev("limit(sqrt(x**2 + x) - sqrt(x**2 - x), x, oo)"), "1");
     assert_eq!(ev("solve(3**x - 2**x, x)"), "[0]");
 }
+
+#[test]
+fn slider_is_its_value() {
+    assert_eq!(ev("a = slider(0, 10, 2)\na * 3"), "6");
+    assert_eq!(ev("slider(0, 1, 0.25, 0.05) * 4"), "1.0");
+    assert_eq!(ev("slider(1, 5)"), "1");
+    assert!(ev("slider(0, 10, 12)").contains("outside the range"));
+    assert!(ev("slider(3, 3, 3)").contains("lo < hi"));
+    assert!(ev("slider(0, 10, 2, 0)").contains("step must be positive"));
+    assert!(ev("slider(0, x, 2)").contains("plain numbers"));
+}
