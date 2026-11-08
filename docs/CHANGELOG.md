@@ -4,6 +4,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- Undo and redo for cell changes: Cmd+Z / Cmd+Shift+Z (when no editor has focus), the Edit menu or the palette bring back a deleted cell or put a moved or added one back. Typing in other cells is never undone.
 - Slices: `xs[1:3]`, `xs[::-1]`, `s[:4]` on lists, tuples, strings, ranges and vectors, with Python's rules for negative and out-of-range bounds.
 - f-strings: `f"{x:.3f}"`, `f"{n:,d}"`, `f"{name:>8}"`, `{x!r}` and nested specs, plus new `format(x, spec)` and `repr(x)` builtins.
 
