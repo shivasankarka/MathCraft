@@ -23,6 +23,11 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - `factor` is now a real factoriser: any polynomial with integer coefficients, in one or several variables, splits into irreducibles over the integers (`x**4 + 4`, `x**8 - 1`, `x**2*y - y**3`, `x**3 + y**3 + z**3 - 3*x*y*z`). It used to find only rational roots, and only in one variable.
 - `gcd`, `lcm` and `cancel` are much faster on large multi-variable polynomials: a sparse modular (Zippel-style) gcd now runs before the Euclidean method, so gcds of products with tens of thousands of terms in 7 variables finish in a few seconds instead of giving up.
 - Converting a long sum into a polynomial is no longer quadratic, which also speeds up `expand`, `cancel` and `factor` on large sums.
+- `solve` splits a polynomial into irreducible factors over the integers and solves each, so `solve((x**2 - 2)*(x**3 - 3), x)` and `solve(x**6 - 1, x)` work. (`apart` already used the new factoriser through `factor`.)
+- New `LambertW(x)` (principal branch, with derivative); `solve` uses it for `a*x*exp(k*x) == b` (`solve(x*exp(x) - 1, x)` is `[LambertW(1)]`).
+- New `Si(x)`, the sine integral: `integrate(sin(a*x)/x, x)` is `Si(a*x)` and `integrate(sin(x)/x, (x, 0, oo))` is `pi/2`.
+- `series` gives Laurent series at poles: `series(1/sin(x), x, 0, 4)` is `1/x + x/6 + 7*x**3/360`.
+- `integrate` handles `1/(x**4 + 1)` and other quartics `x**4 + b*x**2 + c` that split over a square root (log and arctangent forms).
 
 ## 0.1.1 (2026-11-08)
 
