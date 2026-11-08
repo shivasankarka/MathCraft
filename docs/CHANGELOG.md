@@ -4,6 +4,8 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- Math in text cells: `$x**2 - 2$` is typeset inline and a line `$$ integrate(1/(x**2+1), x) $$` is typeset on its own, centred. The text between the dollars is a MathCraft expression and it is evaluated (so `$exp(I*pi) + 1$` shows 0); something that is not an expression, or that takes too long, stays as plain text. `$5 and $6` is left alone, and `\$` is a literal dollar.
+- The slider is named after its variable (also read by screen readers).
 - Plots you can explore: drag to pan, pinch or Ctrl+scroll to zoom, right-drag a box to zoom into it, double-click to reset. The coordinates under the pointer show in the corner. Right-click a plot to reset the view, copy its points as CSV or save the view as an SVG picture. (PNG export is not there yet.)
 - Sliders: `a = slider(0, 10, 2)` (optionally a step, `slider(0, 1, 0.5, 0.05)`) shows a slider under the cell. Dragging it rewrites the value in the cell and re-runs everything that uses `a`; while the kernel is busy a drag waits instead of piling up runs. See `examples/sliders.py`.
 - Session restore: MathCraft reopens the tabs, the active tab, the folder and the sidebar from last time (unless you start it with a file or folder). File > Open recent and the command palette list the last 12 files.
