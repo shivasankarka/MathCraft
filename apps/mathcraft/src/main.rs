@@ -700,6 +700,22 @@ impl App {
         }
     }
 
+    /// Move the keyboard to the editor of the previous (-1) or next (1) code cell.
+    fn focus_neighbor(&mut self, ctx: &egui::Context, step: isize) {
+        let cells = self.cur.nb.cells();
+        let here = cells.iter().position(|c| ctx.memory(|m| m.has_focus(editor_id(c.id)))).or_else(|| self.last_cell.and_then(|id| self.cur.nb.index_of(id)));
+        let order: Vec<usize> = match (here, step > 0) {
+            (Some(i), true) => (i + 1..cells.len()).collect(),
+            (Some(i), false) => (0..i).rev().collect(),
+            (None, true) => (0..cells.len()).collect(),
+            (None, false) => (0..cells.len()).rev().collect(),
+        };
+        if let Some(c) = order.into_iter().filter_map(|i| cells.get(i)).find(|c| c.kind == CellKind::Code) {
+            self.cur.focus = Some(c.id);
+            self.last_cell = Some(c.id);
+        }
+    }
+
     fn shortcuts(&mut self, ctx: &egui::Context) {
         let (save, open, new, run_all, interrupt, help, close, next, prev, side, text_view, palette) = ctx.input_mut(|i| {
             (
@@ -724,6 +740,12 @@ impl App {
             } else if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Z)) {
                 self.undo_cells();
             }
+        }
+        let (prev_cell, next_cell) = ctx.input_mut(|i| {
+            (i.consume_key(Modifiers::COMMAND | Modifiers::ALT, Key::ArrowUp), i.consume_key(Modifiers::COMMAND | Modifiers::ALT, Key::ArrowDown))
+        });
+        if prev_cell || next_cell {
+            self.focus_neighbor(ctx, if next_cell { 1 } else { -1 });
         }
         if save {
             self.save(false);
@@ -1981,7 +2003,7 @@ fn output_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell) {
                 ui.set_opacity(0.45);
             }
             if !o.stdout.is_empty() {
-                ui.add(egui::Label::new(RichText::new(o.stdout.trim_end()).monospace().size(13.0).color(theme.text_dim)).selectable(true));
+                stdout_ui(ui, theme, cell.id, o.stdout.trim_end());
                 if has_value {
                     ui.add_space(8.0);
                 }
@@ -2001,6 +2023,24 @@ fn output_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell) {
             }
             banner(ui, theme, Icon::Error, theme.danger, None, &e.to_string());
         });
+    }
+}
+
+/// Printed output longer than this many lines is cut, with a button to show the rest.
+const STDOUT_LINES: usize = 20;
+
+/// The text a cell printed. Long output shows its first lines and "Show N more lines".
+fn stdout_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, text: &str) {
+    let total = text.lines().count();
+    let key = egui::Id::unique(("stdout-open", id));
+    let open = ui.ctx().data(|d| d.get_temp::<bool>(key)).unwrap_or(false);
+    let shown: String = if open || total <= STDOUT_LINES + 4 { text.to_owned() } else { text.lines().take(STDOUT_LINES).collect::<Vec<_>>().join("\n") };
+    ui.add(egui::Label::new(RichText::new(shown).monospace().size(13.0).color(theme.text_dim)).selectable(true));
+    if total > STDOUT_LINES + 4 {
+        let label = if open { "Show less".to_owned() } else { format!("Show {} more lines", total - STDOUT_LINES) };
+        if ui.add(egui::Button::new(RichText::new(label).size(12.0).color(theme.accent)).frame(false)).clicked() {
+            ui.ctx().data_mut(|d| d.insert_temp(key, !open));
+        }
     }
 }
 
@@ -2922,6 +2962,51 @@ mod tests {
         h.run();
         assert_eq!(source(&h), "y = diff(");
         assert!(h.state().as_ref().is_some_and(|a| a.show_help));
+    }
+
+    #[test]
+    fn cmd_alt_arrows_move_between_cells() {
+        let mut h = typing_harness();
+        if let Some(app) = h.state_mut() {
+            app.replace_notebook(Notebook::from_text("# %%\na = 1\n# %% [markdown]\n# text\n# %%\nb = 2\n"), None);
+        }
+        settle(&mut h);
+        h.run();
+        let first = h.state().as_ref().and_then(|a| a.cur.nb.cells().first().map(|c| c.id)).unwrap();
+        let last = h.state().as_ref().and_then(|a| a.cur.nb.cells().last().map(|c| c.id)).unwrap();
+        if let Some(app) = h.state_mut() {
+            app.cur.focus = Some(first);
+        }
+        h.run();
+        let focused = |h: &egui_kittest::Harness<'_, Option<App>>| {
+            h.state().as_ref().and_then(|a| a.cur.nb.cells().iter().find(|c| h.ctx.memory(|m| m.has_focus(editor_id(c.id)))).map(|c| c.id))
+        };
+        assert_eq!(focused(&h), Some(first));
+        h.key_press_modifiers(Modifiers::COMMAND | Modifiers::ALT, Key::ArrowDown);
+        h.run();
+        assert_eq!(focused(&h), Some(last), "the text cell in between is skipped");
+        h.key_press_modifiers(Modifiers::COMMAND | Modifiers::ALT, Key::ArrowUp);
+        h.run();
+        assert_eq!(focused(&h), Some(first));
+    }
+
+    #[test]
+    fn long_printed_output_is_folded() {
+        let mut h = typing_harness();
+        h.set_size(vec2(900.0, 1400.0));
+        if let Some(app) = h.state_mut() {
+            app.replace_notebook(Notebook::from_text("# %%\nfor i in range(26):\n    print(i)\n# %%\nprint(1)\n"), None);
+        }
+        settle(&mut h);
+        h.run();
+        assert!(h.query_by_label("Show 6 more lines").is_some(), "26 lines fold after 20");
+        assert_eq!(h.query_all_by_label_contains("Show ").count(), 1, "the one-line output is not folded");
+        h.get_by_label("Show 6 more lines").click();
+        h.run_steps(4);
+        assert!(h.query_by_label("Show less").is_some());
+        h.get_by_label("Show less").click();
+        h.run_steps(4);
+        assert!(h.query_by_label("Show 6 more lines").is_some());
     }
 
     #[test]
