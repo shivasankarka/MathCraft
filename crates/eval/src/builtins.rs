@@ -99,6 +99,9 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("erf", "erf(x)", "error function, 2/sqrt(pi) times the integral of exp(-t**2) from 0 to x"),
     ("LambertW", "LambertW(x)", "the Lambert W function, the inverse of w*exp(w) (principal branch)"),
     ("Si", "Si(x)", "the sine integral, the integral of sin(t)/t from 0 to x"),
+    ("Ci", "Ci(x)", "the cosine integral, for x > 0"),
+    ("Ei", "Ei(x)", "the exponential integral, the integral of exp(t)/t"),
+    ("erfc", "erfc(x)", "complementary error function, 1 - erf(x)"),
     ("Gamma", "Gamma(x)", "the Gamma function (capital G; gamma is the Dirac matrix); exact for integers and half-integers"),
     ("sec", "sec(x)", "secant, 1/cos(x)"),
     ("csc", "csc(x)", "cosecant, 1/sin(x)"),
@@ -712,7 +715,7 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             check_depth(it, out)
         }
         "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh" | "erf" | "Gamma" | "LambertW" | "Si"
-        | "exp" | "sqrt" => unary_math(name, &a, it),
+        | "Ci" | "Ei" | "erfc" | "exp" | "sqrt" => unary_math(name, &a, it),
         "sec" | "csc" | "cot" => {
             a.limits(name, 1, 1)?;
             let (num, den) = match name {
