@@ -66,6 +66,50 @@ pub fn inline(s: &str) -> Vec<Span> {
     spans
 }
 
+/// A run of a paragraph: text (with `**bold**` etc. still in it) or the source of a `$math$` span.
+#[derive(Debug, PartialEq, Clone)]
+pub enum Piece {
+    Text(String),
+    Math(String),
+}
+
+/// Split at `$...$` spans. A `$` opens math only when it is followed by a non-space and the closing `$` follows a
+/// non-space and is not followed by a digit, so "costs $5 and $6" stays text. `\$` is a literal dollar.
+pub fn pieces(s: &str) -> Vec<Piece> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out: Vec<Piece> = Vec::new();
+    let mut text = String::new();
+    let mut i = 0;
+    while let Some(&c) = chars.get(i) {
+        if c == '\\' && chars.get(i + 1) == Some(&'$') {
+            text.push('$');
+            i += 2;
+            continue;
+        }
+        if c == '$' && chars.get(i + 1).is_some_and(|n| !n.is_whitespace() && *n != '$') {
+            let close = (i + 1..chars.len()).find(|&j| {
+                chars.get(j) == Some(&'$')
+                    && chars.get(j - 1).is_some_and(|p| !p.is_whitespace() && *p != '\\')
+                    && !chars.get(j + 1).is_some_and(char::is_ascii_digit)
+            });
+            if let Some(j) = close {
+                if !text.is_empty() {
+                    out.push(Piece::Text(std::mem::take(&mut text)));
+                }
+                out.push(Piece::Math(chars.get(i + 1..j).map(|w| w.iter().collect()).unwrap_or_default()));
+                i = j + 1;
+                continue;
+            }
+        }
+        text.push(c);
+        i += 1;
+    }
+    if !text.is_empty() {
+        out.push(Piece::Text(text));
+    }
+    out
+}
+
 /// Body text size and leading of text cells.
 const BODY: f32 = 15.0;
 const LEADING: f32 = 1.5;
@@ -101,13 +145,57 @@ fn heading(line: &str) -> Option<(usize, &str)> {
     line.get(hashes..)?.strip_prefix(' ').map(|t| (hashes, t.trim()))
 }
 
+/// One line or paragraph of styled text, with `$math$` typeset in place. Plain text keeps the fast path (one wrapped
+/// label); with math it flows left to right and wraps between pieces.
+fn rich(ui: &mut Ui, text: &str, color: Color32, theme: &Theme) {
+    let parts = pieces(text);
+    let ctx = ui.ctx().clone();
+    let math = |src: &str| crate::math_view::inline_layout(&ctx, src, BODY * 1.15);
+    if !parts.iter().any(|p| matches!(p, Piece::Math(src) if math(src).is_some())) {
+        let width = ui.available_width();
+        ui.label(job(&inline(text), BODY, theme, color, width));
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for part in &parts {
+            match part {
+                Piece::Math(src) => match math(src) {
+                    Some(layout) => {
+                        crate::math_view::show(ui, &layout, theme, BODY * 1.15);
+                    }
+                    None => {
+                        ui.label(job(&inline(&format!("`{src}`")), BODY, theme, color, f32::INFINITY));
+                    }
+                },
+                Piece::Text(t) => {
+                    ui.label(job(&inline(t), BODY, theme, color, f32::INFINITY));
+                }
+            }
+        }
+    });
+}
+
 fn paragraph(ui: &mut Ui, text: &mut String, theme: &Theme) {
     if !text.trim().is_empty() {
-        let width = ui.available_width();
-        ui.label(job(&inline(text.trim()), BODY, theme, theme.text, width));
+        rich(ui, text.trim(), theme.text, theme);
         ui.add_space(8.0);
     }
     text.clear();
+}
+
+/// A `$$ ... $$` line: the expression typeset on its own line, centred. Falls back to code-style text.
+fn display_math(ui: &mut Ui, src: &str, theme: &Theme) {
+    ui.add_space(4.0);
+    ui.vertical_centered(|ui| match crate::math_view::inline_layout(ui.ctx(), src, BODY * 1.5) {
+        Some(layout) => {
+            crate::math_view::show(ui, &layout, theme, BODY * 1.5);
+        }
+        None => {
+            ui.label(RichText::new(src).monospace().color(theme.text_dim));
+        }
+    });
+    ui.add_space(4.0);
 }
 
 pub fn show(ui: &mut Ui, source: &str, theme: &Theme) -> Response {
@@ -146,6 +234,9 @@ pub fn show(ui: &mut Ui, source: &str, theme: &Theme) -> Response {
                 let indent = (line.len() - trimmed.len()) / 2;
                 if line.trim().is_empty() {
                     paragraph(ui, &mut para, theme);
+                } else if let Some(src) = line.trim().strip_prefix("$$").and_then(|r| r.strip_suffix("$$")).filter(|r| !r.trim().is_empty()) {
+                    paragraph(ui, &mut para, theme);
+                    display_math(ui, src.trim(), theme);
                 } else if let Some((level, text)) = heading(line) {
                     paragraph(ui, &mut para, theme);
                     let size = [27.0, 20.0, 16.5].get(level - 1).copied().unwrap_or(16.5);
@@ -166,8 +257,7 @@ pub fn show(ui: &mut Ui, source: &str, theme: &Theme) -> Response {
                     ui.horizontal(|ui| {
                         let (bar, _) = ui.allocate_exact_size(egui::vec2(3.0, 18.0), Sense::hover());
                         ui.painter().rect_filled(bar, 1.5, theme.border_strong);
-                        let width = ui.available_width();
-                        ui.add(egui::Label::new(job(&inline(q.trim()), BODY, theme, theme.text_dim, width)).wrap());
+                        rich(ui, q.trim(), theme.text_dim, theme);
                     });
                 } else {
                     if !para.is_empty() {
@@ -193,8 +283,7 @@ fn list_item(ui: &mut Ui, indent: usize, marker: &str, text: &str, theme: &Theme
         ui.add_space(8.0 + 16.0 * indent as f32);
         ui.label(RichText::new(marker).size(BODY).color(theme.text_faint));
         ui.add_space(6.0);
-        let width = ui.available_width();
-        ui.add(egui::Label::new(job(&inline(text.trim()), BODY, theme, theme.text, width)).wrap());
+        rich(ui, text.trim(), theme.text, theme);
     });
 }
 
@@ -218,6 +307,18 @@ mod tests {
         assert_eq!(inline("2 * 3 and **open"), vec![s("2 * 3 and **open", false, false, false)]);
         assert_eq!(inline("snake_case_name"), vec![s("snake_case_name", false, false, false)]);
         assert!(inline("").is_empty());
+    }
+
+    #[test]
+    fn math_spans_are_found_and_prices_are_not() {
+        let t = |x: &str| Piece::Text(x.into());
+        let m = |x: &str| Piece::Math(x.into());
+        assert_eq!(pieces("so $x**2 + 1$ here"), vec![t("so "), m("x**2 + 1"), t(" here")]);
+        assert_eq!(pieces("costs $5 and $6 total"), vec![t("costs $5 and $6 total")]);
+        assert_eq!(pieces("a \\$ b"), vec![t("a $ b")]);
+        assert_eq!(pieces("$a$ and $b$"), vec![m("a"), t(" and "), m("b")]);
+        assert_eq!(pieces("open $x"), vec![t("open $x")]);
+        assert!(pieces("").is_empty());
     }
 
     #[test]
