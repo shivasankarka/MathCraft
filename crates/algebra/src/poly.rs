@@ -292,6 +292,14 @@ pub fn solve_polynomial(f: &Expr, x: &Expr) -> MathResult<Vec<Expr>> {
         }
         remaining = ints_to_exprs(&rest);
     }
+    if remaining.len() > 4
+        && let Some(found) = solve_by_factors(&remaining, x)?
+    {
+        roots.extend(found);
+        sort_roots(&mut roots);
+        roots.dedup();
+        return Ok(roots);
+    }
     match remaining.len() {
         0 | 1 => {}
         2 => roots.push(linear_root(&remaining)?),
@@ -310,6 +318,37 @@ pub fn solve_polynomial(f: &Expr, x: &Expr) -> MathResult<Vec<Expr>> {
     sort_roots(&mut roots);
     roots.dedup();
     Ok(roots)
+}
+
+/// Split `c` into irreducible factors over the integers and solve each one. `None` when it does not split (the
+/// caller then tries the closed forms for the whole polynomial) or when some factor cannot be solved.
+fn solve_by_factors(c: &[Expr], x: &Expr) -> MathResult<Option<Vec<Expr>>> {
+    let factored = factor(&from_poly(c, x))?;
+    let parts: Vec<Expr> = match factored.kind() {
+        Kind::Mul(v) => v.clone(),
+        _ => return Ok(None),
+    };
+    let mut out = Vec::new();
+    let mut split = false;
+    for t in parts {
+        let base = match t.kind() {
+            Kind::Pow(b, k) if k.as_i64().is_some_and(|k| k > 0) => b.clone(),
+            _ => t.clone(),
+        };
+        if !base.contains(x) {
+            continue;
+        }
+        let Some(sub) = to_poly(&base, x)? else { return Ok(None) };
+        if sub.len() >= c.len() {
+            return Ok(None);
+        }
+        split = true;
+        match solve_polynomial(&base, x) {
+            Ok(r) => out.extend(r),
+            Err(_) => return Ok(None),
+        }
+    }
+    Ok(split.then_some(out))
 }
 
 /// `c(x^k)` with k > 1 (such as `x^4 - 5x^2 + 4`): solve for `u = x^k`, then take k-th roots (k = 2, 3, 4).
