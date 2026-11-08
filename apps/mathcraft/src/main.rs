@@ -1612,9 +1612,9 @@ fn slider_row(ui: &mut egui::Ui, env: &mut Env, cell: &Cell) {
     let mut value = spec.value;
     let r = ui
         .horizontal(|ui| {
-            ui.label(RichText::new(&spec.name).monospace().color(env.theme.text_faint));
-            ui.spacing_mut().slider_width = (ui.available_width() - 110.0).clamp(120.0, 420.0);
-            let mut s = egui::Slider::new(&mut value, spec.lo..=spec.hi).smart_aim(false);
+            ui.spacing_mut().slider_width = (ui.available_width() - 150.0).clamp(120.0, 420.0);
+            let mut s =
+                egui::Slider::new(&mut value, spec.lo..=spec.hi).smart_aim(false).text(RichText::new(&spec.name).monospace().color(env.theme.text_faint));
             if let Some(step) = spec.step {
                 s = s.step_by(step);
             }
@@ -2422,6 +2422,35 @@ mod tests {
         assert!(app.tree.iter().any(|n| n.name() == "untitled.py"), "the list shows the new file");
         frame(&ctx, &mut app);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
+    fn rich_cells_screenshot() {
+        let Some(out) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&out).unwrap();
+        let src = "# %% [markdown]\n# # Math in text\n# The roots of $x**2 - 2$ are $sqrt(2)$ and $-sqrt(2)$, and it costs $5 or $6.\n# $$ integrate(1/(x**2+1), x) $$\n# - a list item with $a/b + c$ inside\n# > a quote about $exp(I*pi) + 1$\n# %%\na = slider(0, 10, 3)\n# %%\nplot([sin(x), cos(x)], (x, 0, 6))\n";
+        for (name, pref) in [("dark", ThemePreference::Dark), ("light", ThemePreference::Light)] {
+            let mut harness = egui_kittest::Harness::builder().wgpu().with_size(vec2(900.0, 780.0)).build_ui_state(
+                move |ui, app: &mut Option<App>| {
+                    app.get_or_insert_with(|| {
+                        let mut app = App::with_context(ui.ctx().clone(), None);
+                        app.replace_notebook(Notebook::from_text(src), None);
+                        app
+                    })
+                    .show(ui)
+                },
+                None,
+            );
+            harness.ctx.set_theme(pref);
+            let start = Instant::now();
+            while harness.state().as_ref().is_none_or(App::busy) && start.elapsed() < Duration::from_secs(30) {
+                harness.run_steps(3);
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            harness.run_steps(6);
+            harness.render().unwrap().save(out.join(format!("rich-{name}.png"))).unwrap();
+        }
     }
 
     #[test]
