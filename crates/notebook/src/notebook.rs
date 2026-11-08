@@ -144,6 +144,10 @@ struct Graph {
     order: Vec<usize>,
 }
 
+/// A saved cell order (see `Notebook::layout`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Layout(Vec<(CellId, CellKind, String)>);
+
 #[derive(Debug)]
 pub struct Notebook {
     cells: Vec<Cell>,
@@ -194,6 +198,11 @@ impl Notebook {
     fn push_cell(&mut self, kind: CellKind, source: String) -> CellId {
         let id = self.next_id;
         self.next_id += 1;
+        self.push_with_id(id, kind, source);
+        id
+    }
+
+    fn push_with_id(&mut self, id: CellId, kind: CellKind, source: String) {
         self.cells.push(Cell {
             id,
             kind,
@@ -208,7 +217,6 @@ impl Notebook {
         });
         let last = self.cells.len() - 1;
         self.reanalyze(last);
-        id
     }
 
     fn reanalyze(&mut self, idx: usize) {
@@ -252,6 +260,29 @@ impl Notebook {
         self.cells.remove(idx);
         self.refresh();
         true
+    }
+
+    /// The cells' order, kinds and text, for structural undo.
+    pub fn layout(&self) -> Layout {
+        Layout(self.cells.iter().map(|c| (c.id, c.kind, c.source.clone())).collect())
+    }
+
+    /// Bring back the cell order of `layout`. Cells that still exist keep their current text and output (so typing
+    /// is never undone); cells that were deleted come back with the saved text, and are new. Returns the ids of
+    /// the cells that were removed.
+    pub fn restore(&mut self, layout: &Layout) -> Vec<CellId> {
+        let mut old: Vec<Cell> = std::mem::take(&mut self.cells);
+        for (id, kind, source) in &layout.0 {
+            match old.iter().position(|c| c.id == *id) {
+                Some(i) => self.cells.push(old.remove(i)),
+                None => self.push_with_id(*id, *kind, source.clone()),
+            }
+            self.next_id = self.next_id.max(id + 1);
+        }
+        let removed: Vec<CellId> = old.iter().map(|c| c.id).collect();
+        self.mark_all_stale();
+        self.refresh();
+        removed
     }
 
     pub fn move_cell(&mut self, id: CellId, delta: isize) {

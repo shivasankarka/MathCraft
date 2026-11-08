@@ -13,7 +13,7 @@ mod notebook;
 mod runner;
 
 pub use kernel::Kernel;
-pub use notebook::{Cell, CellId, CellKind, CellOutput, CellState, Diagnostic, Job, Notebook, Problem, RunMode, RunRequest};
+pub use notebook::{Cell, CellId, CellKind, CellOutput, CellState, Diagnostic, Job, Layout, Notebook, Problem, RunMode, RunRequest};
 pub use runner::{CellResult, Event, JobResult, Runner, execute};
 
 #[cfg(test)]
