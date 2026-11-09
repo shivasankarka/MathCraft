@@ -97,6 +97,8 @@ enum Action {
     AddAfter(Option<CellId>, CellKind),
     Delete(CellId),
     Move(CellId, isize),
+    /// One step of a cell being dragged; the first one saves the undo point.
+    Shift(CellId, isize, bool),
     /// Say something in the status bar.
     Status(String),
     /// A Vim `:` command line (`w`, `q`, `wq`, ...).
@@ -702,6 +704,13 @@ impl App {
                     self.cur.nb.move_cell(id, delta);
                     self.cur.dirty = true;
                 }
+                Action::Shift(id, delta, first) => {
+                    if first {
+                        self.cur.checkpoint();
+                    }
+                    self.cur.nb.move_cell(id, delta);
+                    self.cur.dirty = true;
+                }
                 Action::Status(text) => self.status = text,
                 Action::Command(line) => self.ex_command(line.trim()),
             }
@@ -1248,10 +1257,13 @@ impl App {
                                 pretty: self.pretty,
                                 vim_status: &mut self.vim_status,
                             };
+                            let mut rows = Vec::new();
                             for (i, cell) in self.cur.nb.cells().iter().enumerate() {
-                                cell_ui(ui, &mut env, cell, i, &self.cur.nb);
+                                let r = cell_ui(ui, &mut env, cell, i, &self.cur.nb);
+                                rows.push((r.top(), r.bottom()));
                                 add_row(ui, &mut env, cell.id);
                             }
+                            drag_cells(ui, &mut env, &rows, &self.cur.nb);
                             if let [only] = self.cur.nb.cells()
                                 && only.source.trim().is_empty()
                             {
@@ -1550,7 +1562,7 @@ const GUTTER: f32 = 46.0;
 /// Horizontal padding inside the editor; outputs are indented by the same amount so they line up with the code.
 const EDITOR_PAD_X: f32 = 12.0;
 
-fn cell_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, index: usize, nb: &Notebook) {
+fn cell_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, index: usize, nb: &Notebook) -> egui::Rect {
     let theme = env.theme;
     let is_code = cell.kind == CellKind::Code;
     let editing_text = !is_code && (env.editing_md.contains(&cell.id) || cell.source.trim().is_empty());
@@ -1594,7 +1606,11 @@ fn cell_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, index: usize, nb: &Not
         .rect;
 
     let focused = ui.ctx().memory(|m| m.has_focus(editor_id(cell.id)));
-    let active = focused || ui.rect_contains_pointer(row);
+    let dragging = dragged_cell(ui.ctx()).is_some_and(|d| d.id == cell.id);
+    let active = focused || dragging || ui.rect_contains_pointer(row);
+    if dragging {
+        ui.painter().rect_stroke(row.expand2(vec2(2.0, 0.0)), theme::RADIUS_LARGE, Stroke::new(1.5, theme.accent), egui::StrokeKind::Inside);
+    }
 
     // A rule beside the cell says when it needs attention; a cell that is up to date has none.
     if is_code && !matches!(cell.state, CellState::Fresh) {
@@ -1640,13 +1656,17 @@ fn cell_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, index: usize, nb: &Not
 
     // Move and delete appear only while the cell is active.
     if active {
-        let size = vec2(26.0 * 3.0 + 4.0, 26.0);
+        let size = vec2(26.0 * 4.0 + 6.0, 26.0);
         let at = egui::Rect::from_min_size(egui::pos2(row.right() - size.x - 5.0, row.top() + 3.0), size);
         let mut tools = ui.new_child(egui::UiBuilder::new().max_rect(at).layout(egui::Layout::left_to_right(egui::Align::Center)));
         tools.spacing_mut().item_spacing.x = 2.0;
         let strip = at.expand(2.0);
         tools.painter().add(theme.popup_shadow_small().as_shape(strip, theme::RADIUS_LARGE));
         tools.painter().rect(strip, theme::RADIUS_LARGE, theme.surface, Stroke::new(1.0, theme.border_strong), egui::StrokeKind::Inside);
+        let grip = icons::drag_handle(&mut tools, theme, "Drag to move this cell");
+        if grip.drag_started() {
+            set_dragged_cell(ui.ctx(), Some(Drag { id: cell.id, moved: false }));
+        }
         if icons::button(&mut tools, theme, Icon::Up, "Move cell up").clicked() {
             env.actions.push(Action::Move(cell.id, -1));
         }
@@ -1656,6 +1676,40 @@ fn cell_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, index: usize, nb: &Not
         if icons::button(&mut tools, theme, Icon::Close, "Delete this cell").clicked() {
             env.actions.push(Action::Delete(cell.id));
         }
+    }
+    row
+}
+
+/// The cell being dragged by its handle, and whether it has moved yet (the first move saves the undo point).
+#[derive(Clone, Copy)]
+struct Drag {
+    id: CellId,
+    moved: bool,
+}
+
+fn dragged_cell(ctx: &egui::Context) -> Option<Drag> {
+    ctx.data(|d| d.get_temp::<Option<Drag>>(egui::Id::NULL)).flatten()
+}
+
+fn set_dragged_cell(ctx: &egui::Context, drag: Option<Drag>) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::NULL, drag));
+}
+
+/// While a cell's handle is held, move the cell past each neighbour the pointer crosses. `rows` are this frame's
+/// `(top, bottom)` of every cell, in order.
+fn drag_cells(ui: &egui::Ui, env: &mut Env, rows: &[(f32, f32)], nb: &Notebook) {
+    let ctx = ui.ctx();
+    let Some(mut drag) = dragged_cell(ctx) else { return };
+    if !ctx.input(|i| i.pointer.any_down()) {
+        set_dragged_cell(ctx, None);
+        return;
+    }
+    ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+    let (Some(at), Some(cur)) = (ctx.pointer_latest_pos(), nb.index_of(drag.id)) else { return };
+    if let Some(to) = tabs::drop_index(rows, cur, at.y) {
+        env.actions.push(Action::Shift(drag.id, to as isize - cur as isize, !drag.moved));
+        drag.moved = true;
+        set_dragged_cell(ctx, Some(drag));
     }
 }
 
@@ -3031,6 +3085,44 @@ mod tests {
         h.get_by_label("Show less").click();
         h.run_steps(4);
         assert!(h.query_by_label("Show 6 more lines").is_some());
+    }
+
+    #[test]
+    fn dragging_a_cell_by_its_handle_reorders_it() {
+        let mut h = typing_harness();
+        h.set_size(vec2(900.0, 900.0));
+        let ids = {
+            let app = h.state_mut().as_mut().unwrap();
+            app.replace_notebook(Notebook::from_text("# %%\na = 1\n# %%\nb = 2\n# %%\nc = 3\n"), None);
+            app.cur.nb.cells().iter().map(|c| c.id).collect::<Vec<_>>()
+        };
+        settle(&mut h);
+        h.run();
+        let editors: Vec<_> = h.get_all_by_role(egui::accesskit::Role::MultilineTextInput).map(|n| n.rect()).collect();
+        assert_eq!(editors.len(), 3);
+        // point at the first cell so its tools show, then drag its handle down past the second cell's middle
+        h.hover_at(editors[0].center());
+        h.run_steps(3);
+        let grip = h.get_by_label("Drag to move this cell").rect().center();
+        h.hover_at(grip);
+        h.run_steps(2);
+        h.drag_at(grip);
+        h.run_steps(2);
+        let mut y = grip.y;
+        while y < editors[1].center().y + 20.0 {
+            y += 10.0;
+            h.hover_at(egui::pos2(grip.x, y));
+            h.run_steps(2);
+        }
+        h.drop_at(egui::pos2(grip.x, y));
+        h.run_steps(3);
+        let order: Vec<_> = h.state().as_ref().unwrap().cur.nb.cells().iter().map(|c| c.id).collect();
+        assert_eq!(order, vec![ids[1], ids[0], ids[2]], "the first cell moved below the second");
+        // one drag is one undo step
+        let app = h.state_mut().as_mut().unwrap();
+        app.undo_cells();
+        let order: Vec<_> = app.cur.nb.cells().iter().map(|c| c.id).collect();
+        assert_eq!(order, ids);
     }
 
     #[test]
