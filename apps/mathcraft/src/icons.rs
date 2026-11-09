@@ -11,6 +11,8 @@ pub enum Icon {
     Stop,
     Up,
     Down,
+    /// Two columns of dots: a handle to drag by.
+    Grip,
     Close,
     /// A circle with one half filled: the light/dark switch.
     Contrast,
@@ -54,6 +56,13 @@ pub fn paint(painter: &Painter, icon: Icon, rect: Rect, color: Color32) {
         }
         Icon::Down => {
             painter.add(Shape::line(vec![pos2(c.x - 0.8 * w, c.y - 0.35 * w), pos2(c.x, c.y + 0.45 * w), pos2(c.x + 0.8 * w, c.y - 0.35 * w)], stroke));
+        }
+        Icon::Grip => {
+            for dx in [-0.35, 0.35] {
+                for dy in [-0.7, 0.0, 0.7] {
+                    painter.circle_filled(pos2(c.x + dx * w * 1.3, c.y + dy * w * 1.3), 1.2, color);
+                }
+            }
         }
         Icon::Close => {
             line(pos2(c.x - 0.65 * w, c.y - 0.65 * w), pos2(c.x + 0.65 * w, c.y + 0.65 * w));
@@ -166,6 +175,21 @@ pub fn button(ui: &mut Ui, theme: &Theme, icon: Icon, tip: &str) -> Response {
         paint(ui.painter(), icon, rect.shrink(6.0), if hot { theme.text } else { theme.text_dim });
     }
     resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(tip)
+}
+
+/// A handle to drag something by: looks like a button, reports drags instead of clicks.
+pub fn drag_handle(ui: &mut Ui, theme: &Theme, tip: &str) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::drag());
+    if ui.is_rect_visible(rect) {
+        let hot = resp.hovered() || resp.dragged();
+        if hot {
+            ui.painter().rect_filled(rect, 6.0, if resp.dragged() { theme.surface_pressed } else { theme.surface_hover });
+        }
+        paint(ui.painter(), Icon::Grip, rect.shrink(6.0), if hot { theme.text } else { theme.text_dim });
+    }
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tip));
+    let cursor = if resp.dragged() { CursorIcon::Grabbing } else { CursorIcon::Grab };
+    resp.on_hover_cursor(cursor).on_hover_text(tip)
 }
 
 /// The main action of a bar: a push button with an accent icon and a label, raised slightly off the chrome.
