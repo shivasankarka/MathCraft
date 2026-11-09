@@ -145,10 +145,11 @@ pub fn tab_strip(ui: &mut egui::Ui, theme: &Theme, tabs: &[TabInfo], active: u64
     action
 }
 
-/// Where a tab being dragged should go, given every tab's `(left, right)` span and the pointer's x. The tab moves
+/// Where a tab (or, with `(top, bottom)` spans and the pointer's y, a cell) being dragged should go, given every
+/// item's span and the pointer's position along the axis. The tab moves
 /// past a neighbour only once the pointer crosses that neighbour's centre, so it does not flicker between two
 /// slots of different widths. `None` when it should stay where it is.
-fn drop_index(spans: &[(f32, f32)], cur: usize, px: f32) -> Option<usize> {
+pub(crate) fn drop_index(spans: &[(f32, f32)], cur: usize, px: f32) -> Option<usize> {
     let centre = |i: usize| spans.get(i).map(|(l, r)| (l + r) / 2.0);
     if let Some(next) = cur.checked_add(1).filter(|n| *n < spans.len())
         && centre(next).is_some_and(|c| px > c)
