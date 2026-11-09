@@ -3,7 +3,6 @@
 //! recover each factor as a gcd over the extension.
 //!
 //! Field elements are vectors of rationals (coefficients of `1, a, a^2, ...` reduced by the minimal polynomial `m`).
-#![allow(clippy::indexing_slicing, clippy::needless_range_loop)] // small dense rational linear algebra; every index is bounded by the field degree
 
 use crate::poly::{factor, from_poly, to_poly};
 use crate::util::subs;
@@ -21,6 +20,25 @@ fn sub(a: &Num, b: &Num) -> Num {
     a.add(&b.neg())
 }
 
+// Element access that cannot panic. Every index here is in range by construction (vectors have the field degree
+// as length, loops stop at the lengths they read); a read past the end would give zero and a write would be dropped.
+
+fn get(v: &[Num], i: usize) -> Num {
+    v.get(i).cloned().unwrap_or_else(Num::zero)
+}
+
+fn set<T>(v: &mut [T], i: usize, x: T) {
+    if let Some(slot) = v.get_mut(i) {
+        *slot = x;
+    }
+}
+
+fn update<T>(v: &mut [T], i: usize, op: impl FnOnce(&T) -> T) {
+    if let Some(slot) = v.get_mut(i) {
+        *slot = op(slot);
+    }
+}
+
 struct Field {
     d: usize,
     /// monic minimal polynomial, lowest degree first, length `d + 1`
@@ -33,14 +51,12 @@ impl Field {
     }
 
     fn one(&self) -> El {
-        let mut v = self.zero();
-        v[0] = Num::one();
-        v
+        self.constant(&Num::one())
     }
 
     fn constant(&self, n: &Num) -> El {
         let mut v = self.zero();
-        v[0] = n.clone();
+        set(&mut v, 0, n.clone());
         v
     }
 
@@ -67,19 +83,19 @@ impl Field {
                 continue;
             }
             for (j, y) in b.iter().enumerate() {
-                prod[i + j] = prod[i + j].add(&x.mul(y));
+                update(&mut prod, i + j, |p| p.add(&x.mul(y)));
             }
         }
         for i in (self.d..prod.len()).rev() {
-            let c = prod[i].clone();
+            let c = get(&prod, i);
             if c.is_zero() {
                 continue;
             }
             // x^i = x^(i-d) * x^d and x^d = -(m_0 + ... + m_(d-1) x^(d-1))
-            for j in 0..self.d {
-                prod[i - self.d + j] = sub(&prod[i - self.d + j], &c.mul(&self.m[j]));
+            for (j, mj) in self.m.iter().take(self.d).enumerate() {
+                update(&mut prod, i - self.d + j, |p| sub(p, &c.mul(mj)));
             }
-            prod[i] = Num::zero();
+            set(&mut prod, i, Num::zero());
         }
         prod.truncate(self.d);
         prod
@@ -90,16 +106,14 @@ impl Field {
         let mut cols = Vec::with_capacity(self.d);
         for j in 0..self.d {
             let mut basis = self.zero();
-            basis[j] = Num::one();
+            set(&mut basis, j, Num::one());
             cols.push(self.mul(a, &basis));
         }
-        (0..self.d).map(|r| cols.iter().map(|c| c[r].clone()).collect()).collect()
+        (0..self.d).map(|r| cols.iter().map(|c| get(c, r)).collect()).collect()
     }
 
     fn inv(&self, a: &El) -> Option<El> {
-        let mut rhs = self.zero();
-        rhs[0] = Num::one();
-        solve(self.matrix(a), rhs)
+        solve(self.matrix(a), self.one())
     }
 
     fn norm(&self, a: &El) -> Num {
@@ -111,25 +125,24 @@ impl Field {
 fn solve(mut m: Vec<Vec<Num>>, mut rhs: Vec<Num>) -> Option<Vec<Num>> {
     let n = rhs.len();
     for col in 0..n {
-        let pivot = (col..n).find(|r| !m[*r][col].is_zero())?;
+        let pivot = (col..n).find(|r| m.get(*r).and_then(|row| row.get(col)).is_some_and(|v| !v.is_zero()))?;
         m.swap(col, pivot);
         rhs.swap(col, pivot);
-        let inv = m[col][col].recip()?;
-        for k in col..n {
-            m[col][k] = m[col][k].mul(&inv);
-        }
-        rhs[col] = rhs[col].mul(&inv);
-        for r in 0..n {
-            if r != col && !m[r][col].is_zero() {
-                let f = m[r][col].clone();
-                for k in col..n {
-                    let t = f.mul(&m[col][k]);
-                    m[r][k] = sub(&m[r][k], &t);
-                }
-                let t = f.mul(&rhs[col]);
-                rhs[r] = sub(&rhs[r], &t);
+        let inv = m.get(col)?.get(col)?.recip()?;
+        let prow: Vec<Num> = m.get(col)?.iter().map(|v| v.mul(&inv)).collect();
+        let prhs = get(&rhs, col).mul(&inv);
+        for (r, row) in m.iter_mut().enumerate() {
+            if r == col {
+                continue;
             }
+            let Some(f) = row.get(col).filter(|v| !v.is_zero()).cloned() else { continue };
+            for (cell, pk) in row.iter_mut().zip(&prow).skip(col) {
+                *cell = sub(cell, &f.mul(pk));
+            }
+            update(&mut rhs, r, |x| sub(x, &f.mul(&prhs)));
         }
+        set(&mut m, col, prow);
+        set(&mut rhs, col, prhs);
     }
     Some(rhs)
 }
@@ -138,21 +151,20 @@ fn det(mut m: Vec<Vec<Num>>) -> Num {
     let n = m.len();
     let mut d = Num::one();
     for col in 0..n {
-        let Some(pivot) = (col..n).find(|r| !m[*r][col].is_zero()) else { return Num::zero() };
+        let Some(pivot) = (col..n).find(|r| m.get(*r).and_then(|row| row.get(col)).is_some_and(|v| !v.is_zero())) else { return Num::zero() };
         if pivot != col {
             m.swap(col, pivot);
             d = d.neg();
         }
-        d = d.mul(&m[col][col]);
-        let Some(inv) = m[col][col].recip() else { return Num::zero() };
-        for r in col + 1..n {
-            if m[r][col].is_zero() {
-                continue;
-            }
-            let f = m[r][col].mul(&inv);
-            for k in col..n {
-                let t = f.mul(&m[col][k]);
-                m[r][k] = sub(&m[r][k], &t);
+        let (head, tail) = m.split_at_mut(col + 1);
+        let Some(prow) = head.last() else { return Num::zero() };
+        let Some(lead) = prow.get(col) else { return Num::zero() };
+        d = d.mul(lead);
+        let Some(inv) = lead.recip() else { return Num::zero() };
+        for row in tail {
+            let Some(f) = row.get(col).filter(|v| !v.is_zero()).map(|v| v.mul(&inv)) else { continue };
+            for (cell, pk) in row.iter_mut().zip(prow).skip(col) {
+                *cell = sub(cell, &f.mul(pk));
             }
         }
     }
@@ -171,8 +183,8 @@ fn pmul_linear(k: &Field, f: &Pol, c: &El) -> Pol {
     // f * (x + c)
     let mut out = vec![k.zero(); f.len() + 1];
     for (i, a) in f.iter().enumerate() {
-        out[i + 1] = k.add(&out[i + 1], a);
-        out[i] = k.add(&out[i], &k.mul(a, c));
+        update(&mut out, i + 1, |x| k.add(x, a));
+        update(&mut out, i, |x| k.add(x, &k.mul(a, c)));
     }
     out
 }
@@ -185,7 +197,7 @@ fn shift(k: &Field, f: &Pol, c: &El) -> Pol {
         if out.is_empty() {
             out.push(a.clone());
         } else {
-            out[0] = k.add(&out[0], a);
+            update(&mut out, 0, |x| k.add(x, a));
         }
     }
     trim(&mut out);
@@ -198,11 +210,11 @@ fn divrem(k: &Field, f: &Pol, g: &Pol) -> Option<(Pol, Pol)> {
     let mut q = vec![k.zero(); (f.len() + 1).saturating_sub(g.len()).max(1)];
     while r.len() >= g.len() {
         let c = k.mul(r.last()?, &lead_inv);
-        let at = r.len() - g.len();
-        for (i, gi) in g.iter().enumerate() {
-            r[at + i] = k.sub(&r[at + i], &k.mul(&c, gi));
+        let from = r.len() - g.len();
+        for (ri, gi) in r.iter_mut().skip(from).zip(g) {
+            *ri = k.sub(ri, &k.mul(&c, gi));
         }
-        q[at] = c;
+        set(&mut q, from, c);
         r.pop();
         trim(&mut r);
     }
@@ -276,18 +288,19 @@ fn interpolate(ys: &[Num]) -> Vec<Num> {
     for j in 1..n {
         for i in (j..n).rev() {
             let step = Num::int(j as i64).recip().unwrap_or_else(Num::one);
-            coef[i] = sub(&coef[i], &coef[i - 1]).mul(&step);
+            let prev = get(&coef, i - 1);
+            update(&mut coef, i, |x| sub(x, &prev).mul(&step));
         }
     }
     let mut poly = vec![Num::zero()];
-    for i in (0..n).rev() {
+    for (i, ci) in coef.iter().enumerate().rev() {
         // poly = poly * (x - i) + coef[i]
         let mut next = vec![Num::zero(); poly.len() + 1];
         for (d, c) in poly.iter().enumerate() {
-            next[d + 1] = next[d + 1].add(c);
-            next[d] = sub(&next[d], &c.mul(&Num::int(i as i64)));
+            update(&mut next, d + 1, |x| x.add(c));
+            update(&mut next, d, |x| sub(x, &c.mul(&Num::int(i as i64))));
         }
-        next[0] = next[0].add(&coef[i]);
+        update(&mut next, 0, |x| x.add(ci));
         poly = next;
     }
     while poly.len() > 1 && poly.last().is_some_and(Num::is_zero) {
@@ -381,8 +394,8 @@ fn minimal_polynomial(alpha: &Expr) -> MathResult<Vec<Num>> {
     }
     let c = b.powi(p).ok_or_else(unsupported)?;
     let mut m = vec![Num::zero(); q as usize + 1];
-    m[0] = c.neg();
-    m[q as usize] = Num::one();
+    set(&mut m, 0, c.neg());
+    set(&mut m, q as usize, Num::one());
     // y**q - c must be irreducible, or the radical generates a smaller field
     let y = Expr::sym("_y");
     let poly = from_poly(&m.iter().map(|v| Expr::num(v.clone())).collect::<Vec<_>>(), &y);
@@ -418,9 +431,7 @@ pub fn factor_over(e: &Expr, alpha: &Expr) -> MathResult<Expr> {
         let mut power = k.one();
         let alpha_el = {
             let mut v = k.zero();
-            if d > 1 {
-                v[1] = Num::one();
-            }
+            set(&mut v, 1, Num::one());
             v
         };
         for n in &nums {
@@ -436,9 +447,7 @@ pub fn factor_over(e: &Expr, alpha: &Expr) -> MathResult<Expr> {
     let lead = f.last().cloned().unwrap_or_else(|| k.one());
     let alpha_el = {
         let mut v = k.zero();
-        if d > 1 {
-            v[1] = Num::one();
-        }
+        set(&mut v, 1, Num::one());
         v
     };
     let Some(parts) = squarefree(&k, &f) else { return Err(MathError::unsupported("could not factor over this extension")) };
