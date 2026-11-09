@@ -9,14 +9,30 @@
 //! division is the only thing that is trusted, so an unlucky choice of primes or points costs time, never a wrong
 //! answer.
 
-// Dense numeric kernels: every index is bounded by a length checked just above it.
-#![allow(clippy::indexing_slicing)]
-
 use crate::gcd::{gcd_rec, positive};
 use crate::{Mono, Poly, PolyError, exponent, shift};
 use dashu::integer::IBig;
 
 type Stop<'a> = &'a mut dyn FnMut() -> bool;
+
+// Reads and writes that never panic. Every index below is meant to be in range; if one were not, the value reads as
+// zero and the write is dropped, which can only make a candidate wrong, and a wrong candidate fails the exact
+// division at the end (it costs time, never a wrong answer).
+
+fn at(v: &[u64], i: usize) -> u64 {
+    v.get(i).copied().unwrap_or(0)
+}
+
+/// `tabs[t][e]`: the `e`-th power in the `t`-th table.
+fn pw(tabs: &[Vec<u64>], t: usize, e: usize) -> u64 {
+    tabs.get(t).map_or(0, |table| at(table, e))
+}
+
+fn modify(v: &mut [u64], i: usize, op: impl FnOnce(u64) -> u64) {
+    if let Some(x) = v.get_mut(i) {
+        *x = op(*x);
+    }
+}
 
 /// Smallest input (terms of both together) worth the modular method.
 pub(crate) const MIN_TERMS: usize = 40;
@@ -204,9 +220,9 @@ fn urem(f: &Field, a: &mut Vec<u64>, b: &[u64]) {
     let inv = f.inv(lead);
     while a.len() >= b.len() {
         let q = f.mul(*a.last().unwrap_or(&0), inv);
-        let at = a.len() - b.len();
-        for (i, bc) in b.iter().enumerate() {
-            a[at + i] = f.sub(a[at + i], f.mul(q, *bc));
+        let from = a.len() - b.len();
+        for (ac, bc) in a.iter_mut().skip(from).zip(b) {
+            *ac = f.sub(*ac, f.mul(q, *bc));
         }
         trim(a);
     }
@@ -270,7 +286,7 @@ impl Ctx<'_> {
             for (var, table) in self.ov.iter().zip(beta).skip(j + 1) {
                 let e = exponent(*m, *var) as usize;
                 if e > 0 {
-                    val = self.fld.mul(val, table[e]);
+                    val = self.fld.mul(val, at(table, e));
                 }
             }
             if val != 0 {
@@ -309,11 +325,11 @@ impl Ctx<'_> {
             for (t, var) in self.ov.iter().enumerate() {
                 let e = exponent(*m, *var) as usize;
                 if e > 0 {
-                    val = self.fld.mul(val, tabs[t][e]);
+                    val = self.fld.mul(val, pw(tabs, t, e));
                 }
             }
             let e = exponent(*m, self.v) as usize;
-            out[e] = self.fld.add(out[e], val);
+            modify(&mut out, e, |o| self.fld.add(o, val));
         }
         out
     }
@@ -325,7 +341,7 @@ impl Ctx<'_> {
             for (t, var) in self.ov.iter().enumerate() {
                 let e = exponent(*m, *var) as usize;
                 if e > 0 {
-                    val = self.fld.mul(val, tabs[t][e]);
+                    val = self.fld.mul(val, pw(tabs, t, e));
                 }
             }
             s = self.fld.add(s, val);
@@ -366,22 +382,24 @@ struct Vandermonde {
 impl Vandermonde {
     fn new(f: &Field, w: &[u64]) -> Option<Vandermonde> {
         let n = w.len();
+        if n == 0 {
+            return Some(Vandermonde { n, q: Vec::new() });
+        }
         let mut master = vec![f.one()];
         for wl in w {
             let mut next = vec![0u64; master.len() + 1];
             for (k, c) in master.iter().enumerate() {
-                next[k + 1] = f.add(next[k + 1], *c);
-                next[k] = f.sub(next[k], f.mul(*c, *wl));
+                modify(&mut next, k + 1, |x| f.add(x, *c));
+                modify(&mut next, k, |x| f.sub(x, f.mul(*c, *wl)));
             }
             master = next;
         }
         let mut q = vec![0u64; n * n];
-        for (l, wl) in w.iter().enumerate() {
-            let row = &mut q[l * n..(l + 1) * n];
-            let mut carry = master[n];
-            for k in (0..n).rev() {
-                row[k] = carry;
-                carry = f.add(master[k], f.mul(*wl, carry));
+        for (row, wl) in q.chunks_exact_mut(n).zip(w) {
+            let mut carry = at(&master, n);
+            for (k, slot) in row.iter_mut().enumerate().rev() {
+                *slot = carry;
+                carry = f.add(at(&master, k), f.mul(*wl, carry));
             }
             let mut at_w = 0u64;
             for c in row.iter().rev() {
@@ -400,12 +418,7 @@ impl Vandermonde {
     }
 
     fn solve(&self, f: &Field, y: &[u64]) -> Vec<u64> {
-        (0..self.n)
-            .map(|l| {
-                let row = &self.q[l * self.n..(l + 1) * self.n];
-                row.iter().zip(y).fold(0u64, |s, (a, b)| f.add(s, f.mul(*a, *b)))
-            })
-            .collect()
+        self.q.chunks_exact(self.n.max(1)).take(self.n).map(|row| row.iter().zip(y).fold(0u64, |s, (a, b)| f.add(s, f.mul(*a, *b)))).collect()
     }
 }
 
@@ -417,9 +430,9 @@ struct Newton {
 impl Newton {
     fn eval(&self, f: &Field, nodes: &[u64], x: u64) -> u64 {
         let mut r = 0u64;
-        for k in (0..self.coef.len()).rev() {
-            let step = if k + 1 < self.coef.len() { f.sub(x, nodes[k]) } else { f.one() };
-            r = f.add(f.mul(r, step), self.coef[k]);
+        for (k, c) in self.coef.iter().enumerate().rev() {
+            let step = if k + 1 < self.coef.len() { f.sub(x, at(nodes, k)) } else { f.one() };
+            r = f.add(f.mul(r, step), *c);
         }
         r
     }
@@ -427,21 +440,24 @@ impl Newton {
     /// The coefficients of `1, x, x^2, ...`.
     fn monomial(&self, f: &Field, nodes: &[u64]) -> Vec<u64> {
         let mut p: Vec<u64> = Vec::new();
-        for k in (0..self.coef.len()).rev() {
+        for (k, ck) in self.coef.iter().enumerate().rev() {
             // p := p * (x - nodes[k]) + coef[k]
+            let node = at(nodes, k);
             let mut next = vec![0u64; p.len() + 1];
             for (i, c) in p.iter().enumerate() {
-                next[i + 1] = f.add(next[i + 1], *c);
-                next[i] = f.sub(next[i], f.mul(*c, nodes[k]));
+                modify(&mut next, i + 1, |x| f.add(x, *c));
+                modify(&mut next, i, |x| f.sub(x, f.mul(*c, node)));
             }
-            if next.is_empty() {
-                next.push(0);
-            }
-            next[0] = f.add(next[0], self.coef[k]);
+            modify(&mut next, 0, |x| f.add(x, *ck));
             p = next;
         }
         p
     }
+}
+
+/// The product of the table powers for `mono`'s exponents in the first `upto` of the variables `ov`.
+fn monomial_value(f: &Field, mono: Mono, ov: &[usize], tabs: &[Vec<u64>], upto: usize) -> u64 {
+    ov.iter().take(upto).enumerate().fold(f.one(), |a, (t, var)| f.mul(a, pw(tabs, t, exponent(mono, *var) as usize)))
 }
 
 fn stage_points(rng: &mut Rng, f: &Field, n: usize) -> Vec<u64> {
@@ -476,6 +492,7 @@ fn image_mod_prime(cx: &Ctx<'_>, d: usize, rng: &mut Rng, stop: Stop<'_>) -> Res
         if stop() {
             return Err(PolyError::Stopped);
         }
+        let Some(&xj) = cx.ov.get(j) else { return Ok(None) };
         let (fs, gs) = (cx.reduce(cx.f, &cx.fc, j, &beta_tabs), cx.reduce(cx.g, &cx.gc, j, &beta_tabs));
         let rows = skel.iter().map(Vec::len).max().unwrap_or(0).max(1);
         let s = stage_points(rng, fld, j);
@@ -483,13 +500,11 @@ fn image_mod_prime(cx: &Ctx<'_>, d: usize, rng: &mut Rng, stop: Stop<'_>) -> Res
         // solvers for the monomial values at the sample points s^k
         let mut solvers = Vec::with_capacity(d + 1);
         for monos in &skel {
-            let w: Vec<u64> = monos.iter().map(|(mono, _)| (0..j).fold(fld.one(), |a, t| fld.mul(a, s_tabs[t][exponent(*mono, cx.ov[t]) as usize]))).collect();
+            let w: Vec<u64> = monos.iter().map(|(mono, _)| monomial_value(fld, *mono, &cx.ov, &s_tabs, j)).collect();
             let Some(vm) = Vandermonde::new(fld, &w) else { return Ok(None) };
             solvers.push(vm);
         }
-        let step_of = |side: &Side| -> Vec<u64> {
-            side.rest.iter().map(|mono| (0..j).fold(fld.one(), |a, t| fld.mul(a, s_tabs[t][exponent(*mono, cx.ov[t]) as usize]))).collect()
-        };
+        let step_of = |side: &Side| -> Vec<u64> { side.rest.iter().map(|mono| monomial_value(fld, *mono, &cx.ov, &s_tabs, j)).collect() };
         let (fstep, gstep) = (step_of(&fs), step_of(&gs));
         let dk = cx.top.get(j).copied().unwrap_or(0);
         let mut nodes: Vec<u64> = Vec::new();
@@ -505,14 +520,14 @@ fn image_mod_prime(cx: &Ctx<'_>, d: usize, rng: &mut Rng, stop: Stop<'_>) -> Res
             }
             let gpow = fld.powers(gamma, dk);
             let init =
-                |side: &Side| -> Vec<u64> { side.rest.iter().zip(&side.coef).map(|(mono, c)| fld.mul(*c, gpow[exponent(*mono, cx.ov[j]) as usize])).collect() };
+                |side: &Side| -> Vec<u64> { side.rest.iter().zip(&side.coef).map(|(mono, c)| fld.mul(*c, at(&gpow, exponent(*mono, xj) as usize))).collect() };
             let (mut fcur, mut gcur) = (init(&fs), init(&gs));
             // the point for the fixed variables, as power tables for delta
             let mut xs: Vec<u64> = vec![fld.one(); j];
             let mut images: Vec<Vec<u64>> = Vec::with_capacity(rows);
             for _ in 0..rows {
-                for (t, x) in xs.iter_mut().enumerate() {
-                    *x = fld.mul(*x, s[t]);
+                for (x, sv) in xs.iter_mut().zip(&s) {
+                    *x = fld.mul(*x, *sv);
                 }
                 let fi = advance(fld, &fs, &mut fcur, &fstep, cx.df);
                 let gi = advance(fld, &gs, &mut gcur, &gstep, cx.dg);
@@ -526,7 +541,7 @@ fn image_mod_prime(cx: &Ctx<'_>, d: usize, rng: &mut Rng, stop: Stop<'_>) -> Res
             // values of every coefficient at this node
             let mut values: Vec<Vec<u64>> = Vec::with_capacity(d + 1);
             for (i, solver) in solvers.iter().enumerate() {
-                let y: Vec<u64> = images.iter().take(solver.n).map(|h| h[i]).collect();
+                let y: Vec<u64> = images.iter().take(solver.n).map(|h| at(h, i)).collect();
                 values.push(solver.solve(fld, &y));
             }
             let converged =
@@ -545,7 +560,7 @@ fn image_mod_prime(cx: &Ctx<'_>, d: usize, rng: &mut Rng, stop: Stop<'_>) -> Res
             nodes.push(gamma);
         }
         // the next support: every (monomial, power of x_j) with a nonzero coefficient
-        let var_shift = shift(cx.ov[j]);
+        let var_shift = shift(xj);
         for (sk, row) in skel.iter_mut().zip(&newton) {
             let mut next = Vec::new();
             for ((mono, _), nw) in sk.iter().zip(row) {
@@ -579,7 +594,7 @@ fn image_known(cx: &Ctx<'_>, support: &[Vec<Mono>], rng: &mut Rng, stop: Stop<'_
     let (fs, gs) = (cx.reduce(cx.f, &cx.fc, m - 1, &[]), cx.reduce(cx.g, &cx.gc, m - 1, &[]));
     let s = stage_points(rng, fld, m);
     let s_tabs: Vec<Vec<u64>> = s.iter().zip(&cx.top).map(|(x, t)| fld.powers(*x, *t)).collect();
-    let value_at = |mono: Mono| (0..m).fold(fld.one(), |a, t| fld.mul(a, s_tabs[t][exponent(mono, cx.ov[t]) as usize]));
+    let value_at = |mono: Mono| monomial_value(fld, mono, &cx.ov, &s_tabs, m);
     let mut solvers = Vec::with_capacity(d + 1);
     for monos in support {
         let w: Vec<u64> = monos.iter().map(|mono| value_at(*mono)).collect();
@@ -606,7 +621,7 @@ fn image_known(cx: &Ctx<'_>, support: &[Vec<Mono>], rng: &mut Rng, stop: Stop<'_
     }
     let mut out = Vec::new();
     for (i, (monos, solver)) in support.iter().zip(&solvers).enumerate() {
-        let y: Vec<u64> = images.iter().take(solver.n).map(|h| h[i]).collect();
+        let y: Vec<u64> = images.iter().take(solver.n).map(|h| at(h, i)).collect();
         for (mono, a) in monos.iter().zip(solver.solve(fld, &y)) {
             if a != 0 {
                 out.push((*mono + ((i as u64) << shift(cx.v)), fld.dec(a)));
@@ -621,13 +636,12 @@ fn advance(f: &Field, side: &Side, cur: &mut [u64], step: &[u64], deg: usize) ->
     let mut out = vec![0u64; deg + 1];
     for &(e, lo, hi) in &side.runs {
         let mut acc = 0u128;
-        for k in lo..hi {
-            let c = f.mul(cur[k], step[k]);
-            cur[k] = c;
-            acc += u128::from(c);
+        for (c, st) in cur.iter_mut().zip(step).take(hi).skip(lo) {
+            *c = f.mul(*c, *st);
+            acc += u128::from(*c);
         }
         if e <= deg {
-            out[e] = (acc % u128::from(f.p)) as u64;
+            modify(&mut out, e, |_| (acc % u128::from(f.p)) as u64);
         }
     }
     out
