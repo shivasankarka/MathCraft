@@ -11,7 +11,7 @@ and have had little hands-on use.
 
 ## Install
 
-Download a build for your system from the [Releases](../../releases) page, or build from source (Rust 1.97 or newer):
+Download a build for your system from the [Releases](../../releases) page: `mathcraft-<version>-<system>` has the desktop app and the command line tool, and `mathcraft-cli-<version>-<system>` has only the command line tool (no window system needed). Or build from source (Rust 1.97 or newer):
 
 ```sh
 cargo install --path apps/mathcraft        # the desktop app
@@ -28,6 +28,7 @@ cargo run --release -p mathcraft -- examples/tour.py     # open a file
 cargo run --release -p mathcraft-cli -- eval 'integrate(sin(x)**2, (x, 0, pi))'
 cargo run --release -p mathcraft-cli -- run examples/tour.py
 cargo run --release -p mathcraft-cli -- check examples/tour.py
+cargo run --release -p mathcraft-cli -- export examples/tour.py -o tour.html   # run it and save as HTML or Markdown
 ```
 
 In the app: **Shift+Enter** runs a cell and moves on, **⌘/Ctrl+Enter** runs without moving, **⌘⇧+Enter** runs all,
