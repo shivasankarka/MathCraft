@@ -14,6 +14,12 @@ fn is_half(x: &Expr) -> bool {
     Expr::half() == *x
 }
 
+/// `n` when `x` is the number `1/n`.
+fn unit_fraction(x: &Expr) -> Option<i64> {
+    let n = x.as_num().filter(|n| n.is_exact())?.recip()?;
+    if n.is_integer() { n.as_i64() } else { None }
+}
+
 /// Does this expression print as one unit, so it needs no parentheses as a base or factor?
 fn is_atomic(e: &Expr) -> bool {
     match e.kind() {
@@ -207,6 +213,14 @@ fn pow(tx: &Tx, whole: &Expr, b: &Expr, x: &Expr, st: St) -> Option<Layout> {
     if is_half(x) {
         let inner = expr(tx, b, st)?;
         return Some(tx.sqrt(&inner, st.size));
+    }
+    // x**(1/3) is the cube root, and so on for 1/n
+    if let Some(n) = unit_fraction(x)
+        && (3..=9).contains(&n)
+    {
+        let inner = expr(tx, b, st)?;
+        let index = expr(tx, &Expr::int(n), st.script())?;
+        return Some(tx.root(&inner, &index, st.size));
     }
     // sin(x)^2 is written sin^2(x)
     if let (Kind::Call(name, args), Some(k)) = (b.kind(), x.as_i64())
