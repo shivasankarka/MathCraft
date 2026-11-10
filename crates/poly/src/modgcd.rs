@@ -684,6 +684,22 @@ fn combine(acc: &mut Vec<(Mono, IBig)>, modulus: &IBig, new: &[(Mono, u64)], p: 
     *acc = out;
 }
 
+/// Inputs with at least this many terms are checked on two threads (a thread costs about as much as dividing a few
+/// hundred terms).
+const PARALLEL_CHECK: usize = 4000;
+
+/// Does `cand` divide both `f` and `g` exactly? The two divisions are independent, so big ones run side by side.
+fn divides_both(f: &Poly, g: &Poly, cand: &Poly) -> bool {
+    let divides = |x: &Poly| matches!(x.div_exact(cand), Ok(Some(_)));
+    if f.terms.len() + g.terms.len() < PARALLEL_CHECK {
+        return divides(f) && divides(g);
+    }
+    std::thread::scope(|s| {
+        let second = s.spawn(|| divides(g));
+        divides(f) && second.join().unwrap_or(false)
+    })
+}
+
 /// The gcd of two polynomials that are primitive in `x_v`, or `None` when this method does not apply or gives up.
 pub(crate) fn gcd_primitive(f: &Poly, g: &Poly, v: usize, min_terms: usize, stop: Stop<'_>) -> Result<Option<Poly>, PolyError> {
     let n = f.nvars;
@@ -780,8 +796,7 @@ pub(crate) fn gcd_primitive(f: &Poly, g: &Poly, v: usize, min_terms: usize, stop
         }
         let Ok(Some(cand)) = h.div_exact(&cont) else { continue };
         let cand = positive(cand);
-        let divides = |x: &Poly| matches!(x.div_exact(&cand), Ok(Some(_)));
-        if divides(f) && divides(g) {
+        if divides_both(f, g, &cand) {
             return Ok(Some(cand));
         }
     }
