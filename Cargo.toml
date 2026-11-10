@@ -38,6 +38,8 @@ egui_plot = "0.38"
 rfd = "0.17"
 egui_kittest = { version = "0.37", default-features = false, features = ["wgpu", "snapshot"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+png = "0.18"
+skrifa = "0.44"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
