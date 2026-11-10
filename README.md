@@ -11,7 +11,7 @@ and have had little hands-on use.
 
 ## Install
 
-Download a build for your system from the [Releases](../../releases) page: `mathcraft-<version>-<system>` has the desktop app and the command line tool, and `mathcraft-cli-<version>-<system>` has only the command line tool (no window system needed). Or build from source (Rust 1.97 or newer):
+Download a build for your system from the [Releases](../../releases) page: `mathcraft-<version>-<system>` has the desktop app and the command line tool, and `mathcraft-cli-<version>-<system>` has only the command line tool (no window system needed). On macOS, `mathcraft-<version>-macos-<cpu>-app.zip` holds `MathCraft.app` with the app icon (not signed yet: right-click it and choose Open the first time). Or build from source (Rust 1.97 or newer):
 
 ```sh
 cargo install --path apps/mathcraft        # the desktop app
