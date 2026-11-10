@@ -668,3 +668,15 @@ fn trigonometric_polynomials_in_sin_and_cos() {
     assert_eq!(ev("acos(sqrt(3)/2)"), "pi/6");
     assert_eq!(ev("acos(-sqrt(2)/2)"), "3*pi/4");
 }
+
+#[test]
+fn unevaluated_integrals_sums_and_limits() {
+    assert_eq!(ev("Integral(x**2, (x, 0, 1))"), "Integral(x**2, x, 0, 1)");
+    assert_eq!(ev("doit(Integral(x**2, (x, 0, 1)))"), "1/3");
+    assert_eq!(ev("doit(Sum(k**2, (k, 1, 10)))"), "385");
+    assert_eq!(ev("doit(Limit(sin(x)/x, x, 0))"), "1");
+    assert_eq!(ev("doit(Integral(Sum(x**k, (k, 0, 3)), x))"), "x**4/4 + x**3/3 + x**2/2 + x");
+    assert_eq!(ev("latex(Integral(exp(-x**2), (x, 0, oo)))"), "'\\int_{0}^{\\infty} e^{-x^{2}}\\,dx'");
+    assert_eq!(ev("latex(Sum(1/k**2, (k, 1, oo)))"), "'\\sum_{k=1}^{\\infty} \\frac{1}{k^{2}}'");
+    assert_eq!(ev("latex(Limit(sin(x)/x, x, 0))"), "'\\lim_{x \\to 0} \\frac{\\sin\\left(x\\right)}{x}'");
+}
