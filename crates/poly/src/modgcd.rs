@@ -38,8 +38,26 @@ fn modify(v: &mut [u64], i: usize, op: impl FnOnce(u64) -> u64) {
 pub(crate) const MIN_TERMS: usize = 40;
 /// Most primes tried before giving up.
 const MAX_PRIMES: usize = 48;
+/// Terms to evaluate per node (rows times terms of both inputs) from which the nodes are computed on several threads.
+const PARALLEL_WORK: usize = 100_000;
 /// Fresh random points tried for one prime.
 const MAX_RETRIES: usize = 3;
+
+/// Threads to spread independent nodes over.
+fn parallelism() -> usize {
+    std::thread::available_parallelism().map_or(1, usize::from)
+}
+
+/// `f` applied to every node, on one thread each when there are several.
+fn per_node<T: Send>(gammas: &[u64], f: &(impl Fn(u64) -> T + Sync)) -> Vec<Option<T>> {
+    if gammas.len() < 2 {
+        return gammas.iter().map(|g| Some(f(*g))).collect();
+    }
+    std::thread::scope(|sc| {
+        let handles: Vec<_> = gammas.iter().map(|g| sc.spawn(move || f(*g))).collect();
+        handles.into_iter().map(|h| h.join().ok()).collect()
+    })
+}
 
 /// Arithmetic modulo an odd prime below 2^62, in Montgomery form.
 #[derive(Clone, Copy)]
@@ -510,14 +528,8 @@ fn image_mod_prime(cx: &Ctx<'_>, d: usize, rng: &mut Rng, stop: Stop<'_>) -> Res
         let mut nodes: Vec<u64> = Vec::new();
         // Newton form per (power of x_v, monomial)
         let mut newton: Vec<Vec<Newton>> = skel.iter().map(|sk| sk.iter().map(|_| Newton { coef: Vec::new() }).collect()).collect();
-        while nodes.len() <= dk {
-            if stop() {
-                return Err(PolyError::Stopped);
-            }
-            let gamma = rng.element(fld);
-            if nodes.contains(&gamma) {
-                continue;
-            }
+        // the images for one node `gamma` of `x_j`: independent of every other node
+        let node_images = |gamma: u64| -> Option<Vec<Vec<u64>>> {
             let gpow = fld.powers(gamma, dk);
             let init =
                 |side: &Side| -> Vec<u64> { side.rest.iter().zip(&side.coef).map(|(mono, c)| fld.mul(*c, at(&gpow, exponent(*mono, xj) as usize))).collect() };
@@ -535,29 +547,47 @@ fn image_mod_prime(cx: &Ctx<'_>, d: usize, rng: &mut Rng, stop: Stop<'_>) -> Res
                 point.push(gamma);
                 point.extend(beta.iter().skip(j + 1));
                 let dt = cx.tables(&point, &cx.top_delta);
-                let Some(h) = cx.image_gcd(fi, gi, Some(d), cx.delta_at(&dt)) else { return Ok(None) };
-                images.push(h);
+                images.push(cx.image_gcd(fi, gi, Some(d), cx.delta_at(&dt))?);
             }
-            // values of every coefficient at this node
-            let mut values: Vec<Vec<u64>> = Vec::with_capacity(d + 1);
-            for (i, solver) in solvers.iter().enumerate() {
-                let y: Vec<u64> = images.iter().take(solver.n).map(|h| at(h, i)).collect();
-                values.push(solver.solve(fld, &y));
+            Some(images)
+        };
+        // enough work per node to be worth a thread each
+        let threads = if rows * (fs.coef.len() + gs.coef.len()) >= PARALLEL_WORK { parallelism() } else { 1 };
+        'nodes: while nodes.len() <= dk {
+            if stop() {
+                return Err(PolyError::Stopped);
             }
-            let converged =
-                !nodes.is_empty() && newton.iter().zip(&values).all(|(row, vals)| row.iter().zip(vals).all(|(nw, y)| nw.eval(fld, &nodes, gamma) == *y));
-            if converged {
-                break;
-            }
-            let factor = nodes.iter().fold(fld.one(), |a, x| fld.mul(a, fld.sub(gamma, *x)));
-            let finv = fld.inv(factor);
-            for (row, vals) in newton.iter_mut().zip(&values) {
-                for (nw, y) in row.iter_mut().zip(vals) {
-                    let c = if nw.coef.is_empty() { *y } else { fld.mul(fld.sub(*y, nw.eval(fld, &nodes, gamma)), finv) };
-                    nw.coef.push(c);
+            let mut gammas: Vec<u64> = Vec::new();
+            while gammas.len() < (dk + 1 - nodes.len()).min(threads) {
+                let gamma = rng.element(fld);
+                if !nodes.contains(&gamma) && !gammas.contains(&gamma) {
+                    gammas.push(gamma);
                 }
             }
-            nodes.push(gamma);
+            let batch = per_node(&gammas, &node_images);
+            for (gamma, images) in gammas.into_iter().zip(batch) {
+                let Some(Some(images)) = images else { return Ok(None) };
+                // values of every coefficient at this node
+                let mut values: Vec<Vec<u64>> = Vec::with_capacity(d + 1);
+                for (i, solver) in solvers.iter().enumerate() {
+                    let y: Vec<u64> = images.iter().take(solver.n).map(|h| at(h, i)).collect();
+                    values.push(solver.solve(fld, &y));
+                }
+                let converged =
+                    !nodes.is_empty() && newton.iter().zip(&values).all(|(row, vals)| row.iter().zip(vals).all(|(nw, y)| nw.eval(fld, &nodes, gamma) == *y));
+                if converged {
+                    break 'nodes;
+                }
+                let factor = nodes.iter().fold(fld.one(), |a, x| fld.mul(a, fld.sub(gamma, *x)));
+                let finv = fld.inv(factor);
+                for (row, vals) in newton.iter_mut().zip(&values) {
+                    for (nw, y) in row.iter_mut().zip(vals) {
+                        let c = if nw.coef.is_empty() { *y } else { fld.mul(fld.sub(*y, nw.eval(fld, &nodes, gamma)), finv) };
+                        nw.coef.push(c);
+                    }
+                }
+                nodes.push(gamma);
+            }
         }
         // the next support: every (monomial, power of x_j) with a nonzero coefficient
         let var_shift = shift(xj);
