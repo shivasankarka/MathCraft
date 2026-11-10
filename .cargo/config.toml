@@ -1,0 +1,3 @@
+# The algebra recurses deeply; a browser's default 1 MB of stack is too little. 64 MB for the WebAssembly module.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=67108864"]
