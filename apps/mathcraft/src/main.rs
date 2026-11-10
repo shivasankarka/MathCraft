@@ -14,6 +14,7 @@ mod markdown;
 mod math_view;
 mod palette;
 mod plot_export;
+mod plot_png;
 mod session;
 mod settings;
 mod sidebar;
@@ -2295,6 +2296,10 @@ fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::Plo
                 ui.close();
                 actions.push(Action::Status(save_svg(p, view)));
             }
+            if menu_row(ui, theme, "Save as PNG…", None).clicked() {
+                ui.close();
+                actions.push(Action::Status(save_png(p, view)));
+            }
         });
     });
 }
@@ -2318,6 +2323,19 @@ fn save_svg(p: &mathcraft_eval::PlotSpec, view: [f64; 4]) -> String {
     let series: Vec<String> = Theme::light().plot.iter().map(|c| hex(*c)).collect();
     let colors = plot_export::SvgColors { series: &series, text: "#333333", grid: "#e4e4e8" };
     match std::fs::write(&path, plot_export::svg(p, view, &colors, &tick_label)) {
+        Ok(()) => format!("Saved {}", file_name(&path)),
+        Err(e) => format!("Could not save the plot: {e}"),
+    }
+}
+
+/// Ask for a file and write the plot over `view` as a PNG picture (twice the SVG's size, so it stays sharp).
+fn save_png(p: &mathcraft_eval::PlotSpec, view: [f64; 4]) -> String {
+    let Some(path) = rfd::FileDialog::new().add_filter("PNG picture", &["png"]).set_file_name("plot.png").save_file() else { return "Save cancelled".into() };
+    let sane = view.iter().all(|v| v.is_finite()) && view[1] > view[0] && view[3] > view[2];
+    let view = if sane { view } else { plot_export::data_view(p) };
+    let series: Vec<plot_png::Rgb> = Theme::light().plot.iter().map(|c| [c.r(), c.g(), c.b()]).collect();
+    let colors = plot_png::Colors { series: &series, text: [0x33, 0x33, 0x33], grid: [0xe4, 0xe4, 0xe8] };
+    match plot_png::png(p, view, &colors, &tick_label, fonts::INTER, 2.0).and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())) {
         Ok(()) => format!("Saved {}", file_name(&path)),
         Err(e) => format!("Could not save the plot: {e}"),
     }
