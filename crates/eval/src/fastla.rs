@@ -3,8 +3,10 @@
 //! the caller then uses its own loops, which also produce the friendly "singular matrix" errors.
 
 /// Smallest `rows * inner * cols` for which a matrix product goes to faer.
+#[cfg(feature = "fast-linalg")]
 const MATMUL_MIN_WORK: usize = 20_000;
 /// Smallest dimension for det / inverse / solve.
+#[cfg(feature = "fast-linalg")]
 const SOLVE_MIN_N: usize = 24;
 
 #[cfg(feature = "fast-linalg")]
