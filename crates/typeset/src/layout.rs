@@ -121,6 +121,21 @@ impl<'a> Tx<'a> {
         out
     }
 
+    /// Lines one below the other, left-aligned, `gap` apart.
+    pub fn lines(rows: Vec<Layout>, gap: f32) -> Layout {
+        let mut out = Layout::default();
+        let mut y = 0.0;
+        for (i, r) in rows.iter().enumerate() {
+            if i > 0 {
+                y += rows.get(i - 1).map_or(0.0, |p| p.descent) + gap + r.ascent;
+            } else {
+                y = 0.0;
+            }
+            out.push(r, 0.0, y);
+        }
+        out
+    }
+
     pub fn frac(&self, num: &Layout, den: &Layout, size: f32) -> Layout {
         let pad = 0.12 * size;
         let gap = 0.14 * size;
