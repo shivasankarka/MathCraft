@@ -204,6 +204,68 @@ impl<'a> Tx<'a> {
         out
     }
 
+    /// `∫` with optional limits, followed by `body` (the integrand and `dx`). The sign is drawn, sized to the body.
+    pub fn integral(&self, lower: Option<&Layout>, upper: Option<&Layout>, body: &Layout, size: f32) -> Layout {
+        let h = body.height().clamp(1.5 * size, 3.2 * size);
+        let (top, bot) = (-(0.26 * size + h / 2.0), h / 2.0 - 0.26 * size);
+        let w = 0.42 * size;
+        let pts = vec![
+            [w * 0.95, top + 0.12 * size],
+            [w * 0.82, top + 0.02 * size],
+            [w * 0.64, top],
+            [w * 0.56, top + 0.13 * size],
+            [w * 0.44, bot - 0.13 * size],
+            [w * 0.36, bot],
+            [w * 0.18, bot - 0.02 * size],
+            [w * 0.05, bot - 0.12 * size],
+        ];
+        let glyph = Layout { width: w, ascent: -top, descent: bot, items: vec![Item::Stroke { points: pts, width: 0.07 * size, role: Role::Operator }] };
+        let mut out = Layout::default();
+        out.push(&glyph, 0.0, 0.0);
+        let mut right = w;
+        if let Some(u) = upper {
+            out.push(u, w * 1.1, top + 0.35 * size);
+            right = right.max(w * 1.1 + u.width);
+        }
+        if let Some(l) = lower {
+            out.push(l, w * 0.5, bot + 0.12 * size);
+            right = right.max(w * 0.5 + l.width);
+        }
+        out.push(body, right + 0.12 * size, 0.0);
+        out.width = right + 0.12 * size + body.width;
+        out
+    }
+
+    /// `Σ` with limits above and below, followed by `body`.
+    pub fn big_sum(&self, lower: &Layout, upper: &Layout, body: &Layout, size: f32) -> Layout {
+        let h = 1.2 * size;
+        let (top, bot) = (-(0.26 * size + h / 2.0), h / 2.0 - 0.26 * size);
+        let w = 0.85 * size;
+        let mid = (top + bot) / 2.0;
+        let pts = vec![[w * 0.97, top + 0.2 * size], [w * 0.97, top], [0.0, top], [w * 0.55, mid], [0.0, bot], [w * 0.97, bot], [w * 0.97, bot - 0.2 * size]];
+        let glyph = Layout { width: w, ascent: -top, descent: bot, items: vec![Item::Stroke { points: pts, width: 0.07 * size, role: Role::Operator }] };
+        let col = w.max(lower.width).max(upper.width);
+        let mut out = Layout::default();
+        out.push(&glyph, (col - w) / 2.0, 0.0);
+        out.push(upper, (col - upper.width) / 2.0, top - 0.12 * size - upper.descent);
+        out.push(lower, (col - lower.width) / 2.0, bot + 0.1 * size + lower.ascent);
+        out.push(body, col + 0.16 * size, 0.0);
+        out.width = col + 0.16 * size + body.width;
+        out
+    }
+
+    /// `lim` with the approach under it, followed by `body`.
+    pub fn limit(&self, under: &Layout, body: &Layout, size: f32) -> Layout {
+        let word = self.text("lim", size, Role::Function, false);
+        let col = word.width.max(under.width);
+        let mut out = Layout::default();
+        out.push(&word, (col - word.width) / 2.0, 0.0);
+        out.push(under, (col - under.width) / 2.0, word.descent + 0.12 * size + under.ascent);
+        out.push(body, col + 0.2 * size, 0.0);
+        out.width = col + 0.2 * size + body.width;
+        out
+    }
+
     pub fn delimited(&self, d: Delim, c: &Layout, size: f32) -> Layout {
         let (open, close) = match d {
             Delim::Paren => ("(", ")"),
