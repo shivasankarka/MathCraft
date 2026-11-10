@@ -1,0 +1,32 @@
+[package]
+name = "mathcraft-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "MathCraft engine for the browser: a WebAssembly module with a tiny C interface (no wasm-bindgen)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mathcraft-core.workspace = true
+# the fast linear algebra (faer) is left out: it does not build for the browser and is not worth its size there
+mathcraft-eval = { path = "../eval", default-features = false }
+serde_json.workspace = true
+
+# Not `workspace = true`: the module needs a little `unsafe` for the memory handed to JavaScript (see `ffi`), which the
+# workspace forbids everywhere else. The other lints are the workspace's.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+indexing_slicing = "warn"
