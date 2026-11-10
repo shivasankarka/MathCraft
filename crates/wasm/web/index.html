@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MathCraft in the browser</title>
+<style>
+  :root { color-scheme: light dark; --accent: #2563eb; }
+  body { max-width: 46rem; margin: 2rem auto; padding: 0 1rem; font: 16px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 1.3rem; margin-bottom: .2rem; }
+  p.note { margin-top: 0; opacity: .7; }
+  .cell { margin: 1rem 0; }
+  textarea { width: 100%; box-sizing: border-box; font: 14px/1.5 ui-monospace, Menlo, monospace; padding: .6rem .7rem; border: 1px solid #8884; border-radius: 8px; resize: vertical; min-height: 3.2rem; }
+  textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+  .out { font: 14px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; padding: .4rem .7rem; border-left: 3px solid var(--accent); margin-top: .3rem; }
+  .out.error { border-color: #dc2626; color: #dc2626; }
+  .latex { opacity: .6; font-size: 12px; }
+  button { font: inherit; padding: .3rem .9rem; border: 1px solid #8886; border-radius: 6px; background: transparent; cursor: pointer; }
+  button:hover { background: #8882; }
+</style>
+</head>
+<body>
+<h1>MathCraft in the browser</h1>
+<p class="note">The same engine as the desktop app, compiled to WebAssembly. Shift+Enter runs a cell; variables carry over from cell to cell.</p>
+<div id="cells"></div>
+<button id="add">Add cell</button> <button id="reset">Reset variables</button>
+<script type="module">
+const worker = new Worker("worker.js", { type: "module" });
+let nextId = 1;
+const pending = new Map();
+worker.onmessage = ({ data }) => pending.get(data.id)?.(data);
+const ask = (message) => new Promise((resolve) => { const id = nextId++; pending.set(id, resolve); worker.postMessage({ id, ...message }); });
+
+const cells = document.getElementById("cells");
+function addCell(code = "") {
+  const cell = document.createElement("div");
+  cell.className = "cell";
+  const input = document.createElement("textarea");
+  input.value = code;
+  input.spellcheck = false;
+  input.rows = Math.max(2, code.split("\n").length);
+  const out = document.createElement("div");
+  out.hidden = true;
+  cell.append(input, out);
+  cells.append(cell);
+  input.addEventListener("keydown", async (e) => {
+    if (e.key !== "Enter" || !e.shiftKey) return;
+    e.preventDefault();
+    out.hidden = false;
+    out.className = "out";
+    out.textContent = "…";
+    const r = await ask({ code: input.value });
+    out.className = r.error ? "out error" : "out";
+    out.textContent = r.error ?? ((r.stdout ?? "") + (r.value ?? "")).trimEnd();
+    if (r.latex && !r.error) {
+      const l = document.createElement("div");
+      l.className = "latex";
+      l.textContent = r.latex;
+      out.append(l);
+    }
+    out.hidden = !out.textContent;
+  });
+  input.focus();
+}
+document.getElementById("add").onclick = () => addCell();
+document.getElementById("reset").onclick = () => ask({ reset: true });
+addCell("f = sin(x) * exp(-x / 5)\ndiff(f, x)");
+addCell("solve(x**2 - 2, x)");
+</script>
+</body>
+</html>
