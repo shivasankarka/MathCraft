@@ -124,6 +124,17 @@ fn roots_and_exponentials() {
 }
 
 #[test]
+fn cube_roots_have_an_index() {
+    let l = lay(&Expr::pow(&x(), &Expr::rational(1, 3).unwrap()));
+    assert_eq!(strokes(&l), 1);
+    assert_eq!(texts(&l), vec!["𝑥", "3"]);
+    assert_inside(&l, "cube root");
+    // other fractions stay powers
+    let l = lay(&Expr::pow(&x(), &Expr::rational(2, 3).unwrap()));
+    assert_eq!(strokes(&l), 0);
+}
+
+#[test]
 fn sums_use_a_real_minus_and_keep_display_order() {
     let e = Expr::add(vec![Expr::pow(&x(), &n(2)), Expr::mul(vec![n(-3), x()]), n(2)]);
     let t = texts(&lay(&e));
