@@ -2090,6 +2090,15 @@ name = "mathcraft-vim"
 version = "0.2.0"
 
 [[package]]
+name = "mathcraft-wasm"
+version = "0.2.0"
+dependencies = [
+ "mathcraft-core",
+ "mathcraft-eval",
+ "serde_json",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
