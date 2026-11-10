@@ -45,7 +45,8 @@ const MAX_RETRIES: usize = 3;
 
 /// Threads to spread independent nodes over.
 fn parallelism() -> usize {
-    std::thread::available_parallelism().map_or(1, usize::from)
+    // wasm32-unknown-unknown cannot start threads
+    if cfg!(target_arch = "wasm32") { 1 } else { std::thread::available_parallelism().map_or(1, usize::from) }
 }
 
 /// `f` applied to every node, on one thread each when there are several.
@@ -721,7 +722,7 @@ const PARALLEL_CHECK: usize = 4000;
 /// Does `cand` divide both `f` and `g` exactly? The two divisions are independent, so big ones run side by side.
 fn divides_both(f: &Poly, g: &Poly, cand: &Poly) -> bool {
     let divides = |x: &Poly| matches!(x.div_exact(cand), Ok(Some(_)));
-    if f.terms.len() + g.terms.len() < PARALLEL_CHECK {
+    if cfg!(target_arch = "wasm32") || f.terms.len() + g.terms.len() < PARALLEL_CHECK {
         return divides(f) && divides(g);
     }
     std::thread::scope(|s| {
