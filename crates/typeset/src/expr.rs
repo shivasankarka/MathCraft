@@ -132,7 +132,12 @@ fn sym(tx: &Tx, name: &str, st: St) -> Layout {
 }
 
 fn sum(tx: &Tx, terms: &[Expr], st: St) -> Option<Layout> {
-    let mut parts = Vec::new();
+    Some(Tx::hcat(sum_pieces(tx, terms, st)?))
+}
+
+/// The terms of a sum, each with the sign that leads it (the first only when negative).
+pub(crate) fn sum_pieces(tx: &Tx, terms: &[Expr], st: St) -> Option<Vec<Layout>> {
+    let (mut parts, mut pieces) = (Vec::new(), Vec::new());
     for (i, t) in sum_terms(terms).iter().enumerate() {
         tx.tick()?;
         let p: Product = match t.rest.kind() {
@@ -150,8 +155,9 @@ fn sum(tx: &Tx, terms: &[Expr], st: St) -> Option<Layout> {
             parts.push(operator(tx, if t.negative { MINUS } else { "+" }, st));
         }
         parts.push(body);
+        pieces.push(Tx::hcat(std::mem::take(&mut parts)));
     }
-    Some(Tx::hcat(parts))
+    Some(pieces)
 }
 
 fn factor(tx: &Tx, f: &Expr, st: St) -> Option<Layout> {
