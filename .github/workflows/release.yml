@@ -37,6 +37,16 @@ jobs:
           cp README.md LICENSE-MIT LICENSE-APACHE "$dir"/
           cp -r examples "$dir"/
           if [ "${{ runner.os }}" = "Windows" ]; then 7z a "$dir.zip" "$dir"; else tar czf "$dir.tar.gz" "$dir"; fi
+      - name: Package the command line tool on its own
+        shell: bash
+        run: |
+          dir="mathcraft-cli-${GITHUB_REF_NAME}-${{ matrix.name }}"
+          mkdir "$dir"
+          ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          cp target/${{ matrix.target }}/release/mathcraft-cli$ext "$dir"/
+          cp README.md LICENSE-MIT LICENSE-APACHE "$dir"/
+          cp -r examples "$dir"/
+          if [ "${{ runner.os }}" = "Windows" ]; then 7z a "$dir.zip" "$dir"; else tar czf "$dir.tar.gz" "$dir"; fi
       - uses: softprops/action-gh-release@v2
         with:
           files: |
