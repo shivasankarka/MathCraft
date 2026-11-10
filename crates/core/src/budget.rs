@@ -7,11 +7,12 @@ use crate::error::{MathError, MathResult};
 use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub struct Budget {
-    pub deadline: Option<Instant>,
+    /// When to give up, in milliseconds on [`crate::clock`].
+    pub deadline: Option<f64>,
     pub cancel: Arc<AtomicBool>,
     pub max_ops: u64,
     ops: u64,
@@ -19,7 +20,7 @@ pub struct Budget {
 
 impl Budget {
     pub fn new(timeout: Option<Duration>, cancel: Arc<AtomicBool>, max_ops: u64) -> Self {
-        Budget { deadline: timeout.map(|t| Instant::now() + t), cancel, max_ops, ops: 0 }
+        Budget { deadline: timeout.map(|t| crate::clock::now_ms() + t.as_secs_f64() * 1000.0), cancel, max_ops, ops: 0 }
     }
 }
 
@@ -57,7 +58,7 @@ pub fn tick() -> MathResult<()> {
             if b.cancel.load(Ordering::Relaxed) {
                 return Err(MathError::Cancelled);
             }
-            if b.deadline.is_some_and(|d| Instant::now() >= d) {
+            if b.deadline.is_some_and(|d| crate::clock::now_ms() >= d) {
                 return Err(MathError::Timeout);
             }
         }
