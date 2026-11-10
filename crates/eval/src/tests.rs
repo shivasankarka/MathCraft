@@ -624,3 +624,31 @@ fn slider_is_its_value() {
     assert!(ev("slider(0, 10, 2, 0)").contains("step must be positive"));
     assert!(ev("slider(0, x, 2)").contains("plain numbers"));
 }
+
+#[test]
+fn complex_functions() {
+    // parts of functions of a complex argument; symbols are real
+    assert_eq!(ev("re(exp(I*x))"), "cos(x)");
+    assert_eq!(ev("im(exp(2*I*x + 1))"), "E*sin(2*x)");
+    assert_eq!(ev("conjugate(exp(I*x))"), "cos(x) - I*sin(x)");
+    assert_eq!(ev("abs(exp(I*x))"), "1");
+    // integer powers of exact complex numbers are evaluated
+    assert_eq!(ev("(1 + I)**10"), "32*I");
+    assert_eq!(ev("(2 + 3*I)**5"), "122 - 597*I");
+    assert_eq!(ev("1/(1 + I)**3"), "-1/4 - I/4");
+    // circular and hyperbolic functions of an imaginary argument
+    assert_eq!(ev("sin(I)"), "I*sinh(1)");
+    assert_eq!(ev("cos(I*x)"), "cosh(x)");
+    assert_eq!(ev("sinh(I*pi/2)"), "I");
+    assert_eq!(ev("simplify(cosh(x)**2 - sinh(x)**2)"), "1");
+    // argument, numeric evaluation, and rewriting
+    assert_eq!(ev("arg(1 + I)"), "pi/4");
+    assert_eq!(ev("arg(-1 - I)"), "-3*pi/4");
+    assert!(ev("arg(x)").starts_with("ERROR"));
+    assert_eq!(ev("N(exp(1 + 2*I))"), "-1.1312043837568135 + 2.4717266720048188*I");
+    assert_eq!(ev("simplify((exp(I*x) + exp(-I*x))/2)"), "cos(x)");
+    assert_eq!(ev("simplify((exp(I*x) - exp(-I*x))/(2*I))"), "sin(x)");
+    assert_eq!(ev("rewrite_exp(cos(x))"), "(exp(-I*x) + exp(I*x))/2");
+    assert_eq!(ev("rewrite_trig(exp(I*x)*exp(2))"), "exp(2)*(cos(x) + I*sin(x))");
+    assert_eq!(ev("simplify(rewrite_exp(sin(x)**2 + cos(x)**2))"), "1");
+}
