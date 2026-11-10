@@ -114,6 +114,9 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("re", "re(z)", "real part; symbols are taken to be real"),
     ("im", "im(z)", "imaginary part; symbols are taken to be real"),
     ("conjugate", "conjugate(z)", "complex conjugate"),
+    ("arg", "arg(z)", "angle of a complex number in (-pi, pi], exact for multiples of pi/4: arg(1 + I) is pi/4"),
+    ("rewrite_trig", "rewrite_trig(expr)", "write complex exponentials with sin and cos: exp(I*x) becomes cos(x) + I*sin(x)"),
+    ("rewrite_exp", "rewrite_exp(expr)", "write sin, cos, tan, sinh, cosh, tanh with exponentials"),
     ("symbols", "symbols('x y z')", "declare symbols (also names of unknown functions): x, y = symbols('x y')"),
     ("Eq", "Eq(lhs, rhs)", "an equation, for solve()"),
     ("expand", "expand(expr)", "multiply out products and powers of sums"),
@@ -703,6 +706,17 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             })?;
             check_depth(it, out)
         }
+        "arg" | "rewrite_trig" | "rewrite_exp" => {
+            a.limits(name, 1, 1)?;
+            let out = broadcast(a.get(0)?, &mut |e| {
+                Ok(match name {
+                    "arg" => alg::complex_arg(e)?,
+                    "rewrite_trig" => alg::rewrite_trig(e)?,
+                    _ => alg::rewrite_exp(e)?,
+                })
+            })?;
+            check_depth(it, out)
+        }
         "re" | "im" | "conjugate" => {
             a.limits(name, 1, 1)?;
             let out = broadcast(a.get(0)?, &mut |e| {
@@ -920,8 +934,13 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             check_depth(
                 it,
                 broadcast(a.get(0)?, &mut |e| {
+                    // A complex result is shown as `re + im*I`, with the functions of a complex number evaluated.
+                    if e.contains(&Expr::imag())
+                        && let Ok((re, im)) = alg::complex_parts(e)
+                    {
+                        return Ok(alg::expand(&Expr::add(vec![approximate(&re)?, Expr::mul(vec![approximate(&im)?, Expr::imag()])]))?);
+                    }
                     let v = approximate(e)?;
-                    // A complex result is shown as `re + im*I`.
                     if v.contains(&Expr::imag()) { Ok(alg::expand(&v)?) } else { Ok(v) }
                 })?,
             )
