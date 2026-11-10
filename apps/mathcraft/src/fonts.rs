@@ -5,7 +5,7 @@ use egui::epaint::text::VariationCoords;
 use egui::{FontData, FontDefinitions, FontFamily, FontId};
 use std::sync::Arc;
 
-const INTER: &[u8] = include_bytes!("../../../assets/fonts/InterVariable.ttf");
+pub const INTER: &[u8] = include_bytes!("../../../assets/fonts/InterVariable.ttf");
 const JETBRAINS: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
 const STIX_MATH: &[u8] = include_bytes!("../../../assets/fonts/STIX2Math.otf");
 
