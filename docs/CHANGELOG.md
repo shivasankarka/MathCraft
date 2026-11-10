@@ -2,6 +2,14 @@
 
 User-facing changes per version. Planning notes and status live in `refs/` (not tracked).
 
+## Unreleased
+
+- Complex numbers: `re`, `im`, `conjugate` and `abs` work on `exp(I*x)`, `sin`, `cos`, `sinh`, `cosh`, `tan`, `tanh` and `log` of complex arguments; `(1 + I)**10` is `32*I`; `sin(I)` is `I*sinh(1)`; `N(exp(1 + 2*I))` gives a complex number. New `arg(z)`, `rewrite_trig` (exponentials to sin and cos) and `rewrite_exp`; `simplify((exp(I*x) + exp(-I*x))/2)` is `cos(x)`.
+- `solve` handles polynomials in `sin` and `cos` of one angle (`sin(x)**2 - cos(x)**2`, `sin(x) + cos(x) == 1`, `3*sin(x) + 4*cos(x) == 5`); `asin(sqrt(2)/2)` is `pi/4`.
+- Typeset: n-th roots with an index, long sums break into lines to fit the window, and `Integral(f, (x, a, b))`, `Sum(f, (k, a, b))`, `Limit(f, x, a)` stay unevaluated and read as mathematics (`doit()` evaluates them). They also copy as LaTeX.
+- Menus: rows have shortcuts as keycaps, an accent highlight and dimmed disabled items.
+- Faster exact polynomial division and polynomial gcd (about 1.8 times on the 7-variable benchmark).
+
 ## 0.2.0 (2026-11-10)
 
 - Command line: `mathcraft-cli export notebook.py -o out.html` runs a notebook and saves it as a standalone HTML page or Markdown (`-f md|html`, or by the file extension). `eval -` and `run -` read from stdin, `--timeout <seconds>` sets the time limit, `--version` prints the version, and the REPL quits on `exit`.
