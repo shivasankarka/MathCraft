@@ -175,6 +175,20 @@ impl<'a> Tx<'a> {
         out
     }
 
+    /// An n-th root: the radical of `sqrt` with the small `index` above its hook.
+    pub fn root(&self, c: &Layout, index: &Layout, size: f32) -> Layout {
+        let radical = self.sqrt(c, size);
+        let shift = (index.width - 0.1 * size).max(0.0);
+        let h = radical.ascent + radical.descent;
+        // the index sits on the rising stroke, a little above the middle of the radical
+        let base = -radical.ascent + 0.55 * h;
+        let mut out = Layout::default();
+        out.push(&radical, shift, 0.0);
+        out.push(index, 0.0, base);
+        out.width = shift + radical.width;
+        out
+    }
+
     pub fn delimited(&self, d: Delim, c: &Layout, size: f32) -> Layout {
         let (open, close) = match d {
             Delim::Paren => ("(", ")"),
