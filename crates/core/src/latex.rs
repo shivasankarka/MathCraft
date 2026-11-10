@@ -81,6 +81,10 @@ fn call(name: &str, args: &[Expr]) -> (String, u8) {
     match (name, args) {
         ("sqrt", [a]) => (format!("\\sqrt{{{}}}", latex(a)), ATOM),
         ("abs", [a]) => (format!("\\left|{}\\right|", latex(a)), ATOM),
+        ("Integral" | "integrate", [f, x]) => (format!("\\int {}\\,d{}", latex(f), latex(x)), MUL),
+        ("Integral", [f, x, lo, hi]) => (format!("\\int_{{{}}}^{{{}}} {}\\,d{}", latex(lo), latex(hi), latex(f), latex(x)), MUL),
+        ("Sum", [f, k, lo, hi]) => (format!("\\sum_{{{}={}}}^{{{}}} {}", latex(k), latex(lo), latex(hi), paren(emit(f), MUL)), MUL),
+        ("Limit", [f, x, a]) => (format!("\\lim_{{{} \\to {}}} {}", latex(x), latex(a), paren(emit(f), MUL)), MUL),
         (n, [a]) if NAMED.iter().any(|(k, _)| *k == n) => {
             let cmd = NAMED.iter().find(|(k, _)| *k == n).map_or(n, |(_, c)| *c);
             (format!("\\{cmd}\\left({}\\right)", latex(a)), ATOM)
