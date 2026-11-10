@@ -350,12 +350,39 @@ fn unary(name: &str, x: &Expr) -> Expr {
     {
         return v;
     }
+    // a purely imaginary argument turns circular functions into hyperbolic ones and back: sin(I*r) = I*sinh(r)
+    if let Some(r) = imaginary_multiple(x) {
+        let hyper = |f: &str| unary(f, &r);
+        let times_i = |v: Expr| Expr::mul(vec![Expr::imag(), v]);
+        match name {
+            "sin" => return times_i(hyper("sinh")),
+            "cos" => return hyper("cosh"),
+            "tan" => return times_i(hyper("tanh")),
+            "sinh" => return times_i(hyper("sin")),
+            "cosh" => return hyper("cos"),
+            "tanh" => return times_i(hyper("tan")),
+            _ => {}
+        }
+    }
     match (name, x.kind()) {
         ("log", Kind::Sym(s)) if &**s == SYM_E => Expr::one(),
         ("log", Kind::Pow(b, y)) if b.as_sym() == Some(SYM_E) => y.clone(),
         ("abs", Kind::Call(n, _)) if &**n == "abs" => x.clone(),
         ("LambertW", Kind::Sym(s)) if &**s == SYM_E => Expr::one(),
         _ => raw(),
+    }
+}
+
+/// `r` when `x` is `I*r` and `r` has no `I` in it.
+fn imaginary_multiple(x: &Expr) -> Option<Expr> {
+    let unit = Expr::imag();
+    match x.kind() {
+        Kind::Sym(_) if *x == unit => Some(Expr::one()),
+        Kind::Mul(fs) => {
+            let rest: Vec<Expr> = fs.iter().filter(|f| **f != unit).cloned().collect();
+            (rest.len() + 1 == fs.len() && !rest.iter().any(|f| f.contains(&unit))).then(|| Expr::mul(rest))
+        }
+        _ => None,
     }
 }
 
