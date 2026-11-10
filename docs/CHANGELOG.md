@@ -10,6 +10,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - Menus: rows have shortcuts as keycaps, an accent highlight and dimmed disabled items.
 - Plots can be saved as PNG (right-click a plot: Save as PNG…) as well as SVG.
 - macOS: the release also ships `MathCraft.app` with the app icon.
+- The engine builds to WebAssembly: a small demo page and `mathcraft.js` (`load(...)`, `run(code)` returning the value as text and LaTeX) are on the Releases page as `mathcraft-web-<version>.zip`.
 - Faster exact polynomial division and polynomial gcd (about 1.8 times on the 7-variable benchmark).
 
 ## 0.2.0 (2026-11-10)
