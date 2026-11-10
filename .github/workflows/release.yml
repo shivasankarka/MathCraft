@@ -8,6 +8,26 @@ permissions:
   contents: write
 
 jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/build-wasm.sh
+      - run: node crates/wasm/web/test.mjs
+      - name: Package
+        run: |
+          dir="mathcraft-web-${GITHUB_REF_NAME}"
+          mkdir "$dir"
+          cp crates/wasm/web/index.html crates/wasm/web/worker.js crates/wasm/web/mathcraft.js crates/wasm/web/mathcraft_wasm.wasm "$dir"/
+          cp README.md LICENSE-MIT LICENSE-APACHE "$dir"/
+          zip -r "$dir.zip" "$dir"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: mathcraft-web-*.zip
   build:
     strategy:
       matrix:
