@@ -15,6 +15,12 @@ pub fn simplify(e: &Expr) -> MathResult<Expr> {
     let inner = e.map_children(simplify)?;
     let expanded = expand(&inner)?;
     let mut candidates = vec![inner.clone(), expanded.clone(), trig(&inner)?, trig(&expanded)?, factor(&inner)?, factor(&expanded)?, reduce_trig(&expanded)?];
+    if has_complex_exp(&expanded) {
+        // `(e**(I*x) + e**(-I*x))/2` is `cos(x)`: go through the trigonometric form
+        let t = expand(&crate::complex::rewrite_trig(&expanded)?)?;
+        candidates.push(t.clone());
+        candidates.push(reduce_trig(&t)?);
+    }
     if has_denominator(&inner) {
         let cancelled = crate::rational::cancel(&inner)?;
         let (n, d) = split_fraction(&cancelled);
@@ -37,13 +43,16 @@ fn reduce_trig(e: &Expr) -> MathResult<Expr> {
         guard(e)?;
         if let Kind::Pow(b, k) = e.kind()
             && let Kind::Call(name, args) = b.kind()
-            && name.as_ref() == "cos"
+            && matches!(name.as_ref(), "cos" | "cosh")
             && let [u] = args.as_slice()
             && let Some(n) = k.as_i64()
             && n >= 2
         {
-            let s2 = Expr::pow(&Expr::call("sin", vec![u.clone()]), &Expr::int(2));
-            return Ok(Expr::mul(vec![Expr::pow(b, &Expr::int(n % 2)), Expr::pow(&Expr::add(vec![Expr::one(), s2.neg()]), &Expr::int(n / 2))]));
+            // cos^2 = 1 - sin^2, cosh^2 = 1 + sinh^2
+            let (partner, sign) = if name.as_ref() == "cos" { ("sin", -1) } else { ("sinh", 1) };
+            let s2 = Expr::pow(&Expr::call(partner, vec![u.clone()]), &Expr::int(2));
+            let rest = Expr::add(vec![Expr::one(), Expr::mul(vec![Expr::int(sign), s2])]);
+            return Ok(Expr::mul(vec![Expr::pow(b, &Expr::int(n % 2)), Expr::pow(&rest, &Expr::int(n / 2))]));
         }
         e.map_children(go)
     }
@@ -53,8 +62,12 @@ fn reduce_trig(e: &Expr) -> MathResult<Expr> {
     expand(&go(e)?)
 }
 
+fn has_complex_exp(e: &Expr) -> bool {
+    matches!(e.kind(), Kind::Pow(b, x) if *b == Expr::e() && x.contains(&Expr::imag())) || e.children().iter().any(has_complex_exp)
+}
+
 fn has_trig_square(e: &Expr) -> bool {
-    matches!(e.kind(), Kind::Pow(b, k) if matches!(b.kind(), Kind::Call(n, _) if n.as_ref() == "cos") && k.as_i64().is_some_and(|n| n >= 2))
+    matches!(e.kind(), Kind::Pow(b, k) if matches!(b.kind(), Kind::Call(n, _) if matches!(n.as_ref(), "cos" | "cosh")) && k.as_i64().is_some_and(|n| n >= 2))
         || e.children().iter().any(has_trig_square)
 }
 
