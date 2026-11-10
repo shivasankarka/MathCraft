@@ -254,3 +254,24 @@ fn long_sums_wrap_into_lines() {
     assert_eq!(fits.items.len(), whole.items.len());
     assert!((fits.height() - whole.height()).abs() < 0.01);
 }
+
+#[test]
+fn integrals_sums_and_limits_have_their_own_signs() {
+    let f = Expr::pow(&x(), &n(2));
+    let k = Expr::sym("k");
+    let integral = Expr::call("Integral", vec![f.clone(), x(), n(0), n(1)]);
+    let l = lay(&integral);
+    assert_eq!(strokes(&l), 1);
+    assert_eq!(texts(&l), vec!["0", "1", "𝑥", "2", "d", "𝑥"]);
+    assert_inside(&l, "integral");
+    let sum = Expr::call("Sum", vec![f.clone(), k, n(1), Expr::sym("n")]);
+    let l = lay(&sum);
+    assert_eq!(strokes(&l), 1);
+    assert_inside(&l, "sum");
+    let limit = Expr::call("Limit", vec![f, x(), n(0)]);
+    let l = lay(&limit);
+    assert!(texts(&l).contains(&"lim".to_owned()), "{:?}", texts(&l));
+    assert_inside(&l, "limit");
+    // an indefinite integral from a failed `integrate` is drawn the same way
+    assert_eq!(strokes(&lay(&Expr::call("integrate", vec![x(), x()]))), 1);
+}
