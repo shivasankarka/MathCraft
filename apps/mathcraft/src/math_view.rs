@@ -161,21 +161,26 @@ pub fn inline_layout(ctx: &Context, source: &str, size: f32) -> Option<Arc<Layou
 /// Typeset results cached per cell: laying out is cheap but not free, and the output only changes when the cell runs.
 #[derive(Default)]
 pub struct MathCache {
-    entries: HashMap<CellId, (u64, u32, Option<Arc<Layout>>)>,
+    entries: HashMap<CellId, (u64, u32, u32, Option<Arc<Layout>>)>,
 }
 
 impl MathCache {
-    /// The layout of a cell's value, recomputed when `generation` (the cell's run count) or the size changed.
-    pub fn get(&mut self, ctx: &Context, id: CellId, generation: u64, value: &Value) -> Option<Arc<Layout>> {
+    /// The layout of a cell's value, recomputed when `generation` (the cell's run count), the size or the width it may
+    /// take changed. A long sum is broken into lines to fit `max_width` (to the nearest 16 points, so dragging the
+    /// window edge does not lay out on every frame).
+    pub fn get(&mut self, ctx: &Context, id: CellId, generation: u64, value: &Value, max_width: f32) -> Option<Arc<Layout>> {
         let size_key = SIZE.to_bits();
-        if let Some((g, s, l)) = self.entries.get(&id)
+        let width_key = (max_width / 16.0).floor().max(1.0) as u32;
+        if let Some((g, s, w, l)) = self.entries.get(&id)
             && *g == generation
             && *s == size_key
+            && *w == width_key
         {
             return l.clone();
         }
-        let l = to_doc(value).and_then(|d| layout(ctx, &d, SIZE)).map(Arc::new);
-        self.entries.insert(id, (generation, size_key, l.clone()));
+        let wrap = width_key as f32 * 16.0;
+        let l = to_doc(value).and_then(|d| ctx.fonts_mut(|f| mathcraft_typeset::layout_wrapped(&d, &Measurer(RefCell::new(f)), SIZE, wrap))).map(Arc::new);
+        self.entries.insert(id, (generation, size_key, width_key, l.clone()));
         l
     }
 }
