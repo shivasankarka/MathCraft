@@ -811,12 +811,9 @@ impl App {
         ctx.format_shortcut(&egui::KeyboardShortcut::new(mods, key))
     }
 
-    fn menu_item(ui: &mut egui::Ui, ctx: &egui::Context, label: &str, keys: Option<(Modifiers, Key)>) -> bool {
-        let mut b = egui::Button::new(label);
-        if let Some((m, k)) = keys {
-            b = b.shortcut_text(Self::shortcut(ctx, m, k));
-        }
-        let clicked = ui.add(b).clicked();
+    fn menu_item(ui: &mut egui::Ui, theme: &Theme, ctx: &egui::Context, label: &str, keys: Option<(Modifiers, Key)>) -> bool {
+        let shortcut = keys.map(|(m, k)| Self::shortcut(ctx, m, k));
+        let clicked = menu_row(ui, theme, label, shortcut.as_deref()).clicked();
         if clicked {
             ui.close();
         }
@@ -843,34 +840,35 @@ impl App {
                 ui.add_space(theme::TRAFFIC_LIGHTS_INSET);
             }
             ui.menu_button("File", |ui| {
-                if Self::menu_item(ui, &ctx, "New", Some((Modifiers::COMMAND, Key::N))) {
+                ui.spacing_mut().button_padding = vec2(12.0, 5.0);
+                if Self::menu_item(ui, theme, &ctx, "New", Some((Modifiers::COMMAND, Key::N))) {
                     self.new_file();
                 }
-                if Self::menu_item(ui, &ctx, "Open…", Some((Modifiers::COMMAND, Key::O))) {
+                if Self::menu_item(ui, theme, &ctx, "Open…", Some((Modifiers::COMMAND, Key::O))) {
                     self.open_file();
                 }
-                if Self::menu_item(ui, &ctx, "Open Folder…", None) {
+                if Self::menu_item(ui, theme, &ctx, "Open Folder…", None) {
                     self.open_folder();
                 }
-                if Self::menu_item(ui, &ctx, "Show or hide sidebar", Some((Modifiers::COMMAND, Key::B))) {
+                if Self::menu_item(ui, theme, &ctx, "Show or hide sidebar", Some((Modifiers::COMMAND, Key::B))) {
                     self.toggle_sidebar();
                 }
                 ui.separator();
-                if Self::menu_item(ui, &ctx, "Close tab", Some((Modifiers::COMMAND, Key::W))) {
+                if Self::menu_item(ui, theme, &ctx, "Close tab", Some((Modifiers::COMMAND, Key::W))) {
                     self.close_tab(self.cur.id);
                 }
                 ui.separator();
-                if Self::menu_item(ui, &ctx, "Save", Some((Modifiers::COMMAND, Key::S))) {
+                if Self::menu_item(ui, theme, &ctx, "Save", Some((Modifiers::COMMAND, Key::S))) {
                     self.save(false);
                 }
-                if Self::menu_item(ui, &ctx, "Save As…", None) {
+                if Self::menu_item(ui, theme, &ctx, "Save As…", None) {
                     self.save(true);
                 }
                 let recent: Vec<PathBuf> = self.recent.iter().filter(|p| p.is_file()).cloned().collect();
                 ui.add_enabled_ui(!recent.is_empty(), |ui| {
                     ui.menu_button("Open recent", |ui| {
                         for p in &recent {
-                            if ui.button(file_name(p)).on_hover_text(p.display().to_string()).clicked() {
+                            if menu_row(ui, theme, &file_name(p), None).on_hover_text(p.display().to_string()).clicked() {
                                 self.open_path(p.clone());
                                 ui.close();
                             }
@@ -880,24 +878,24 @@ impl App {
             });
             ui.menu_button("Edit", |ui| {
                 ui.add_enabled_ui(self.cur.can_undo(), |ui| {
-                    if Self::menu_item(ui, &ctx, "Undo cell change", Some((Modifiers::COMMAND, Key::Z))) {
+                    if Self::menu_item(ui, theme, &ctx, "Undo cell change", Some((Modifiers::COMMAND, Key::Z))) {
                         self.undo_cells();
                     }
                 });
                 ui.add_enabled_ui(self.cur.can_redo(), |ui| {
-                    if Self::menu_item(ui, &ctx, "Redo cell change", Some((Modifiers::COMMAND | Modifiers::SHIFT, Key::Z))) {
+                    if Self::menu_item(ui, theme, &ctx, "Redo cell change", Some((Modifiers::COMMAND | Modifiers::SHIFT, Key::Z))) {
                         self.redo_cells();
                     }
                 });
             });
             ui.menu_button("Run", |ui| {
-                if Self::menu_item(ui, &ctx, "Run all", Some((Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter))) {
+                if Self::menu_item(ui, theme, &ctx, "Run all", Some((Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter))) {
                     self.run(RunRequest::All);
                 }
-                if Self::menu_item(ui, &ctx, "Run stale cells", None) {
+                if Self::menu_item(ui, theme, &ctx, "Run stale cells", None) {
                     self.run(RunRequest::Stale);
                 }
-                if Self::menu_item(ui, &ctx, "Interrupt", Some((Modifiers::COMMAND, Key::Period))) {
+                if Self::menu_item(ui, theme, &ctx, "Interrupt", Some((Modifiers::COMMAND, Key::Period))) {
                     self.cur.kernel.interrupt();
                 }
             });
@@ -1443,6 +1441,35 @@ fn document_title(ui: &mut egui::Ui, theme: &Theme, path: Option<&PathBuf>, dirt
     ui.label(RichText::new(name).size(13.0).font(egui::FontId::new(13.0, fonts::strong_family())).color(theme.text_dim)).on_hover_text(tip);
 }
 
+/// One row of a menu: the label on the left, the shortcut as keycaps on the right, tinted with the accent under the
+/// pointer and dimmed when disabled. All rows in a menu are as wide as the widest, so the highlight is a clean bar.
+fn menu_row(ui: &mut egui::Ui, theme: &Theme, label: &str, shortcut: Option<&str>) -> egui::Response {
+    const PAD: f32 = 12.0;
+    let enabled = ui.is_enabled();
+    let font = TextStyle::Button.resolve(ui.style());
+    let color = if enabled { theme.text } else { theme.text_faint };
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, color);
+    let keys_w = shortcut.map_or(0.0, |s| icons::keycaps(&ui.painter().with_clip_rect(egui::Rect::NOTHING), theme, egui::Pos2::ZERO, s) + 28.0);
+    let need = PAD + galley.size().x + keys_w + PAD;
+    let size = vec2(ui.available_width().min(MENU_WIDTH).max(need), 26.0);
+    let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
+    let (rect, resp) = ui.allocate_exact_size(size, sense);
+    if ui.is_rect_visible(rect) {
+        if enabled && (resp.hovered() || resp.has_focus()) {
+            ui.painter().rect_filled(rect.shrink2(vec2(0.0, 1.0)), 5.0, theme.selected_row());
+        }
+        ui.painter().galley(egui::pos2(rect.left() + PAD, rect.center().y - galley.size().y / 2.0), galley, color);
+        if let (Some(s), true) = (shortcut, enabled) {
+            icons::keycaps(ui.painter(), theme, egui::pos2(rect.right() - PAD + 2.0, rect.center().y), s);
+        }
+    }
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    if enabled { resp.on_hover_cursor(egui::CursorIcon::PointingHand) } else { resp }
+}
+
+/// How wide a menu is drawn (wider only when a label and its shortcut need it).
+const MENU_WIDTH: f32 = 250.0;
+
 /// A quiet heading inside a menu.
 /// A menu row for a setting that is on or off, or one of several: a check mark in front of the chosen one.
 /// Returns true when clicked. Does not close the menu, so several settings can be changed in one visit.
@@ -1454,7 +1481,7 @@ fn choice(ui: &mut egui::Ui, theme: &Theme, label: &str, selected: bool) -> bool
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     if ui.is_rect_visible(rect) {
         if resp.hovered() {
-            ui.painter().rect_filled(rect, 5.0, theme.surface_hover);
+            ui.painter().rect_filled(rect.shrink2(vec2(0.0, 1.0)), 5.0, theme.selected_row());
         }
         if selected {
             let c = egui::pos2(rect.left() + 14.0, rect.center().y);
@@ -2171,7 +2198,7 @@ fn value_math(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, v: &Value) {
             } else {
                 math_view::show(ui, &layout, theme, math_view::SIZE)
             };
-            resp.context_menu(|ui| copy_as_menu(ui, v));
+            resp.context_menu(|ui| copy_as_menu(ui, theme, v));
         }
         None => match v {
             Value::Str(s) => {
@@ -2195,11 +2222,11 @@ fn copy_formats(v: &Value) -> Vec<(&'static str, Option<String>)> {
 }
 
 /// The output's context menu: copy the value as text, LaTeX or source code in another language.
-fn copy_as_menu(ui: &mut egui::Ui, v: &Value) {
+fn copy_as_menu(ui: &mut egui::Ui, theme: &Theme, v: &Value) {
     ui.menu_button("Copy as", |ui| {
         for (label, text) in copy_formats(v) {
             let enabled = text.is_some();
-            if ui.add_enabled(enabled, egui::Button::new(label)).clicked()
+            if ui.add_enabled_ui(enabled, |ui| menu_row(ui, theme, label, None)).inner.clicked()
                 && let Some(text) = text
             {
                 ui.ctx().copy_text(text);
@@ -2255,16 +2282,16 @@ fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::Plo
         let b = shown.transform.bounds();
         let view = [b.min()[0], b.max()[0], b.min()[1], b.max()[1]];
         shown.response.context_menu(|ui| {
-            if ui.button("Reset view").clicked() {
+            if menu_row(ui, theme, "Reset view", None).clicked() {
                 ui.ctx().data_mut(|d| d.insert_temp(reset_key, ResetPlot(true)));
                 ui.close();
             }
-            if ui.button("Copy points as CSV").clicked() {
+            if menu_row(ui, theme, "Copy points as CSV", None).clicked() {
                 ui.ctx().copy_text(plot_export::csv(p));
                 actions.push(Action::Status("Copied the plot's points as CSV".into()));
                 ui.close();
             }
-            if ui.button("Save as SVG…").clicked() {
+            if menu_row(ui, theme, "Save as SVG…", None).clicked() {
                 ui.close();
                 actions.push(Action::Status(save_svg(p, view)));
             }
@@ -3196,7 +3223,7 @@ mod tests {
         let Some(dir) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
         std::fs::create_dir_all(&dir).unwrap();
         for (name, pref) in [("light", ThemePreference::Light), ("dark", ThemePreference::Dark)] {
-            for menu in ["File", "Settings"] {
+            for menu in ["File", "Edit", "Settings"] {
                 let mut h = egui_kittest::Harness::builder()
                     .wgpu()
                     .with_size(vec2(760.0, 640.0))
