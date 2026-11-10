@@ -1979,8 +1979,10 @@ dependencies = [
  "mathcraft-notebook",
  "mathcraft-typeset",
  "mathcraft-vim",
+ "png",
  "rfd",
  "serde_json",
+ "skrifa",
 ]
 
 [[package]]
