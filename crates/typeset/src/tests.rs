@@ -236,3 +236,21 @@ fn imaginary_unit_is_an_upright_i() {
     assert!(t.iter().any(|s| s == "i"), "{t:?}");
     assert!(t.iter().any(|s| s == "3"), "{t:?}");
 }
+
+#[test]
+fn long_sums_wrap_into_lines() {
+    let terms: Vec<Expr> = (1..=12).map(|k| Expr::mul(vec![n(k + 1), Expr::pow(&x(), &n(k))])).collect();
+    let e = Expr::add(terms);
+    let doc = Doc::Expr(e.clone());
+    let whole = layout(&doc, &Fixed, 20.0).unwrap_or_default();
+    let wrapped = layout_wrapped(&doc, &Fixed, 20.0, whole.width / 3.0).unwrap_or_default();
+    // the same glyphs, no wider than asked (the indent and one term's overshoot aside), and taller than before
+    assert_eq!(texts(&wrapped).len(), texts(&whole).len());
+    assert!(wrapped.width <= whole.width / 3.0 + 60.0, "{} vs {}", wrapped.width, whole.width);
+    assert!(wrapped.height() > 2.0 * whole.height());
+    assert_inside(&wrapped, "wrapped sum");
+    // a sum that fits, and a product that does not, are not touched
+    let fits = layout_wrapped(&doc, &Fixed, 20.0, whole.width + 1.0).unwrap_or_default();
+    assert_eq!(fits.items.len(), whole.items.len());
+    assert!((fits.height() - whole.height()).abs() < 0.01);
+}
