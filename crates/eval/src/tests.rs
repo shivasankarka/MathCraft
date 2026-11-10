@@ -652,3 +652,19 @@ fn complex_functions() {
     assert_eq!(ev("rewrite_trig(exp(I*x)*exp(2))"), "exp(2)*(cos(x) + I*sin(x))");
     assert_eq!(ev("simplify(rewrite_exp(sin(x)**2 + cos(x)**2))"), "1");
 }
+
+#[test]
+fn trigonometric_polynomials_in_sin_and_cos() {
+    // only even powers of one function: Pythagoras turns it into a polynomial in the other
+    assert_eq!(ev("solve(sin(x)**2 - cos(x)**2, x)"), "[-pi/4, pi/4, 3*pi/4, 5*pi/4]");
+    assert_eq!(ev("solve(cos(x)**2 + sin(x) - 1, x)"), "[0, pi/2, pi]");
+    // homogeneous in sin and cos: a polynomial in tan
+    assert_eq!(ev("solve(sin(x)**2 - 3*sin(x)*cos(x) + 2*cos(x)**2, x)"), "[pi/4, atan(2)]");
+    // a sin + b cos == c by the half-angle substitution
+    assert_eq!(ev("solve(sin(x) + cos(x) - 1, x)"), "[0, pi/2]");
+    assert_eq!(ev("solve(3*sin(x) + 4*cos(x) - 5, x)"), "[2*atan(1/3)]");
+    // exact angles for asin and acos at sqrt(2)/2 and sqrt(3)/2
+    assert_eq!(ev("asin(sqrt(2)/2)"), "pi/4");
+    assert_eq!(ev("acos(sqrt(3)/2)"), "pi/6");
+    assert_eq!(ev("acos(-sqrt(2)/2)"), "3*pi/4");
+}
