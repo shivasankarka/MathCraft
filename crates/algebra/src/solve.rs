@@ -47,11 +47,14 @@ pub fn solve(f: &Expr, x: &Expr) -> MathResult<Vec<Expr>> {
         Some(r) => r,
         None => match substitute(&target, x)? {
             Some(r) => r,
-            None => {
-                return Err(MathError::unsupported(
-                    "solve could not find a closed form for this equation (try nsolve, or nroots for all roots of a polynomial)",
-                ));
-            }
+            None => match trig_polynomial(&target, x)? {
+                Some(r) => r,
+                None => {
+                    return Err(MathError::unsupported(
+                        "solve could not find a closed form for this equation (try nsolve, or nroots for all roots of a polynomial)",
+                    ));
+                }
+            },
         },
     };
     roots = filter(f, x, roots);
@@ -511,6 +514,101 @@ fn substitute(f: &Expr, x: &Expr) -> MathResult<Option<Vec<Expr>>> {
         return Ok(Some(all));
     }
     Ok(None)
+}
+
+/// An equation that is a polynomial in `sin(a)` and `cos(a)` for one angle `a` (a function of `x`). If `cos` only
+/// occurs squared, `cos**2 = 1 - sin**2` leaves a polynomial in `sin(a)` (and the same the other way round); if every
+/// term has the same total degree it is a polynomial in `tan(a)`; otherwise the half-angle substitution
+/// `t = tan(a/2)` makes it rational in `t`. Each root is then turned back into `x`. The caller checks every candidate.
+fn trig_polynomial(f: &Expr, x: &Expr) -> MathResult<Option<Vec<Expr>>> {
+    let mut atoms = Vec::new();
+    collect_atoms(f, x, &mut atoms);
+    let mut angle: Option<Expr> = None;
+    for g in &atoms {
+        match g.kind() {
+            Kind::Call(n, args) if matches!(&**n, "sin" | "cos") && args.len() == 1 => match (&angle, args.first()) {
+                (None, Some(a)) => angle = Some(a.clone()),
+                (Some(a), Some(b)) if a == b => {}
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        }
+    }
+    let Some(a) = angle else { return Ok(None) };
+    let (sin_a, cos_a) = (Expr::call("sin", vec![a.clone()]), Expr::call("cos", vec![a.clone()]));
+    let (s, c) = (Expr::sym("_s"), Expr::sym("_c"));
+    let g = subs(f, &[(sin_a, s.clone()), (cos_a, c.clone())])?;
+    if g.contains(x) || !g.contains(&s) || !g.contains(&c) {
+        return Ok(None);
+    }
+    // the terms c_ij s^i c^j
+    let mut terms: Vec<(usize, usize, Expr)> = Vec::new();
+    let Some(by_s) = to_poly(&g, &s)? else { return Ok(None) };
+    for (i, ci) in by_s.iter().enumerate() {
+        let Some(by_c) = to_poly(ci, &c)? else { return Ok(None) };
+        for (j, cij) in by_c.into_iter().enumerate() {
+            if !cij.is_zero() {
+                terms.push((i, j, cij));
+            }
+        }
+    }
+    let t = Expr::sym("_t");
+    let pw = |b: &Expr, n: usize| Expr::pow(b, &Expr::int(n as i64));
+    let term = |coef: &Expr, parts: Vec<Expr>| Expr::mul(std::iter::once(coef.clone()).chain(parts).collect());
+    let one_minus = |v: &Expr| Expr::add(vec![Expr::one(), pw(v, 2).neg()]);
+    let mut all = Vec::new();
+    let mut solve_in = |poly: Expr, var: &Expr, target: Expr| -> MathResult<bool> {
+        let Ok(roots) = solve_polynomial(&expand(&poly)?, var) else { return Ok(false) };
+        for r in roots {
+            if let Some(sol) = isolate(&target, &r, x, 1)? {
+                all.extend(sol);
+            }
+        }
+        Ok(true)
+    };
+    let (sin_t, cos_t) = (Expr::call("sin", vec![a.clone()]), Expr::call("cos", vec![a.clone()]));
+    if terms.iter().all(|(_, j, _)| j % 2 == 0) {
+        // cos**2 = 1 - sin**2
+        let poly = Expr::add(terms.iter().map(|(i, j, k)| term(k, vec![pw(&t, *i), pw(&one_minus(&t), j / 2)])).collect());
+        solve_in(poly, &t, sin_t)?;
+    } else if terms.iter().all(|(i, _, _)| i % 2 == 0) {
+        let poly = Expr::add(terms.iter().map(|(i, j, k)| term(k, vec![pw(&t, *j), pw(&one_minus(&t), i / 2)])).collect());
+        solve_in(poly, &t, cos_t)?;
+    } else if terms.first().is_some_and(|(i, j, _)| terms.iter().all(|(p, q, _)| p + q == i + j)) {
+        // homogeneous of degree n: divide by cos**n and solve for tan(a); cos(a) = 0 is a root if s**n is absent
+        let n = terms.first().map_or(0, |(i, j, _)| i + j);
+        let poly = Expr::add(terms.iter().map(|(i, _, k)| term(k, vec![pw(&t, *i)])).collect());
+        solve_in(poly, &t, Expr::call("tan", vec![a.clone()]))?;
+        if !terms.iter().any(|(i, _, _)| *i == n) {
+            solve_in(Expr::add(vec![c.clone()]), &c, cos_t)?;
+        }
+    } else {
+        // half angle: sin = 2t/(1+t^2), cos = (1-t^2)/(1+t^2), times (1+t^2)^n to clear the denominators
+        let n = terms.iter().map(|(i, j, _)| i + j).max().unwrap_or(0);
+        let denom = Expr::add(vec![Expr::one(), pw(&t, 2)]);
+        let poly = Expr::add(
+            terms
+                .iter()
+                .map(|(i, j, k)| term(k, vec![pw(&Expr::mul(vec![Expr::int(2), t.clone()]), *i), pw(&one_minus(&t), *j), pw(&denom, n - i - j)]))
+                .collect(),
+        );
+        let double_atan = |r: &Expr| Expr::mul(vec![Expr::int(2), Expr::call("atan", vec![r.clone()])]);
+        if let Ok(roots) = solve_polynomial(&expand(&poly)?, &t) {
+            for r in roots {
+                if let Some(sol) = isolate(&a, &double_atan(&r), x, 1)? {
+                    all.extend(sol);
+                }
+            }
+        }
+        // t = infinity, that is a = pi
+        let at_pi = subs(&g, &[(s.clone(), Expr::zero()), (c.clone(), Expr::int(-1))])?;
+        if (at_pi.is_zero() || expand(&at_pi)?.is_zero())
+            && let Some(sol) = isolate(&a, &Expr::pi(), x, 1)?
+        {
+            all.extend(sol);
+        }
+    }
+    Ok(Some(all))
 }
 
 /// Rewrite `x ** k` as `u ** (k q)` and `x` as `u ** q`.
