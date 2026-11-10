@@ -47,6 +47,11 @@ jobs:
           cp README.md LICENSE-MIT LICENSE-APACHE "$dir"/
           cp -r examples "$dir"/
           if [ "${{ runner.os }}" = "Windows" ]; then 7z a "$dir.zip" "$dir"; else tar czf "$dir.tar.gz" "$dir"; fi
+      - name: macOS application bundle
+        if: runner.os == 'macOS'
+        run: |
+          scripts/macos-app.sh target/${{ matrix.target }}/release/mathcraft "$GITHUB_REF_NAME" app
+          ditto -c -k --keepParent app/MathCraft.app "mathcraft-${GITHUB_REF_NAME}-${{ matrix.name }}-app.zip"
       - uses: softprops/action-gh-release@v2
         with:
           files: |
