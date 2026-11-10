@@ -20,6 +20,10 @@ cargo install --path apps/mathcraft-cli    # the command line tool
 
 On Linux you also need the usual GUI development libraries (`libxkbcommon-dev`, `libwayland-dev`, `libgtk-3-dev`).
 
+### In the browser
+
+The engine also builds to WebAssembly (`mathcraft-web-<version>.zip` on the Releases page, or `./scripts/build-wasm.sh` from source): unzip it, serve the folder with any static server (`python3 -m http.server`) and open `index.html`. `mathcraft.js` is the whole interface: `const mc = await load("mathcraft_wasm.wasm"); mc.run("integrate(x**2, x)")` gives `{ stdout, value, latex, error }`. It is the engine only (no editor yet), without the fast matrix library and without threads, so large polynomial gcds are slower than on the desktop.
+
 ## Try it
 
 ```sh
