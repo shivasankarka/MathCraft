@@ -352,3 +352,22 @@ fn modular_gcd_of_coprime_inputs_is_one() {
     let g = x.pow(2).unwrap().add(&y.pow(2).unwrap()).unwrap().add(&z).unwrap();
     assert_eq!(modgcd::gcd_primitive(&f, &g, 0, 0, &mut || false).unwrap(), Some(c(3, 1)));
 }
+
+#[test]
+fn division_in_words_agrees_with_big_integers() {
+    let (a, b, z) = (x(3, 0), x(3, 1), x(3, 2));
+    let g = a.add(&b).unwrap().pow(3).unwrap().add(&z).unwrap();
+    let q = a.sub(&b.scale(&IBig::from(2))).unwrap().pow(4).unwrap().add(&c(3, 5)).unwrap();
+    let f = g.mul(&q).unwrap();
+    assert_eq!(f.div_exact(&g).unwrap(), Some(q.clone()));
+    // the same with coefficients too large for 128 bits (uses big integers): the quotient is the same
+    let big = IBig::from(10).pow(45);
+    assert_eq!(f.scale(&big).div_exact(&g).unwrap(), Some(q.scale(&big)));
+    // not divisible: a changed constant term, and a divisor that is not a factor
+    let off = f.add(&c(3, 1)).unwrap();
+    assert_eq!(off.div_exact(&g).unwrap(), None);
+    assert_eq!(f.div_exact(&a.add(&z).unwrap()).unwrap(), None);
+    // an exact quotient with cancelling terms: (x^2 - y^2) / (x - y)
+    let num = a.pow(2).unwrap().sub(&b.pow(2).unwrap()).unwrap();
+    assert_eq!(num.div_exact(&a.sub(&b).unwrap()).unwrap(), Some(a.add(&b).unwrap()));
+}
