@@ -8,6 +8,8 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - `solve` handles polynomials in `sin` and `cos` of one angle (`sin(x)**2 - cos(x)**2`, `sin(x) + cos(x) == 1`, `3*sin(x) + 4*cos(x) == 5`); `asin(sqrt(2)/2)` is `pi/4`.
 - Typeset: n-th roots with an index, long sums break into lines to fit the window, and `Integral(f, (x, a, b))`, `Sum(f, (k, a, b))`, `Limit(f, x, a)` stay unevaluated and read as mathematics (`doit()` evaluates them). They also copy as LaTeX.
 - Menus: rows have shortcuts as keycaps, an accent highlight and dimmed disabled items.
+- Plots can be saved as PNG (right-click a plot: Save as PNG…) as well as SVG.
+- macOS: the release also ships `MathCraft.app` with the app icon.
 - Faster exact polynomial division and polynomial gcd (about 1.8 times on the 7-variable benchmark).
 
 ## 0.2.0 (2026-11-10)
