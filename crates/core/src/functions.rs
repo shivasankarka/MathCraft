@@ -350,6 +350,12 @@ fn unary(name: &str, x: &Expr) -> Expr {
     {
         return v;
     }
+    // asin and acos at +-sqrt(2)/2 and +-sqrt(3)/2 are multiples of pi
+    if matches!(name, "asin" | "acos")
+        && let Some(v) = root_value_angle(name, x)
+    {
+        return v;
+    }
     // a purely imaginary argument turns circular functions into hyperbolic ones and back: sin(I*r) = I*sinh(r)
     if let Some(r) = imaginary_multiple(x) {
         let hyper = |f: &str| unary(f, &r);
@@ -371,6 +377,29 @@ fn unary(name: &str, x: &Expr) -> Expr {
         ("LambertW", Kind::Sym(s)) if &**s == SYM_E => Expr::one(),
         _ => raw(),
     }
+}
+
+/// `asin`/`acos` of `+-sqrt(2)/2` or `+-sqrt(3)/2` as a rational multiple of pi.
+fn root_value_angle(name: &str, x: &Expr) -> Option<Expr> {
+    let (c, rest) = x.split_coeff();
+    let rat = |p: i64, q: i64| Num::ratio(IBig::from(p), IBig::from(q));
+    let sign = if c == rat(1, 2)? {
+        1
+    } else if c == rat(-1, 2)? {
+        -1
+    } else {
+        return None;
+    };
+    // asin(sqrt(2)/2) = pi/4, asin(sqrt(3)/2) = pi/3
+    let asin = if rest == Expr::pow(&Expr::int(2), &Expr::half()) {
+        rat(sign, 4)?
+    } else if rest == Expr::pow(&Expr::int(3), &Expr::half()) {
+        rat(sign, 3)?
+    } else {
+        return None;
+    };
+    let angle = if name == "asin" { asin } else { rat(1, 2)?.add(&asin.neg()) };
+    Some(Expr::mul(vec![Expr::num(angle), Expr::pi()]))
 }
 
 /// `r` when `x` is `I*r` and `r` has no `I` in it.
