@@ -432,6 +432,19 @@ impl Expr {
                 // 1 / (a + b*I) = (a - b*I) / (a**2 + b**2); the exponent is a negative integer.
                 let inv = Expr::add(vec![Expr::num(a.mul(&inv_norm)), Expr::mul(vec![Expr::num(b.neg().mul(&inv_norm)), Expr::imag()])]);
                 return Expr::pow(&inv, &Expr::num(en.neg()));
+            } else if en.is_exact()
+                && let Some(n) = en.as_i64().filter(|n| (2..=64).contains(n))
+                && let Some((a, b)) = base.as_complex()
+                && !b.is_zero()
+                && a.is_exact()
+                && b.is_exact()
+            {
+                // (a + b*I)**n for a small positive integer n, by repeated multiplication
+                let (mut re, mut im) = (a.clone(), b.clone());
+                for _ in 1..n {
+                    (re, im) = (re.mul(&a).add(&im.mul(&b).neg()), re.mul(&b).add(&im.mul(&a)));
+                }
+                return Expr::add(vec![Expr::num(re), Expr::mul(vec![Expr::num(im), Expr::imag()])]);
             } else {
                 match base.kind() {
                     Kind::Pow(b2, e2) if en.is_integer() && en.is_exact() => return Expr::pow(b2, &Expr::mul(vec![e2.clone(), exp.clone()])),
