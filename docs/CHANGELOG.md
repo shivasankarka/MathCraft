@@ -2,8 +2,10 @@
 
 User-facing changes per version. Planning notes and status live in `refs/` (not tracked).
 
-## Unreleased
+## 0.2.0 (2026-11-10)
 
+- Command line: `mathcraft-cli export notebook.py -o out.html` runs a notebook and saves it as a standalone HTML page or Markdown (`-f md|html`, or by the file extension). `eval -` and `run -` read from stdin, `--timeout <seconds>` sets the time limit, `--version` prints the version, and the REPL quits on `exit`.
+- The command line tool is also a separate download on the Releases page (no window system or GUI libraries needed).
 - Drag a tab to reorder it; the order is kept in the restored session.
 - Drag a cell by the grip in its toolbar to reorder it; one drag is one Cmd+Z step.
 - Cmd+Alt+Up / Cmd+Alt+Down move the keyboard to the previous or next code cell. Printed output longer than 24 lines is folded to 20 with a "Show N more lines" button.
