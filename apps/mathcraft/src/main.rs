@@ -2181,7 +2181,7 @@ fn array_ui(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, v: &Value, caption: &
 
 fn value_math(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, v: &Value) {
     let generation = env.generations.get(&cell.id).copied().unwrap_or(0);
-    match env.math.get(ui.ctx(), cell.id, generation, v) {
+    match env.math.get(ui.ctx(), cell.id, generation, v, (ui.available_width() - 8.0).max(120.0)) {
         Some(layout) => {
             let theme = env.theme;
             let resp = if layout.width + 8.0 > ui.available_width() {
