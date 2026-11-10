@@ -299,6 +299,9 @@ impl Poly {
             return Err(PolyError::Mismatch);
         }
         let Some((lm, lc)) = divisor.terms.first() else { return Ok(None) };
+        if let Some(r) = self.div_exact_words(divisor) {
+            return Ok(r);
+        }
         let d = &divisor.terms;
         let mut quotient: Vec<(Mono, IBig)> = Vec::new();
         let mut heap: BinaryHeap<Entry> = BinaryHeap::new();
@@ -334,6 +337,42 @@ impl Poly {
         }
         Ok(Some(Poly { nvars: self.nvars, terms: quotient }))
     }
+
+    /// `div_exact` for coefficients that fit in 128 bits. Pending sums live in a hash table and the heap holds only
+    /// the distinct monomials, so each partial product costs one table update instead of a heap operation. A
+    /// monomial is final once it is the largest pending one, because every later product is strictly smaller.
+    /// `None` when the inputs do not qualify or a sum overflows; the caller then uses big integers.
+    fn div_exact_words(&self, divisor: &Poly) -> Option<Option<Poly>> {
+        let word = |t: &(Mono, IBig)| i128::try_from(&t.1).ok().map(|c| (t.0, c));
+        let a: Vec<(Mono, i128)> = self.terms.iter().map(word).collect::<Option<_>>()?;
+        let d: Vec<(Mono, i128)> = divisor.terms.iter().map(word).collect::<Option<_>>()?;
+        let (lm, lc) = *d.first()?;
+        let rest = d.get(1..)?;
+        let mut table = Table::with_capacity(a.len() * 2);
+        let mut heap: BinaryHeap<Mono> = BinaryHeap::with_capacity(a.len());
+        for (m, c) in &a {
+            table.add(*m, *c)?;
+            heap.push(*m);
+        }
+        let mut quotient: Vec<(Mono, IBig)> = Vec::new();
+        while let Some(m) = heap.pop() {
+            let s = table.take(m);
+            if s == 0 {
+                continue;
+            }
+            if !divides(lm, m) || s % lc != 0 {
+                return Some(None);
+            }
+            let (qm, qc) = (m - lm, s / lc);
+            for (dm, dc) in rest {
+                if table.add(qm + dm, qc.checked_mul(*dc)?.checked_neg()?)? {
+                    heap.push(qm + dm);
+                }
+            }
+            quotient.push((qm, IBig::from(qc)));
+        }
+        Some(Some(Poly { nvars: self.nvars, terms: quotient }))
+    }
 }
 
 /// Products below this many partial products always use the heap: building a hash table would cost more.
@@ -368,7 +407,7 @@ fn mul_small(a: &[(Mono, IBig)], b: &[(Mono, IBig)], stop: &mut dyn FnMut() -> b
         }
         let c1 = i128::from(*c1);
         for (m2, c2) in &wb {
-            table.add(m1 + m2, c1 * i128::from(*c2));
+            table.add(m1 + m2, c1 * i128::from(*c2))?;
         }
     }
     let mut out: Vec<(Mono, i128)> = table.into_entries();
@@ -397,40 +436,52 @@ impl Table {
         (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - self.bits)) as usize
     }
 
-    fn add(&mut self, key: Mono, v: i128) {
+    /// Adds `v` to the entry for `key`; `Some(true)` when the key is new, `None` when the sum overflows.
+    fn add(&mut self, key: Mono, v: i128) -> Option<bool> {
         if self.used * 2 >= self.keys.len() {
-            self.grow();
+            self.grow()?;
         }
         let mask = self.keys.len() - 1;
         let mut i = self.slot(key);
         loop {
             match self.keys.get(i) {
                 Some(&k) if k == key => {
-                    if let Some(slot) = self.vals.get_mut(i) {
-                        *slot += v;
-                    }
-                    return;
+                    let slot = self.vals.get_mut(i)?;
+                    *slot = slot.checked_add(v)?;
+                    return Some(false);
                 }
                 Some(&k) if k == EMPTY => {
-                    if let (Some(ks), Some(vs)) = (self.keys.get_mut(i), self.vals.get_mut(i)) {
-                        *ks = key;
-                        *vs = v;
-                    }
+                    *self.keys.get_mut(i)? = key;
+                    *self.vals.get_mut(i)? = v;
                     self.used += 1;
-                    return;
+                    return Some(true);
                 }
                 _ => i = (i + 1) & mask,
             }
         }
     }
 
-    fn grow(&mut self) {
+    /// The value for `key`, which is reset to zero (the key stays, so probing chains are not broken).
+    fn take(&mut self, key: Mono) -> i128 {
+        let mask = self.keys.len() - 1;
+        let mut i = self.slot(key);
+        loop {
+            match self.keys.get(i) {
+                Some(&k) if k == key => return self.vals.get_mut(i).map_or(0, std::mem::take),
+                Some(&k) if k == EMPTY => return 0,
+                _ => i = (i + 1) & mask,
+            }
+        }
+    }
+
+    fn grow(&mut self) -> Option<()> {
         let old = std::mem::replace(self, Table::with_capacity(self.keys.len() * 2));
         for (k, v) in old.keys.into_iter().zip(old.vals) {
             if k != EMPTY {
-                self.add(k, v);
+                self.add(k, v)?;
             }
         }
+        Some(())
     }
 
     fn into_entries(self) -> Vec<(Mono, i128)> {
