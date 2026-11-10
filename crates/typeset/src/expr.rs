@@ -244,6 +244,12 @@ fn pow(tx: &Tx, whole: &Expr, b: &Expr, x: &Expr, st: St) -> Option<Layout> {
     Some(tx.sup(&base, &expr(tx, x, st.script())?, st.size))
 }
 
+/// The body of a sum or limit: a sum inside it needs parentheses.
+fn operand(tx: &Tx, f: &Expr, st: St) -> Option<Layout> {
+    let l = expr(tx, f, st)?;
+    Some(if matches!(f.kind(), Kind::Add(_)) { tx.delimited(Delim::Paren, &l, st.size) } else { l })
+}
+
 fn arguments(tx: &Tx, args: &[Expr], st: St) -> Option<Layout> {
     let mut parts = Vec::new();
     for (i, a) in args.iter().enumerate() {
@@ -259,6 +265,22 @@ fn arguments(tx: &Tx, args: &[Expr], st: St) -> Option<Layout> {
 fn call(tx: &Tx, name: &str, args: &[Expr], st: St) -> Option<Layout> {
     match (name, args) {
         ("abs", [a]) => Some(tx.delimited(Delim::Bar, &expr(tx, a, st)?, st.size)),
+        ("Integral" | "integrate", [f, x]) => {
+            let tail = Tx::hcat(vec![expr(tx, f, st)?, Tx::space(0.16 * st.size), tx.text("d", st.size, Role::Text, false), expr(tx, x, st)?]);
+            Some(tx.integral(None, None, &tail, st.size))
+        }
+        ("Integral", [f, x, lo, hi]) => {
+            let tail = Tx::hcat(vec![expr(tx, f, st)?, Tx::space(0.16 * st.size), tx.text("d", st.size, Role::Text, false), expr(tx, x, st)?]);
+            Some(tx.integral(Some(&expr(tx, lo, st.script())?), Some(&expr(tx, hi, st.script())?), &tail, st.size))
+        }
+        ("Sum", [f, k, lo, hi]) => {
+            let lower = Tx::hcat(vec![expr(tx, k, st.script())?, operator(tx, "=", st.script()), expr(tx, lo, st.script())?]);
+            Some(tx.big_sum(&lower, &expr(tx, hi, st.script())?, &operand(tx, f, st)?, st.size))
+        }
+        ("Limit", [f, x, a]) => {
+            let under = Tx::hcat(vec![expr(tx, x, st.script())?, operator(tx, "\u{2192}", st.script()), expr(tx, a, st.script())?]);
+            Some(tx.limit(&under, &operand(tx, f, st)?, st.size))
+        }
         ("factorial", [a]) => {
             let inner = expr(tx, a, st)?;
             let inner = if is_atomic(a) { inner } else { tx.delimited(Delim::Paren, &inner, st.size) };
