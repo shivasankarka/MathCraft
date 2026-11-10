@@ -158,10 +158,13 @@ pub fn inline_layout(ctx: &Context, source: &str, size: f32) -> Option<Arc<Layou
     made
 }
 
+/// A cached layout with the run count, size and width bucket it was made for.
+type Cached = (u64, u32, u32, Option<Arc<Layout>>);
+
 /// Typeset results cached per cell: laying out is cheap but not free, and the output only changes when the cell runs.
 #[derive(Default)]
 pub struct MathCache {
-    entries: HashMap<CellId, (u64, u32, u32, Option<Arc<Layout>>)>,
+    entries: HashMap<CellId, Cached>,
 }
 
 impl MathCache {
