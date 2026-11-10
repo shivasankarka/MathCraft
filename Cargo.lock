@@ -1967,7 +1967,7 @@ dependencies = [
 
 [[package]]
 name = "mathcraft"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "egui",
@@ -1985,7 +1985,7 @@ dependencies = [
 
 [[package]]
 name = "mathcraft-algebra"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "dashu",
  "mathcraft-core",
@@ -1994,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "mathcraft-amplitude"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "mathcraft-algebra",
  "mathcraft-core",
@@ -2002,7 +2002,7 @@ dependencies = [
 
 [[package]]
 name = "mathcraft-cli"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "mathcraft-core",
  "mathcraft-engine",
@@ -2013,7 +2013,7 @@ dependencies = [
 
 [[package]]
 name = "mathcraft-core"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "dashu",
  "thiserror 2.0.21",
@@ -2021,7 +2021,7 @@ dependencies = [
 
 [[package]]
 name = "mathcraft-engine"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "mathcraft-core",
  "mathcraft-eval",
@@ -2031,7 +2031,7 @@ dependencies = [
 
 [[package]]
 name = "mathcraft-eval"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "dashu",
  "faer",
@@ -2043,7 +2043,7 @@ dependencies = [
 
 [[package]]
 name = "mathcraft-mcp"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "mathcraft-engine",
  "serde_json",
@@ -2051,7 +2051,7 @@ dependencies = [
 
 [[package]]
 name = "mathcraft-notebook"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "mathcraft-core",
  "mathcraft-eval",
@@ -2061,14 +2061,14 @@ dependencies = [
 
 [[package]]
 name = "mathcraft-poly"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "dashu",
 ]
 
 [[package]]
 name = "mathcraft-syntax"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "ruff_python_ast",
  "ruff_python_parser",
@@ -2078,14 +2078,14 @@ dependencies = [
 
 [[package]]
 name = "mathcraft-typeset"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "mathcraft-core",
 ]
 
 [[package]]
 name = "mathcraft-vim"
-version = "0.1.1"
+version = "0.2.0"
 
 [[package]]
 name = "memchr"
