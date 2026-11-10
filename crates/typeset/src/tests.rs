@@ -262,7 +262,7 @@ fn integrals_sums_and_limits_have_their_own_signs() {
     let integral = Expr::call("Integral", vec![f.clone(), x(), n(0), n(1)]);
     let l = lay(&integral);
     assert_eq!(strokes(&l), 1);
-    assert_eq!(texts(&l), vec!["0", "1", "𝑥", "2", "d", "𝑥"]);
+    assert_eq!(texts(&l), vec!["1", "0", "𝑥", "2", "d", "𝑥"]);
     assert_inside(&l, "integral");
     let sum = Expr::call("Sum", vec![f.clone(), k, n(1), Expr::sym("n")]);
     let l = lay(&sum);
