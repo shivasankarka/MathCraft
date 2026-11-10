@@ -39,6 +39,32 @@ pub fn layout(doc: &Doc, m: &dyn Metrics, size: f32) -> Option<Layout> {
     (out.width.is_finite() && out.ascent.is_finite() && out.descent.is_finite()).then_some(out)
 }
 
+/// Like [`layout`], but a long sum is broken into lines no wider than `max_width` (each continuation line is indented
+/// and starts with its sign). Anything else, and sums that fit, are laid out as by [`layout`].
+pub fn layout_wrapped(doc: &Doc, m: &dyn Metrics, size: f32, max_width: f32) -> Option<Layout> {
+    let whole = layout(doc, m, size)?;
+    let Doc::Expr(e) = doc else { return Some(whole) };
+    if whole.width <= max_width || !matches!(e.kind(), mathcraft_core::Kind::Add(_)) {
+        return Some(whole);
+    }
+    let tx = Tx::new(m, BUDGET);
+    let pieces = expr::sum_pieces(&tx, e.children().as_slice(), St { size, frac_depth: 0, script: false })?;
+    let indent = 1.5 * size;
+    let (mut rows, mut cur, mut width): (Vec<Layout>, Vec<Layout>, f32) = (Vec::new(), Vec::new(), 0.0);
+    for p in pieces {
+        if !cur.is_empty() && width + p.width > max_width {
+            rows.push(Tx::hcat(std::mem::take(&mut cur)));
+            cur.push(Tx::space(indent));
+            width = indent;
+        }
+        width += p.width;
+        cur.push(p);
+    }
+    rows.push(Tx::hcat(cur));
+    let out = Tx::lines(rows, 0.3 * size);
+    (out.width.is_finite() && out.ascent.is_finite() && out.descent.is_finite()).then_some(out)
+}
+
 fn doc_layout(tx: &Tx, doc: &Doc, st: St) -> Option<Layout> {
     tx.tick()?;
     match doc {
