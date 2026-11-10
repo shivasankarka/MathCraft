@@ -25,6 +25,19 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p mathcraft-eval --no-default-features -- -D warnings
+      - run: ./scripts/build-wasm.sh
+      - run: node crates/wasm/web/test.mjs
+
   deny:
     runs-on: ubuntu-latest
     steps:
