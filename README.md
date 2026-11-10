@@ -5,7 +5,7 @@ language, and a reactive notebook where changing one cell updates every cell tha
 
 ![MathCraft notebook, dark theme](docs/images/notebook-dark.png)
 
-**Status: v0.1.1, early but usable.** It works and is usable, but it is young: expect rough edges, and see
+**Status: v0.2.0, early but usable.** It works and is usable, but it is young: expect rough edges, and see
 [Limitations](#limitations). Built and tested mainly on macOS (Apple silicon); Windows and Linux builds come from CI
 and have had little hands-on use.
 
