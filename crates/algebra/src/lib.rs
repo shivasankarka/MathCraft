@@ -23,7 +23,7 @@ mod util;
 
 pub use assume::{Assumptions, Facts, Sign, admissible, is_integer, is_nonzero, refine, sign_of, simplify_with};
 pub use calculus::{diff, diff_n, integrate, integrate_definite, series};
-pub use complex::{abs as complex_abs, atan2, conjugate, parts as complex_parts};
+pub use complex::{abs as complex_abs, arg as complex_arg, atan2, conjugate, parts as complex_parts, rewrite_exp, rewrite_trig};
 pub use expand::expand;
 pub use extension::factor_over;
 
