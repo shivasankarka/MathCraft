@@ -21,6 +21,15 @@ pub fn simplify(e: &Expr) -> MathResult<Expr> {
         candidates.push(t.clone());
         candidates.push(reduce_trig(&t)?);
     }
+    let multiple = crate::trig::expand_trig(&expanded)?;
+    if multiple != expanded {
+        // sin(2*x)/sin(x) is 2*cos(x): through the addition formulas, then cancel
+        let reduced = reduce_trig(&multiple)?;
+        candidates.push(crate::rational::cancel(&multiple)?);
+        candidates.push(crate::rational::cancel(&reduced)?);
+        candidates.push(multiple);
+        candidates.push(reduced);
+    }
     if has_denominator(&inner) {
         let cancelled = crate::rational::cancel(&inner)?;
         let (n, d) = split_fraction(&cancelled);
