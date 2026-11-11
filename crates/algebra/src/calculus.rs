@@ -66,6 +66,11 @@ fn d(e: &Expr, x: &Expr) -> MathResult<Expr> {
                     Err(_) => Ok(Expr::call("diff", vec![e.clone(), x.clone()])),
                 }
             }
+            // atan2(y, u) has the differential (u dy - y du)/(u**2 + y**2)
+            [y, u] if &**name == "atan2" => {
+                let top = Expr::add(vec![Expr::mul(vec![u.clone(), d(y, x)?]), Expr::mul(vec![Expr::int(-1), y.clone(), d(u, x)?])]);
+                Ok(top.div(&Expr::add(vec![Expr::pow(u, &Expr::int(2)), Expr::pow(y, &Expr::int(2))])))
+            }
             _ => Ok(Expr::call("diff", vec![e.clone(), x.clone()])),
         },
         Kind::List(v) => Ok(Expr::list(v.iter().map(|t| d(t, x)).collect::<MathResult<_>>()?)),
