@@ -704,3 +704,21 @@ fn limits_at_poles_of_tan_and_across_absolute_values() {
     assert!(ev("limit(abs(x)/x, x, 0)").starts_with("ERROR"));
     assert_eq!(ev("limit(abs(x**2 - 4)/(x - 2), x, 2, '-')"), "-4");
 }
+
+#[test]
+fn trigonometric_expansion_and_inverse_compositions() {
+    assert_eq!(ev("expand_trig(sin(x + y))"), "cos(x)*sin(y) + cos(y)*sin(x)");
+    assert_eq!(ev("expand_trig(cos(2*x))"), "cos(x)**2 - sin(x)**2");
+    assert_eq!(ev("expand_trig(sin(3*x))"), "-sin(x)**3 + 3*cos(x)**2*sin(x)");
+    assert_eq!(ev("expand_trig(cos(x + pi/2))"), "-sin(x)");
+    assert_eq!(ev("simplify(sin(2*x)/sin(x))"), "2*cos(x)");
+    assert_eq!(ev("simplify(sin(3*x) - 3*sin(x) + 4*sin(x)**3)"), "0");
+    assert_eq!(ev("simplify(cos(2*x) + 2*sin(x)**2)"), "1");
+    assert_eq!(ev("solve(cos(2*x) - cos(x), x)"), "[-2*pi/3, 0, 2*pi/3]");
+    assert_eq!(ev("solve(sin(2*x) - sin(x), x)"), "[-pi/3, 0, pi/3, pi]");
+    assert_eq!(ev("atan(sqrt(3))"), "pi/3");
+    assert_eq!(ev("atan(-1/sqrt(3))"), "-pi/6");
+    assert_eq!(ev("cos(acos(x))"), "x");
+    assert_eq!(ev("sin(acos(x))"), "sqrt(-x**2 + 1)");
+    assert_eq!(ev("cos(atan(2))"), "sqrt(5)/5");
+}
