@@ -42,6 +42,14 @@ pub fn simplify(e: &Expr) -> MathResult<Expr> {
             best = c;
         }
     }
+    // a single fraction is preferred to a nested one of the same size: 1/(1 + 1/x) is x/(x + 1)
+    if has_denominator(&best) {
+        let (n, d) = crate::rational::together_deep(&best)?;
+        let one = crate::rational::cancel(&n.div(&d))?;
+        if one.size() <= best.size() && !has_nested_denominator(&one) {
+            best = one;
+        }
+    }
     Ok(best)
 }
 
@@ -78,6 +86,14 @@ fn has_complex_exp(e: &Expr) -> bool {
 fn has_trig_square(e: &Expr) -> bool {
     matches!(e.kind(), Kind::Pow(b, k) if matches!(b.kind(), Kind::Call(n, _) if matches!(n.as_ref(), "cos" | "cosh")) && k.as_i64().is_some_and(|n| n >= 2))
         || e.children().iter().any(has_trig_square)
+}
+
+/// A negative power whose base contains another negative power, as in `1/(1 + 1/x)`.
+fn has_nested_denominator(e: &Expr) -> bool {
+    match e.kind() {
+        Kind::Pow(b, k) if k.as_num().is_some_and(Num::is_negative) && has_denominator(b) => true,
+        _ => e.children().iter().any(has_nested_denominator),
+    }
 }
 
 fn has_denominator(e: &Expr) -> bool {
