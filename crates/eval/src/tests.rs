@@ -692,3 +692,15 @@ fn unevaluated_integrals_sums_and_limits() {
     assert_eq!(ev("latex(Sum(1/k**2, (k, 1, oo)))"), "'\\sum_{k=1}^{\\infty} \\frac{1}{k^{2}}'");
     assert_eq!(ev("latex(Limit(sin(x)/x, x, 0))"), "'\\lim_{x \\to 0} \\frac{\\sin\\left(x\\right)}{x}'");
 }
+
+#[test]
+fn limits_at_poles_of_tan_and_across_absolute_values() {
+    assert_eq!(ev("limit(tan(x), x, pi/2, '-')"), "oo");
+    assert_eq!(ev("limit(tan(x), x, pi/2, '+')"), "-oo");
+    assert!(ev("limit(tan(x), x, pi/2)").starts_with("ERROR"));
+    assert_eq!(ev("limit(tan(3*x)/tan(2*x), x, 0)"), "3/2");
+    assert_eq!(ev("limit(abs(x)/x, x, 0, '+')"), "1");
+    assert_eq!(ev("limit(abs(x)/x, x, 0, '-')"), "-1");
+    assert!(ev("limit(abs(x)/x, x, 0)").starts_with("ERROR"));
+    assert_eq!(ev("limit(abs(x**2 - 4)/(x - 2), x, 2, '-')"), "-4");
+}
