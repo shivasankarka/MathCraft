@@ -722,3 +722,14 @@ fn trigonometric_expansion_and_inverse_compositions() {
     assert_eq!(ev("sin(acos(x))"), "sqrt(-x**2 + 1)");
     assert_eq!(ev("cos(atan(2))"), "sqrt(5)/5");
 }
+
+#[test]
+fn nested_fractions_simple_roots_and_atan2_derivative() {
+    assert_eq!(ev("simplify(1/(1 + 1/x))"), "x/(x + 1)");
+    assert_eq!(ev("simplify(1/(1 + 1/(1 + 1/x)))"), "(x + 1)/(2*x + 1)");
+    assert_eq!(ev("simplify(cos(x)/sin(x)*tan(x))"), "1");
+    assert_eq!(ev("solve(x**2 - 4*y, x)"), "[-2*sqrt(y), 2*sqrt(y)]");
+    assert_eq!(ev("solve(x**2 - a**2, x)"), "[a, -a]");
+    assert_eq!(ev("diff(atan2(y, x), x)"), "-y/(x**2 + y**2)");
+    assert_eq!(ev("simplify(diff(atan2(sin(x), cos(x)), x))"), "1");
+}
