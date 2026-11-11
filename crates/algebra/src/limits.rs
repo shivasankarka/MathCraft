@@ -61,7 +61,51 @@ pub fn limit_side(e: &Expr, x: &Expr, a: &Expr, side: Side) -> MathResult<Expr> 
     finite(e, x, a, side)
 }
 
+/// `tan(u)` as `sin(u)/cos(u)`, so that poles at odd multiples of pi/2 show up as a division by zero.
+fn tan_as_ratio(e: &Expr) -> MathResult<Expr> {
+    let inner = e.map_children(tan_as_ratio)?;
+    match inner.kind() {
+        Kind::Call(name, args) if &**name == "tan" && args.len() == 1 => Ok(Expr::call("sin", args.clone()).div(&Expr::call("cos", args.clone()))),
+        _ => Ok(inner),
+    }
+}
+
+fn has_abs(e: &Expr) -> bool {
+    matches!(e.kind(), Kind::Call(n, _) if &**n == "abs") || e.children().iter().any(has_abs)
+}
+
+/// Replaces `abs(u)` by `u` or `-u` according to the sign of `u` just to the given side of `a` (the sign of `u(a)`, or of
+/// its first non-zero derivative there). Needs a one-sided limit.
+fn resolve_abs(e: &Expr, x: &Expr, a: &Expr, side: Side) -> MathResult<Expr> {
+    let inner = e.map_children(|c| resolve_abs(c, x, a, side))?;
+    let Kind::Call(name, args) = inner.kind() else { return Ok(inner) };
+    let ([u], "abs") = (args.as_slice(), &**name) else { return Ok(inner) };
+    if !u.contains(x) {
+        return Ok(inner);
+    }
+    let mut d = u.clone();
+    for k in 0..=8u32 {
+        let v = expand(&subs(&d, &[(x.clone(), a.clone())])?)?;
+        if !is_zero_expr(&v)? {
+            let Some(sign) = sign_of(&v) else { return Ok(inner) };
+            let flip = if side == Side::Left && k % 2 == 1 { -1 } else { 1 };
+            return Ok(if sign * flip > 0 { u.clone() } else { u.neg() });
+        }
+        d = diff(&d, x)?;
+    }
+    Ok(inner)
+}
+
 fn finite(e: &Expr, x: &Expr, a: &Expr, side: Side) -> MathResult<Expr> {
+    let mut e = tan_as_ratio(e)?;
+    if side == Side::Both && has_abs(&e) {
+        let (r, l) = (finite(&e, x, a, Side::Right)?, finite(&e, x, a, Side::Left)?);
+        return if r == l { Ok(r) } else { Err(MathError::domain("the limit differs on the two sides; give a side, e.g. dir='+'")) };
+    }
+    if side != Side::Both {
+        e = resolve_abs(&e, x, a, side)?;
+    }
+    let e = &e;
     let at = |t: &Expr| subs(t, &[(x.clone(), a.clone())]);
     let direct = at(e)?;
     if !has_singularity(&direct) {
