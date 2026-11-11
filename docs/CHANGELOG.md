@@ -11,6 +11,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - `expand_trig` (`sin(x + y)`, `cos(2*x)`, `sin(3*x)` in terms of `sin(x)` and `cos(x)`); `simplify` uses it (`sin(2*x)/sin(x)` is `2*cos(x)`, `sin(3*x) - 3*sin(x) + 4*sin(x)**3` is 0) and so does `solve` (`cos(2*x) == cos(x)`, `sin(x) + sin(3*x) == 0`). `cos(acos(x))`, `sin(acos(x))`, `tan(atan(x))` and the like are evaluated, and `atan(sqrt(3))` is `pi/3`.
 - Limits: `limit(tan(x), x, pi/2, '-')` is `oo` (it returned `tan(pi/2)`), and `limit(abs(x)/x, x, 0, '+')` is 1.
 - `simplify` makes a nested fraction one (`1/(1 + 1/x)` is `x/(x + 1)`); `solve(x**2 == 4*y, x)` gives `[-2*sqrt(y), 2*sqrt(y)]`; `diff(atan2(y, x), x)` works.
+- Infinite sums: `summation(1/k**2, (k, 1, oo))` is `pi**2/6` (even zeta values), telescoping sums such as `1/(k*(k + 1))` give 1, and `k*2**(-k)`-type sums (a polynomial times a geometric term) are summed.
 - Typeset: n-th roots with an index, long sums break into lines to fit the window, and `Integral(f, (x, a, b))`, `Sum(f, (k, a, b))`, `Limit(f, x, a)` stay unevaluated and read as mathematics (`doit()` evaluates them). They also copy as LaTeX.
 - Menus: rows have shortcuts as keycaps, an accent highlight and dimmed disabled items.
 - Plots can be saved as PNG (right-click a plot: Save as PNG…) as well as SVG.
