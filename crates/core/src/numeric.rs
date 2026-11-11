@@ -27,6 +27,7 @@ pub fn eval_f64(e: &Expr, env: &dyn Fn(&str) -> Option<f64>) -> MathResult<f64> 
                 let v = eval_f64(a, env)?;
                 f64_unary(name, v).ok_or_else(|| MathError::domain(format!("`{name}` is undefined at {v}")))
             }
+            [y, x] if &**name == "atan2" => Ok(eval_f64(y, env)?.atan2(eval_f64(x, env)?)),
             _ => Err(MathError::unsupported(format!("cannot evaluate `{name}` numerically"))),
         },
         Kind::List(_) | Kind::Eq(..) => Err(MathError::unsupported("only numbers and formulas can be evaluated to a float")),
