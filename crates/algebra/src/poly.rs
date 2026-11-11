@@ -394,6 +394,36 @@ fn linear_root(c: &[Expr]) -> MathResult<Expr> {
     Ok(at(c, 0).neg().div(&at(c, 1)))
 }
 
+/// `sqrt(disc)` with the positive number and the even powers taken out of the root: `sqrt(4*y)` is `2*sqrt(y)` and
+/// `sqrt(4*a**2)` is `2*a` (the roots come in a pair with both signs, so the sign of `a` does not matter).
+fn sqrt_discriminant(disc: &Expr) -> Expr {
+    let (c, rest) = disc.split_coeff();
+    if disc.is_num() || c.is_negative() || c.is_zero() {
+        return Expr::pow(disc, &Expr::half());
+    }
+    let factors: Vec<Expr> = match rest.kind() {
+        Kind::Mul(fs) => fs.clone(),
+        _ => vec![rest.clone()],
+    };
+    let (mut out, mut inside) = (vec![Expr::pow(&Expr::num(c), &Expr::half())], Vec::new());
+    for f in factors {
+        match f.kind() {
+            Kind::Pow(b, k) if k.as_i64().is_some_and(|k| k >= 2) => {
+                let k = k.as_i64().unwrap_or(2);
+                out.push(Expr::pow(b, &Expr::int(k / 2)));
+                if k % 2 == 1 {
+                    inside.push(b.clone());
+                }
+            }
+            _ => inside.push(f),
+        }
+    }
+    if !inside.is_empty() {
+        out.push(Expr::pow(&Expr::mul(inside), &Expr::half()));
+    }
+    Expr::mul(out)
+}
+
 pub(crate) fn quadratic_roots(c: &[Expr]) -> MathResult<Vec<Expr>> {
     let (a, b, cc) = (at(c, 2), at(c, 1), at(c, 0));
     let disc = expand(&Expr::add(vec![Expr::pow(&b, &Expr::int(2)), Expr::mul(vec![Expr::int(-4), a.clone(), cc])]))?;
@@ -401,7 +431,7 @@ pub(crate) fn quadratic_roots(c: &[Expr]) -> MathResult<Vec<Expr>> {
     if disc.as_num().is_some_and(Num::is_zero) {
         return Ok(vec![b.neg().div(&Expr::mul(vec![Expr::int(2), a]))]);
     }
-    let sq = Expr::pow(&disc, &Expr::half());
+    let sq = sqrt_discriminant(&disc);
     let two_a = Expr::mul(vec![Expr::int(2), a]);
     let mut out = Vec::new();
     for s in [Expr::int(-1), Expr::int(1)] {
