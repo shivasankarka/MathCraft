@@ -11,6 +11,7 @@ mod expand;
 mod extension;
 mod limits;
 pub mod linalg;
+mod ode;
 mod pattern;
 mod poly;
 mod rational;
@@ -40,6 +41,7 @@ pub fn poly_lcm(a: &mathcraft_core::Expr, b: &mathcraft_core::Expr) -> mathcraft
 }
 
 pub use limits::{Side, limit, limit_side};
+pub use ode::{apply_conditions, dsolve};
 pub use pattern::{Bindings, find_all, match_expr, replace};
 pub use poly::{factor, from_poly, linear_in, solve_polynomial, to_poly};
 pub use rational::{apart, cancel, together};
