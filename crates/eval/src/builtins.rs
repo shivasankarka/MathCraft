@@ -164,6 +164,11 @@ pub const DOCS: &[(&str, &str, &str)] = &[
         "solve(eq, x) | solve([eq1, eq2], [x, y])",
         "solutions of one equation (polynomial, exp/log/trig), a linear system, or a polynomial system (a list of solutions)",
     ),
+    (
+        "dsolve",
+        "dsolve(eq, y(x), ics=None, x0=0)",
+        "solve an ordinary differential equation: first order linear or separable, or linear with constant coefficients; ics lists y(x0), y'(x0), ...",
+    ),
     ("coeffs", "coeffs(poly, x)", "coefficients, lowest degree first"),
     ("degree", "degree(poly, x)", "degree of a polynomial"),
     ("free_symbols", "free_symbols(expr)", "the symbols in an expression"),
@@ -218,6 +223,7 @@ const METHODS: &[&str] = &[
     "rustcode",
     "series",
     "solve",
+    "dsolve",
     "coeffs",
     "degree",
     "free_symbols",
@@ -1137,6 +1143,7 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             it.checked(alg::expand(&s)?)
         }
         "solve" => solve(it, &a),
+        "dsolve" => dsolve(it, &a),
         "nroots" => {
             a.limits(name, 1, 2)?;
             let f = eq_to_zero_form(&a.expr(0)?);
@@ -1359,6 +1366,33 @@ fn solve(it: &Interp<'_>, a: &Args) -> R<Value> {
             roots.into_iter().filter(|r| alg::admissible(r, &x, &asm)).map(|r| it.checked(r)).collect::<R<Vec<_>>>().map(Value::list)
         }
     }
+}
+
+fn dsolve(it: &Interp<'_>, a: &Args) -> R<Value> {
+    if a.pos.len() < 2 || a.pos.len() > 4 {
+        return err("dsolve(eq, y(x), ics=None, x0=0)");
+    }
+    let (eq, f) = (a.expr(0)?, a.expr(1)?);
+    let mut sols = alg::dsolve(&eq, &f)?;
+    if let Some(ics) = a.opt(2, "ics") {
+        let values: Vec<Expr> = match ics {
+            Value::List(v) | Value::Tuple(v) => v.iter().map(Value::to_expr).collect::<R<_>>()?,
+            single => vec![single.to_expr()?],
+        };
+        let x0 = a.opt(3, "x0").map(Value::to_expr).transpose()?.unwrap_or_else(Expr::zero);
+        let Some(x) = f.children().first().cloned() else { return err("the unknown is written y(x)") };
+        let mut fixed = Vec::new();
+        for sol in &sols {
+            let Kind::Eq(l, r) = sol.kind() else { continue };
+            fixed.extend(alg::apply_conditions(r, &x, &x0, &values)?.into_iter().map(|v| Expr::eq(l.clone(), v)));
+        }
+        sols = fixed;
+    }
+    let mut out = Vec::new();
+    for s in sols {
+        out.push(it.checked(s)?);
+    }
+    Ok(if out.len() == 1 { out.remove(0) } else { Value::list(out) })
 }
 
 fn plot(a: &Args) -> R<Value> {
