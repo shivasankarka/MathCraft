@@ -19,6 +19,7 @@ mod solve;
 mod sparse;
 mod sums;
 mod system;
+mod trig;
 mod util;
 
 pub use assume::{Assumptions, Facts, Sign, admissible, is_integer, is_nonzero, refine, sign_of, simplify_with};
@@ -26,6 +27,7 @@ pub use calculus::{diff, diff_n, integrate, integrate_definite, series};
 pub use complex::{abs as complex_abs, arg as complex_arg, atan2, conjugate, parts as complex_parts, rewrite_exp, rewrite_trig};
 pub use expand::expand;
 pub use extension::factor_over;
+pub use trig::expand_trig;
 
 /// Greatest common divisor of two polynomials with integer coefficients (`None` if they are not such polynomials).
 pub fn poly_gcd(a: &mathcraft_core::Expr, b: &mathcraft_core::Expr) -> mathcraft_core::MathResult<Option<mathcraft_core::Expr>> {
