@@ -115,6 +115,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("im", "im(z)", "imaginary part; symbols are taken to be real"),
     ("conjugate", "conjugate(z)", "complex conjugate"),
     ("arg", "arg(z)", "angle of a complex number in (-pi, pi], exact for multiples of pi/4: arg(1 + I) is pi/4"),
+    ("expand_trig", "expand_trig(expr)", "sin, cos and tan of sums and multiples with the addition formulas: sin(x + y), cos(2*x)"),
     ("rewrite_trig", "rewrite_trig(expr)", "write complex exponentials with sin and cos: exp(I*x) becomes cos(x) + I*sin(x)"),
     ("rewrite_exp", "rewrite_exp(expr)", "write sin, cos, tan, sinh, cosh, tanh with exponentials"),
     ("symbols", "symbols('x y z')", "declare symbols (also names of unknown functions): x, y = symbols('x y')"),
@@ -710,12 +711,13 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             })?;
             check_depth(it, out)
         }
-        "arg" | "rewrite_trig" | "rewrite_exp" => {
+        "arg" | "rewrite_trig" | "rewrite_exp" | "expand_trig" => {
             a.limits(name, 1, 1)?;
             let out = broadcast(a.get(0)?, &mut |e| {
                 Ok(match name {
                     "arg" => alg::complex_arg(e)?,
                     "rewrite_trig" => alg::rewrite_trig(e)?,
+                    "expand_trig" => alg::expand_trig(e)?,
                     _ => alg::rewrite_exp(e)?,
                 })
             })?;
