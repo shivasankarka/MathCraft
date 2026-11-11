@@ -432,6 +432,18 @@ impl Expr {
                 // 1 / (a + b*I) = (a - b*I) / (a**2 + b**2); the exponent is a negative integer.
                 let inv = Expr::add(vec![Expr::num(a.mul(&inv_norm)), Expr::mul(vec![Expr::num(b.neg().mul(&inv_norm)), Expr::imag()])]);
                 return Expr::pow(&inv, &Expr::num(en.neg()));
+            } else if exp == &Expr::half()
+                && let Some((a, b)) = base.as_complex()
+                && !b.is_zero()
+                && a.is_exact()
+                && b.is_exact()
+                && let Some(modulus) = Expr::pow(&Expr::num(a.mul(&a).add(&b.mul(&b))), exp).as_num().filter(|m| m.is_exact()).cloned()
+                && let Some(two_inv) = Num::ratio(1.into(), 2.into())
+            {
+                // the principal square root of a + b*I whose modulus is rational: sqrt((m + a)/2) + sign(b) sqrt((m - a)/2) I
+                let root = |v: Num| Expr::pow(&Expr::num(v.mul(&two_inv)), exp);
+                let im = root(modulus.add(&a.neg()));
+                return Expr::add(vec![root(modulus.add(&a)), Expr::mul(vec![if b.is_negative() { im.neg() } else { im }, Expr::imag()])]);
             } else if en.is_exact()
                 && let Some(n) = en.as_i64().filter(|n| (2..=64).contains(n))
                 && let Some((a, b)) = base.as_complex()
