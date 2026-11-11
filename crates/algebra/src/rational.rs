@@ -33,6 +33,66 @@ pub fn together(e: &Expr) -> MathResult<(Expr, Expr)> {
     Ok((expand(&Expr::add(num))?, expand(&Expr::mul(dens))?))
 }
 
+/// Like `together`, but a factor that is itself a sum of fractions is combined first: `1/(1 + 1/x)` is `x/(x + 1)`.
+pub fn together_deep(e: &Expr) -> MathResult<(Expr, Expr)> {
+    guard(e)?;
+    let Kind::Add(terms) = e.kind() else {
+        return product_fraction(e);
+    };
+    let mut parts = Vec::with_capacity(terms.len());
+    for t in terms {
+        parts.push(product_fraction(t)?);
+    }
+    let mut dens: Vec<Expr> = Vec::new();
+    for (_, d) in &parts {
+        if !d.is_one() && !dens.contains(d) {
+            dens.push(d.clone());
+        }
+    }
+    let mut num = Vec::with_capacity(parts.len());
+    for (n, d) in &parts {
+        let mut factors = vec![n.clone()];
+        factors.extend(dens.iter().filter(|o| *o != d).cloned());
+        num.push(Expr::mul(factors));
+    }
+    Ok((expand(&Expr::add(num))?, expand(&Expr::mul(dens))?))
+}
+
+fn has_fraction(e: &Expr) -> bool {
+    matches!(e.kind(), Kind::Pow(_, k) if k.as_i64().is_some_and(|k| k < 0)) || e.children().iter().any(has_fraction)
+}
+
+/// A product or power as one fraction; a factor that is itself a sum of fractions is combined first, so that
+/// `1/(1 + 1/x)` is `x/(x + 1)`.
+fn product_fraction(e: &Expr) -> MathResult<(Expr, Expr)> {
+    let (n, d) = split_fraction(e);
+    let (mut num, mut den) = (Vec::new(), Vec::new());
+    for (part, inverse) in [(&n, false), (&d, true)] {
+        let factors: Vec<Expr> = match part.kind() {
+            Kind::Mul(fs) => fs.clone(),
+            _ => vec![part.clone()],
+        };
+        for f in factors {
+            let (a, b) = match f.kind() {
+                Kind::Add(_) if has_fraction(&f) => together_deep(&f)?,
+                Kind::Pow(base, k) if matches!(base.kind(), Kind::Add(_)) && has_fraction(base) && k.as_i64().is_some_and(|k| k > 0) => {
+                    let (a, b) = together_deep(base)?;
+                    (Expr::pow(&a, k), Expr::pow(&b, k))
+                }
+                _ => (f, Expr::one()),
+            };
+            if inverse {
+                num.push(b);
+                den.push(a);
+            } else {
+                num.push(a);
+                den.push(b);
+            }
+        }
+    }
+    Ok((expand(&Expr::mul(num))?, expand(&Expr::mul(den))?))
+}
+
 /// Polynomial division with remainder (coefficients lowest degree first).
 fn divmod(n: &[Expr], d: &[Expr]) -> MathResult<(Vec<Expr>, Vec<Expr>)> {
     let Some(lead) = d.last() else { return Err(MathError::domain("division by the zero polynomial")) };
