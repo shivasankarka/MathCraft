@@ -1387,6 +1387,16 @@ fn plot(a: &Args) -> R<Value> {
         if let Some(extra) = c.free_symbols().iter().find(|s| Some(&***s) != x.as_sym()) {
             return err(format!("cannot plot: '{extra}' has no value (plot only varies {x})"));
         }
+        if c.contains(&Expr::imag()) {
+            // a complex curve is drawn as its real and imaginary parts
+            let (re, im) = alg::complex_parts(c)?;
+            for (label, part) in [("re", re), ("im", im)] {
+                if !part.is_zero() {
+                    series.push(PlotSeries { label: format!("{label}({c})"), segments: plot_points(&part, &x, lo, hi)? });
+                }
+            }
+            continue;
+        }
         series.push(PlotSeries { label: c.to_string(), segments: plot_points(c, &x, lo, hi)? });
     }
     Ok(Value::Plot(Arc::new(PlotSpec { series, x_label: x.to_string() })))
