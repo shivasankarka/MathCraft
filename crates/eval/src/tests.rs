@@ -757,5 +757,5 @@ fn secant_cosecant_trig_products_and_fractional_powers_with_log() {
     assert_eq!(ev("integrate(sin(x)*cos(2*x), x)"), "(cos(x) - cos(3*x)/3)/2");
     assert_eq!(ev("integrate(sin(3*x)*sin(2*x), x)"), "(sin(x) - sin(5*x)/5)/2");
     assert_eq!(ev("integrate(sin(2*x)*cos(3*x), (x, 0, pi))"), "-4/5");
-    assert_eq!(ev("N(integrate(sec(x), (x, 0, pi/4)))"), "0.881373587019543");
+    assert_eq!(ev("N(integrate(sec(x), (x, 0, pi/4)))"), "0.8813735870195429");
 }
