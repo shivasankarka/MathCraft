@@ -529,7 +529,11 @@ fn trig_polynomial(f: &Expr, x: &Expr) -> MathResult<Option<Vec<Expr>>> {
             Kind::Call(n, args) if matches!(&**n, "sin" | "cos") && args.len() == 1 => match (&angle, args.first()) {
                 (None, Some(a)) => angle = Some(a.clone()),
                 (Some(a), Some(b)) if a == b => {}
-                _ => return Ok(None),
+                // several multiples of one angle: the addition formulas bring them to sin(x) and cos(x)
+                _ => {
+                    let spread = crate::trig::expand_trig(f)?;
+                    return if spread == *f { Ok(None) } else { trig_polynomial(&spread, x) };
+                }
             },
             _ => return Ok(None),
         }
