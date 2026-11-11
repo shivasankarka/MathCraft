@@ -582,6 +582,19 @@ fn trig_polynomial(f: &Expr, x: &Expr) -> MathResult<Option<Vec<Expr>>> {
         if !terms.iter().any(|(i, _, _)| *i == n) {
             solve_in(Expr::add(vec![c.clone()]), &c, cos_t)?;
         }
+    } else if terms.iter().all(|(i, j, _)| i + j == 0 || i + j == 2) {
+        // a quadratic form in sin and cos is linear in sin(2a) and cos(2a): s*c = sin(2a)/2, s**2 = (1 - cos(2a))/2, c**2 = (1 + cos(2a))/2
+        let double = Expr::mul(vec![Expr::int(2), a.clone()]);
+        let (s2, c2) = (Expr::call("sin", vec![double.clone()]), Expr::call("cos", vec![double]));
+        let Some(half) = Expr::rational(1, 2) else { return Ok(None) };
+        let parts = terms.iter().map(|(i, j, k)| match (i, j) {
+            (1, 1) => Expr::mul(vec![k.clone(), half.clone(), s2.clone()]),
+            (2, 0) => Expr::mul(vec![k.clone(), half.clone(), Expr::add(vec![Expr::one(), c2.neg()])]),
+            (0, 2) => Expr::mul(vec![k.clone(), half.clone(), Expr::add(vec![Expr::one(), c2.clone()])]),
+            _ => k.clone(),
+        });
+        let f2 = expand(&Expr::add(parts.collect()))?;
+        all.extend(solve(&f2, x)?);
     } else {
         // half angle: sin = 2t/(1+t^2), cos = (1-t^2)/(1+t^2), times (1+t^2)^n to clear the denominators
         let n = terms.iter().map(|(i, j, _)| i + j).max().unwrap_or(0);
