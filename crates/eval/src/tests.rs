@@ -748,3 +748,14 @@ fn infinite_sums_zeta_telescoping_and_arithmetic_geometric() {
     assert!(ev("summation(1/k, (k, 1, oo))").starts_with("ERROR"));
     assert!(ev("summation(k*2**k, (k, 1, oo))").starts_with("ERROR"));
 }
+
+#[test]
+fn secant_cosecant_trig_products_and_fractional_powers_with_log() {
+    assert_eq!(ev("integrate(sec(x), x)"), "log(sin(x) + 1) - log(cos(x))");
+    assert_eq!(ev("integrate(1/sin(x), x)"), "log(-cos(x) + 1) - log(sin(x))");
+    assert_eq!(ev("integrate(sqrt(x)*log(x), x)"), "2*x**(3/2)*log(x)/3 - 4*x**(3/2)/9");
+    assert_eq!(ev("integrate(sin(x)*cos(2*x), x)"), "(cos(x) - cos(3*x)/3)/2");
+    assert_eq!(ev("integrate(sin(3*x)*sin(2*x), x)"), "(sin(x) - sin(5*x)/5)/2");
+    assert_eq!(ev("integrate(sin(2*x)*cos(3*x), (x, 0, pi))"), "-4/5");
+    assert_eq!(ev("N(integrate(sec(x), (x, 0, pi/4)))"), "0.881373587019543");
+}
