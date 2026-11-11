@@ -88,6 +88,13 @@ fn split(e: &Expr) -> MathResult<Cx> {
                     }
                 }
                 if n < 0 { cx_inv(&acc)? } else { acc }
+            } else if *x == Expr::half() {
+                // principal square root: sqrt((m + a)/2) + sign(b) sqrt((m - a)/2) I with m = |a + b I|
+                let (a, b) = split(base)?;
+                let m = abs(&Expr::add(vec![a.clone(), Expr::mul(vec![b.clone(), unit.clone()])]))?;
+                let half_of = |t: Expr| Expr::pow(&Expr::mul(vec![Expr::half(), t]), &Expr::half());
+                let im = half_of(Expr::add(vec![m.clone(), a.neg()]));
+                (half_of(Expr::add(vec![m, a])), if b.as_num().is_some_and(|n| n.is_negative()) { im.neg() } else { im })
             } else if !base.contains(&unit) && base.as_num().is_some_and(|n| !n.is_negative() && !n.is_zero()) {
                 // a^(x) with a positive number: e^(x ln a)
                 return split(&Expr::pow(&Expr::e(), &Expr::mul(vec![x.clone(), call("log", base)])));
@@ -128,12 +135,9 @@ pub fn abs(e: &Expr) -> MathResult<Expr> {
     Ok(Expr::pow(&crate::simplify(&sum)?, &Expr::half()))
 }
 
-/// The argument (angle) of a number, in `(-pi, pi]`. Only numbers have one here.
+/// The argument (angle) of `e`, in `(-pi, pi]`; for symbolic parts it stays as `atan2(im, re)`.
 pub fn arg(e: &Expr) -> MathResult<Expr> {
     let (re, im) = split(e)?;
-    if re.as_num().is_none() || im.as_num().is_none() {
-        return Err(MathError::unsupported("arg needs a number, such as 1 + I"));
-    }
     atan2(&im, &re)
 }
 
@@ -173,10 +177,10 @@ pub fn rewrite_exp(e: &Expr) -> MathResult<Expr> {
     })
 }
 
-/// The angle of the point `(x, y)` in `(-pi, pi]`, for numeric arguments: exact multiples of pi/4 come out exact.
+/// The angle of the point `(x, y)` in `(-pi, pi]`: exact multiples of pi/4 come out exact, and symbolic arguments stay as `atan2(y, x)`.
 pub fn atan2(y: &Expr, x: &Expr) -> MathResult<Expr> {
     let (Some(yn), Some(xn)) = (y.as_num(), x.as_num()) else {
-        return Err(MathError::unsupported("atan2 needs numeric arguments"));
+        return Ok(Expr::call("atan2", vec![y.clone(), x.clone()]));
     };
     let pi = Expr::pi();
     let frac = |p: i64, q: i64| Expr::rational(p, q).map(|r| Expr::mul(vec![r, pi.clone()])).unwrap_or_else(Expr::zero);
