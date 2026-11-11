@@ -159,6 +159,10 @@ fn plots_sample_points_and_split_at_poles() {
     assert_eq!(p.series.len(), 1);
     assert!(p.series[0].segments.len() >= 2, "the pole at 0 must break the curve");
     assert!(!run_source(&mut g, "plot(a*x, (x, 0, 1))", false).result.is_ok());
+    // a complex curve is drawn as its real and imaginary parts
+    let Ok(Some(Value::Plot(p))) = run_source(&mut g, "plot(exp(I*x), (x, 0, 6))", false).result else { panic!("expected a plot") };
+    assert_eq!(p.series.len(), 2);
+    assert!(p.series.iter().all(|s| !s.segments.is_empty()));
 }
 
 #[test]
@@ -644,7 +648,13 @@ fn complex_functions() {
     // argument, numeric evaluation, and rewriting
     assert_eq!(ev("arg(1 + I)"), "pi/4");
     assert_eq!(ev("arg(-1 - I)"), "-3*pi/4");
-    assert!(ev("arg(x)").starts_with("ERROR"));
+    assert_eq!(ev("arg(x + I)"), "atan2(1, x)");
+    assert_eq!(ev("N(atan2(1, 2))"), "0.46364760900080615");
+    assert_eq!(ev("sqrt(3 + 4*I)"), "2 + I");
+    assert_eq!(ev("sqrt(-3 - 4*I)"), "1 - 2*I");
+    assert_eq!(ev("sqrt(I)"), "sqrt(2)/2 + I*sqrt(2)/2");
+    assert_eq!(ev("re(sqrt(1 + I))"), "sqrt(sqrt(2)/2 + 1/2)");
+    assert_eq!(ev("N(sqrt(1 + I))"), "1.09868411346781 + 0.4550898605622274*I");
     assert_eq!(ev("N(exp(1 + 2*I))"), "-1.1312043837568135 + 2.4717266720048188*I");
     assert_eq!(ev("simplify((exp(I*x) + exp(-I*x))/2)"), "cos(x)");
     assert_eq!(ev("simplify((exp(I*x) - exp(-I*x))/(2*I))"), "sin(x)");
@@ -656,6 +666,8 @@ fn complex_functions() {
 #[test]
 fn trigonometric_polynomials_in_sin_and_cos() {
     // only even powers of one function: Pythagoras turns it into a polynomial in the other
+    // a quadratic form is linear in the double angle
+    assert_eq!(ev("solve(sin(x)*cos(x) - 1/4, x)"), "[pi/12, 5*pi/12]");
     assert_eq!(ev("solve(sin(x)**2 - cos(x)**2, x)"), "[-pi/4, pi/4, 3*pi/4, 5*pi/4]");
     assert_eq!(ev("solve(cos(x)**2 + sin(x) - 1, x)"), "[0, pi/2, pi]");
     // homogeneous in sin and cos: a polynomial in tan
