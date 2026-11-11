@@ -13,6 +13,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - `simplify` makes a nested fraction one (`1/(1 + 1/x)` is `x/(x + 1)`); `solve(x**2 == 4*y, x)` gives `[-2*sqrt(y), 2*sqrt(y)]`; `diff(atan2(y, x), x)` works.
 - Infinite sums: `summation(1/k**2, (k, 1, oo))` is `pi**2/6` (even zeta values), telescoping sums such as `1/(k*(k + 1))` give 1, and `k*2**(-k)`-type sums (a polynomial times a geometric term) are summed.
 - `integrate` handles `sec` and `csc`, products of sines and cosines of different multiples (`sin(x)*cos(2*x)`), and `x**r*log(x)` for a fractional `r`.
+- `dsolve(eq, y(x), ics=[...], x0=0)` solves ordinary differential equations: first order linear and separable, and linear with constant coefficients (any order; a forcing term up to second order). `dsolve(diff(y(x), x) + y(x) == x, y(x))` is `y(x) == C1*exp(-x) + x - 1`; `ics` lists `y(x0)`, `y'(x0)`, ...
 - Typeset: n-th roots with an index, long sums break into lines to fit the window, and `Integral(f, (x, a, b))`, `Sum(f, (k, a, b))`, `Limit(f, x, a)` stay unevaluated and read as mathematics (`doit()` evaluates them). They also copy as LaTeX.
 - Menus: rows have shortcuts as keycaps, an accent highlight and dimmed disabled items.
 - Plots can be saved as PNG (right-click a plot: Save as PNG…) as well as SVG.
