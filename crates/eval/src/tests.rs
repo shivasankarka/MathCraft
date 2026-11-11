@@ -735,6 +735,25 @@ fn nested_fractions_simple_roots_and_atan2_derivative() {
 }
 
 #[test]
+fn ordinary_differential_equations() {
+    let d = |eq: &str, rest: &str| ev(&format!("y = symbols('y'); dsolve({eq}, y(x){rest})"));
+    assert_eq!(d("diff(y(x), x) + y(x) == x", ""), "y(x) == C1*exp(-x) + x - 1");
+    assert_eq!(d("diff(y(x), x) == x*y(x)", ""), "y(x) == C1*exp(x**2/2)");
+    assert_eq!(d("diff(y(x), x) == x/y(x)", ""), "[y(x) == sqrt(x**2 + 2*C1), y(x) == -sqrt(x**2 + 2*C1)]");
+    assert_eq!(d("diff(y(x), x) == y(x)**2", ", ics=[1]"), "y(x) == -1/(x - 1)");
+    assert_eq!(d("x*diff(y(x), x) + 2*y(x) == x**2", ""), "y(x) == (x**4/4 + C1)/x**2");
+    assert_eq!(d("diff(y(x), x, 2) + y(x)", ""), "y(x) == C1*cos(x) + C2*sin(x)");
+    assert_eq!(d("diff(y(x), x, 2) + y(x)", ", ics=[0, 1]"), "y(x) == sin(x)");
+    assert_eq!(d("diff(y(x), x, 2) - 3*diff(y(x), x) + 2*y(x)", ""), "y(x) == C1*exp(x) + C2*exp(2*x)");
+    assert_eq!(d("diff(y(x), x, 2) + 2*diff(y(x), x) + y(x)", ""), "y(x) == C2*x*exp(-x) + C1*exp(-x)");
+    assert_eq!(d("diff(y(x), x, 2) + 2*diff(y(x), x) + 5*y(x)", ""), "y(x) == C1*exp(-x)*cos(2*x) + C2*exp(-x)*sin(2*x)");
+    assert_eq!(d("diff(y(x), x, 2) - y(x) == exp(2*x)", ""), "y(x) == C1*exp(-x) + C2*exp(x) + exp(2*x)/3");
+    assert_eq!(d("diff(y(x), x, 2) + y(x) == sin(x)", ""), "y(x) == C1*cos(x) + C2*sin(x) - x*cos(x)/2 + sin(x)/2");
+    assert!(d("diff(y(x), x)**2 + y(x)", "").starts_with("ERROR"));
+    assert!(d("diff(y(x), x, 2) + x*y(x)", "").starts_with("ERROR"));
+}
+
+#[test]
 fn infinite_sums_zeta_telescoping_and_arithmetic_geometric() {
     assert_eq!(ev("summation(1/k**2, (k, 1, oo))"), "pi**2/6");
     assert_eq!(ev("summation(1/k**4, (k, 1, oo))"), "pi**4/90");
