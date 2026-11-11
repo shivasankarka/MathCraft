@@ -356,6 +356,11 @@ fn unary(name: &str, x: &Expr) -> Expr {
     {
         return v;
     }
+    if name == "atan"
+        && let Some(v) = atan_root_value(x)
+    {
+        return v;
+    }
     // a purely imaginary argument turns circular functions into hyperbolic ones and back: sin(I*r) = I*sinh(r)
     if let Some(r) = imaginary_multiple(x) {
         let hyper = |f: &str| unary(f, &r);
@@ -374,9 +379,49 @@ fn unary(name: &str, x: &Expr) -> Expr {
         ("log", Kind::Sym(s)) if &**s == SYM_E => Expr::one(),
         ("log", Kind::Pow(b, y)) if b.as_sym() == Some(SYM_E) => y.clone(),
         ("abs", Kind::Call(n, _)) if &**n == "abs" => x.clone(),
+        // circular functions of their inverses are algebraic: sin(acos(u)) = sqrt(1 - u**2), cos(atan(u)) = 1/sqrt(1 + u**2)
+        ("sin", Kind::Call(n, a)) | ("cos", Kind::Call(n, a)) | ("tan", Kind::Call(n, a))
+            if a.len() == 1 && inverse_composition(name, n, a.first()).is_some() =>
+        {
+            inverse_composition(name, n, a.first()).unwrap_or_else(raw)
+        }
         ("LambertW", Kind::Sym(s)) if &**s == SYM_E => Expr::one(),
         _ => raw(),
     }
+}
+
+fn inverse_composition(outer: &str, inner: &str, u: Option<&Expr>) -> Option<Expr> {
+    let u = u?;
+    let one_plus = |sign: i64| Expr::add(vec![Expr::one(), Expr::mul(vec![Expr::int(sign), Expr::pow(u, &Expr::int(2))])]);
+    let root = |e: Expr| Expr::pow(&e, &Expr::half());
+    Some(match (outer, inner) {
+        ("sin", "asin") | ("cos", "acos") | ("tan", "atan") => u.clone(),
+        ("sin", "acos") | ("cos", "asin") => root(one_plus(-1)),
+        ("sin", "atan") => u.div(&root(one_plus(1))),
+        ("cos", "atan") => Expr::one().div(&root(one_plus(1))),
+        _ => return None,
+    })
+}
+
+/// `atan` of `+-sqrt(3)` or `+-sqrt(3)/3` as a multiple of pi.
+fn atan_root_value(x: &Expr) -> Option<Expr> {
+    let (c, rest) = x.split_coeff();
+    if rest != Expr::pow(&Expr::int(3), &Expr::half()) {
+        return None;
+    }
+    let rat = |p: i64, q: i64| Num::ratio(IBig::from(p), IBig::from(q));
+    let angle = if c == rat(1, 1)? {
+        rat(1, 3)?
+    } else if c == rat(-1, 1)? {
+        rat(-1, 3)?
+    } else if c == rat(1, 3)? {
+        rat(1, 6)?
+    } else if c == rat(-1, 3)? {
+        rat(-1, 6)?
+    } else {
+        return None;
+    };
+    Some(Expr::mul(vec![Expr::num(angle), Expr::pi()]))
 }
 
 /// `asin`/`acos` of `+-sqrt(2)/2` or `+-sqrt(3)/2` as a rational multiple of pi.
