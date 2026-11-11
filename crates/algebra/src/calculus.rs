@@ -144,6 +144,7 @@ fn int(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
             }
             match sinc(fs, x)? {
                 Some(r) => Some(r),
+                None if let Some(sum) = trig_product(fs, x)? => int(&sum, x, depth + 1)?,
                 None => match by_parts(fs, x, depth)? {
                     Some(r) => Some(r),
                     None => parts_inverse(fs, x, depth)?,
@@ -185,6 +186,27 @@ fn int(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
         }
     }
     if depth < MAX_INT_DEPTH { u_substitution(e, x, depth) } else { Ok(None) }
+}
+
+/// `sin(a)*cos(b)`, `cos(a)*cos(b)` and `sin(a)*sin(b)` with different linear arguments, as sums of single sines and cosines.
+fn trig_product(fs: &[Expr], x: &Expr) -> MathResult<Option<Expr>> {
+    let [p, q] = fs else { return Ok(None) };
+    let (Some((p_sin, a)), Some((q_sin, b))) = (trig_arg(p), trig_arg(q)) else { return Ok(None) };
+    if a == b || linear_in(&a, x)?.is_none() || linear_in(&b, x)?.is_none() {
+        return Ok(None);
+    }
+    let (sum, diff) = (Expr::add(vec![a.clone(), b.clone()]), Expr::add(vec![a.clone(), b.neg()]));
+    let (sin, cos) = (|u: &Expr| Expr::call("sin", vec![u.clone()]), |u: &Expr| Expr::call("cos", vec![u.clone()]));
+    let terms = match (p_sin, q_sin) {
+        // sin a cos b = (sin(a + b) + sin(a - b))/2
+        (true, false) => vec![sin(&sum), sin(&diff)],
+        (false, true) => vec![sin(&sum), sin(&diff).neg()],
+        // cos a cos b = (cos(a - b) + cos(a + b))/2
+        (false, false) => vec![cos(&diff), cos(&sum)],
+        // sin a sin b = (cos(a - b) - cos(a + b))/2
+        (true, true) => vec![cos(&diff), cos(&sum).neg()],
+    };
+    Ok(Some(Expr::mul(vec![Expr::half(), Expr::add(terms)])))
 }
 
 /// `sin(a*x)/x` is `Si(a*x)`, `cos(a*x)/x` is `Ci(a*x)` (for `a > 0`) and `exp(a*x)/x` is `Ei(a*x)`.
@@ -237,6 +259,19 @@ fn elementary(e: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
                 }
                 None => None,
             }
+        }
+        // sec and csc: log((1 + sin u)/cos u) and log((1 - cos u)/sin u)
+        Kind::Pow(b, k) if *k == Expr::int(-1) && trig_arg(b).is_some() && lin(&trig_arg(b).map(|t| t.1).unwrap_or_else(Expr::zero))?.is_some() => {
+            let Some((is_sin, u)) = trig_arg(b) else { return Ok(None) };
+            let Some((a, _)) = lin(&u)? else { return Ok(None) };
+            let (s, c) = (Expr::call("sin", vec![u.clone()]), Expr::call("cos", vec![u]));
+            let log = |t: Expr| Expr::call("log", vec![t]);
+            let anti = if is_sin {
+                Expr::add(vec![log(Expr::add(vec![Expr::one(), c.neg()])), log(s).neg()])
+            } else {
+                Expr::add(vec![log(Expr::add(vec![Expr::one(), s])), log(c).neg()])
+            };
+            Some(anti.div(&a))
         }
         Kind::Pow(b, k) if !k.contains(x) => {
             if let Some((a, _)) = lin(b)? {
@@ -502,6 +537,19 @@ fn trig_arg(e: &Expr) -> Option<(bool, Expr)> {
 /// `x**n * g(x)` where `g` is sin, cos, sinh, cosh, exp of a linear argument, or `log(x)`: integration by parts.
 fn by_parts(fs: &[Expr], x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
     let [a, b] = fs else { return Ok(None) };
+    // x**r log x for a rational r other than -1
+    for (m, g) in [(a, b), (b, a)] {
+        if let Kind::Pow(base, r) = m.kind()
+            && base == x
+            && r.as_num().is_some_and(|n| n.is_exact() && !n.is_integer())
+            && matches!(g.kind(), Kind::Call(n, args) if &**n == "log" && args.first() == Some(x))
+        {
+            let r1 = Expr::add(vec![r.clone(), Expr::one()]);
+            let xp = Expr::pow(x, &r1);
+            let first = Expr::mul(vec![xp.clone(), g.clone()]).div(&r1);
+            return Ok(Some(Expr::add(vec![first, xp.div(&Expr::pow(&r1, &Expr::int(2))).neg()])));
+        }
+    }
     let (mono, g) = if power_of_x(a, x).is_some() { (a, b) } else { (b, a) };
     let Some(n) = power_of_x(mono, x) else { return Ok(None) };
     if let Kind::Call(name, args) = g.kind()
