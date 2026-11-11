@@ -733,3 +733,18 @@ fn nested_fractions_simple_roots_and_atan2_derivative() {
     assert_eq!(ev("diff(atan2(y, x), x)"), "-y/(x**2 + y**2)");
     assert_eq!(ev("simplify(diff(atan2(sin(x), cos(x)), x))"), "1");
 }
+
+#[test]
+fn infinite_sums_zeta_telescoping_and_arithmetic_geometric() {
+    assert_eq!(ev("summation(1/k**2, (k, 1, oo))"), "pi**2/6");
+    assert_eq!(ev("summation(1/k**4, (k, 1, oo))"), "pi**4/90");
+    assert_eq!(ev("summation(1/k**2, (k, 3, oo))"), "pi**2/6 - 5/4");
+    assert_eq!(ev("summation(1/(k*(k + 1)), (k, 1, oo))"), "1");
+    assert_eq!(ev("summation(1/(k*(k + 2)*(k + 3)), (k, 1, oo))"), "5/36");
+    assert_eq!(ev("summation(1/(k**2 - 1), (k, 2, oo))"), "3/4");
+    assert_eq!(ev("summation(k*2**(-k), (k, 1, oo))"), "2");
+    assert_eq!(ev("summation(k**2/3**k, (k, 0, oo))"), "3/2");
+    assert_eq!(ev("summation((k + 1)/2**k, (k, 0, oo))"), "4");
+    assert!(ev("summation(1/k, (k, 1, oo))").starts_with("ERROR"));
+    assert!(ev("summation(k*2**k, (k, 1, oo))").starts_with("ERROR"));
+}
