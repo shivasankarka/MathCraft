@@ -5,7 +5,7 @@ language, and a reactive notebook where changing one cell updates every cell tha
 
 ![MathCraft notebook, dark theme](docs/images/notebook-dark.png)
 
-**Status: v0.2.0, early but usable.** It works and is usable, but it is young: expect rough edges, and see
+**Status: v0.3.0, early but usable.** It works and is usable, but it is young: expect rough edges, and see
 [Limitations](#limitations). Built and tested mainly on macOS (Apple silicon); Windows and Linux builds come from CI
 and have had little hands-on use.
 
@@ -47,6 +47,7 @@ f = sin(x) * exp(-x / 5)         # x is not defined, so it is a symbol
 diff(f, x)                       # exp(-x/5)*cos(x) - exp(-x/5)*sin(x)/5
 1/3 + 1/6                        # 1/2, exact
 solve(x**2 - 5*x + 6, x)         # [2, 3]
+solve(x**2 > 4, x)               # (-oo, -2) ∪ (2, oo)
 integrate(sin(x)**2, (x, 0, pi)) # pi/2
 A = [[1, 2], [3, 4]]
 det(A), inv(A), A @ A
@@ -69,8 +70,10 @@ Use `**` for powers (`^` is XOR in Python and gives a helpful error). Declare sy
 ## Limitations
 
 - No classes, imports, dicts or sets in the language yet (a clear message names the line).
-- `solve` handles polynomials up to degree 4 in closed form (`nroots` for any degree), simple log/exp/trig equations
-  and linear systems; no nonlinear systems or inequalities.
+- `solve` handles polynomials up to degree 4 in closed form (`nroots` for any degree), simple log/exp/trig equations,
+  linear and small polynomial systems, and inequalities in one real unknown (not trigonometric ones).
+- `dsolve` covers first order linear, separable, Bernoulli and homogeneous equations and linear equations with constant
+  coefficients; no systems, Euler equations or forcing terms above second order.
 - `integrate` has no special functions; an integral with no closed form stays as `integrate(...)`.
 - Outputs are not saved in the file; no cell-level undo; no interactive sliders yet.
 - The interpreter is a tree walker, about 3x slower than CPython on plain scalar loops. Algebra is the strength.
