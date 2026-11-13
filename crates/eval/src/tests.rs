@@ -692,6 +692,10 @@ fn unevaluated_integrals_sums_and_limits() {
     assert_eq!(ev("doit(Integral(Sum(x**k, (k, 0, 3)), x))"), "x**4/4 + x**3/3 + x**2/2 + x");
     assert_eq!(ev("latex(Integral(exp(-x**2), (x, 0, oo)))"), "'\\int_{0}^{\\infty} e^{-x^{2}}\\,dx'");
     assert_eq!(ev("latex(Sum(1/k**2, (k, 1, oo)))"), "'\\sum_{k=1}^{\\infty} \\frac{1}{k^{2}}'");
+    assert_eq!(ev("Derivative(x*sin(x), x)"), "Derivative(x*sin(x), x)");
+    assert_eq!(ev("doit(Derivative(x*sin(x), x, 2))"), "-x*sin(x) + 2*cos(x)");
+    assert_eq!(ev("latex(Derivative(x**2*y, x))"), "'\\frac{\\partial}{\\partial x} x^{2} y'");
+    assert_eq!(ev("y = symbols('y'); latex(diff(y(x), x, 2))"), "'\\frac{d^{2}}{d x^{2}} \\operatorname{y}\\left(x\\right)'");
     assert_eq!(ev("latex(Limit(sin(x)/x, x, 0))"), "'\\lim_{x \\to 0} \\frac{\\sin\\left(x\\right)}{x}'");
 }
 
