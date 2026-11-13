@@ -826,6 +826,8 @@ fn ordinary_differential_equations() {
     assert_eq!(d("x*diff(y(x), x) + 2*y(x) == x**2", ""), "y(x) == (x**4/4 + C1)/x**2");
     assert_eq!(d("diff(y(x), x, 2) + y(x)", ""), "y(x) == C1*cos(x) + C2*sin(x)");
     assert_eq!(d("diff(y(x), x, 2) + y(x)", ", ics=[0, 1]"), "y(x) == sin(x)");
+    let wrong = run_source(&mut HashMap::new(), "y = symbols('y')\ndsolve(diff(y(x), x) + y(x), y(x), ics=[y(0) == 3])", false).result;
+    assert!(wrong.is_err_and(|e| e.to_string().contains("not equations")), "an equation in ics is an error, not a silent y(x) == 0");
     assert_eq!(d("diff(y(x), x, 2) - 3*diff(y(x), x) + 2*y(x)", ""), "y(x) == C1*exp(x) + C2*exp(2*x)");
     assert_eq!(d("diff(y(x), x, 2) + 2*diff(y(x), x) + y(x)", ""), "y(x) == C2*x*exp(-x) + C1*exp(-x)");
     assert_eq!(d("diff(y(x), x, 2) + 2*diff(y(x), x) + 5*y(x)", ""), "y(x) == C1*exp(-x)*cos(2*x) + C2*exp(-x)*sin(2*x)");
