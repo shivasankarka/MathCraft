@@ -2328,7 +2328,7 @@ fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::Plo
             .grid_spacing(80.0..=400.0)
             .x_grid_spacer(nice_grid(1.0))
             .y_grid_spacer(nice_grid(0.25))
-            .x_axis_formatter(|m, _| tick_label(m.value))
+            .x_axis_formatter(|m, _| category_label(&p.x_ticks, m.value).unwrap_or_else(|| tick_label(m.value)))
             .y_axis_formatter(|m, _| tick_label(m.value))
             .coordinates_formatter(egui_plot::Corner::LeftBottom, egui_plot::CoordinatesFormatter::new(|pt, b| coordinate_text(pt.x, pt.y, b)))
             .allow_scroll(false)
@@ -2346,7 +2346,19 @@ fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::Plo
             for (i, s) in p.series.iter().enumerate() {
                 let color = theme.plot.get(i % theme.plot.len()).copied().unwrap_or(theme.accent);
                 for seg in &s.segments {
-                    plot.line(egui_plot::Line::new(s.label.clone(), egui_plot::PlotPoints::from(seg.clone())).color(color).width(1.75));
+                    match s.kind {
+                        mathcraft_eval::SeriesKind::Line => {
+                            plot.line(egui_plot::Line::new(s.label.clone(), egui_plot::PlotPoints::from(seg.clone())).color(color).width(1.75))
+                        }
+                        mathcraft_eval::SeriesKind::Points => {
+                            plot.points(egui_plot::Points::new(s.label.clone(), egui_plot::PlotPoints::from(seg.clone())).color(color).radius(3.0))
+                        }
+                        mathcraft_eval::SeriesKind::Bars { width } => {
+                            let bars =
+                                seg.iter().map(|[x, h]| egui_plot::Bar::new(*x, *h).width(width).fill(color).stroke(Stroke::new(1.0, theme.bg))).collect();
+                            plot.bar_chart(egui_plot::BarChart::new(s.label.clone(), bars).color(color));
+                        }
+                    }
                 }
             }
         });
@@ -2372,6 +2384,14 @@ fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::Plo
             }
         });
     });
+}
+
+/// The category name at `x` when the axis carries names (a bar chart): empty between the names, `None` when it carries numbers.
+fn category_label(names: &[(f64, String)], x: f64) -> Option<String> {
+    if names.is_empty() {
+        return None;
+    }
+    Some(names.iter().find(|(at, _)| (at - x).abs() < 1e-9).map(|(_, n)| n.clone()).unwrap_or_default())
 }
 
 /// "x = 1.25   y = -0.5", with as many decimals as the visible range needs.
