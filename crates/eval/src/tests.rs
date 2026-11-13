@@ -741,6 +741,20 @@ fn nested_fractions_simple_roots_and_atan2_derivative() {
 }
 
 #[test]
+fn numeric_integration_roots_and_minima() {
+    let num = |src: &str| ev(src).parse::<f64>().unwrap_or(f64::NAN);
+    assert!((num("nintegrate(exp(-x**2), (x, -oo, oo))") - std::f64::consts::PI.sqrt()).abs() < 1e-8);
+    assert!((num("nintegrate(x**x, (x, 0, 1))") - 0.783_430_510_712_134_4).abs() < 1e-9);
+    assert!((num("nintegrate(sin(x)/x, (x, 1, 10))") - 0.712_264_523_851_691).abs() < 1e-9);
+    assert!((num("fzero(cos(x) - x, (x, 0, 1))") - 0.739_085_133_215_160_6).abs() < 1e-12);
+    assert!(ev("minimize((x - 2)**2 + 1, (x, -5, 5))").starts_with("[2.0000000"));
+    assert!(ev("maximize(sin(x), (x, 0, 3))").starts_with("[1.5707963"));
+    assert!(ev("fzero(x**2 + 1, (x, -1, 1))").contains("change sign"));
+    assert!(ev("nintegrate(x*y, (x, 0, 1))").contains("only symbol"));
+    assert!(ev("minimize(x, (x, 3, 1))").starts_with("ERROR"));
+}
+
+#[test]
 fn inequalities() {
     let cases = [
         ("solve(x**2 > 4, x)", "(-oo, -2) \u{222a} (2, oo)"),
