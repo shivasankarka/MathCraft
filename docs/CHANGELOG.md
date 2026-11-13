@@ -2,6 +2,10 @@
 
 User-facing changes per version. Planning notes and status live in `refs/` (not tracked).
 
+## Unreleased
+
+- Windows: the app no longer opens a console window beside it.
+
 ## 0.3.0 (2026-11-13)
 
 - Complex numbers: `re`, `im`, `conjugate` and `abs` work on `exp(I*x)`, `sin`, `cos`, `sinh`, `cosh`, `tan`, `tanh` and `log` of complex arguments; `(1 + I)**10` is `32*I`; `sin(I)` is `I*sinh(1)`; `N(exp(1 + 2*I))` gives a complex number. New `arg(z)`, `rewrite_trig` (exponentials to sin and cos) and `rewrite_exp`; `simplify((exp(I*x) + exp(-I*x))/2)` is `cos(x)`.
