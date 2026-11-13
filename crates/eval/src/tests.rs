@@ -772,6 +772,10 @@ fn ordinary_differential_equations() {
     assert_eq!(d("diff(y(x), x, 2) + 2*diff(y(x), x) + 5*y(x)", ""), "y(x) == C1*exp(-x)*cos(2*x) + C2*exp(-x)*sin(2*x)");
     assert_eq!(d("diff(y(x), x, 2) - y(x) == exp(2*x)", ""), "y(x) == C1*exp(-x) + C2*exp(x) + exp(2*x)/3");
     assert_eq!(d("diff(y(x), x, 2) + y(x) == sin(x)", ""), "y(x) == C1*cos(x) + C2*sin(x) - x*cos(x)/2 + sin(x)/2");
+    assert_eq!(d("diff(y(x), x) + y(x) == x*y(x)**2", ""), "y(x) == 1/(C1*exp(x) + x + 1)");
+    assert_eq!(d("diff(y(x), x) == x*y(x)**2 + y(x)", ", ics=[1]"), "y(x) == 1/(-x + 1)");
+    assert_eq!(d("diff(y(x), x) == (x + y(x))/x", ""), "y(x) == C1*x + x*log(x)");
+    assert_eq!(d("diff(y(x), x) == (y(x)/x)**2 + y(x)/x", ""), "y(x) == x/(C1 - log(x))");
     assert!(d("diff(y(x), x)**2 + y(x)", "").starts_with("ERROR"));
     assert!(d("diff(y(x), x, 2) + x*y(x)", "").starts_with("ERROR"));
 }
