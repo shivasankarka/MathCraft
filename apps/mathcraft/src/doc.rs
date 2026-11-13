@@ -103,7 +103,8 @@ impl Doc {
     pub fn run(&mut self, req: RunRequest) {
         let jobs = self.nb.plan(req);
         if !jobs.is_empty() {
-            self.kernel.run(jobs);
+            // code may read and write files next to the notebook, once it has been saved
+            self.kernel.run(jobs, self.path.as_deref().and_then(Path::parent).map(Path::to_path_buf));
         }
     }
 
