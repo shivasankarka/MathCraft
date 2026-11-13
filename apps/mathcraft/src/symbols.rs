@@ -145,6 +145,101 @@ impl Stops {
     }
 }
 
+/// What an action button adds after the expression it wraps.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Extra {
+    None,
+    /// `, x`: the variable the expression is about.
+    Var,
+    /// `, (x, -5, 5)`: a plotting range.
+    Range,
+}
+
+/// A button of the action row: it wraps the selected expression in a call, `solve(<selection>, x)`.
+pub struct Act {
+    pub label: &'static str,
+    pub func: &'static str,
+    pub extra: Extra,
+    pub hint: &'static str,
+}
+
+pub const ACTIONS: &[Act] = &[
+    Act { label: "Simplify", func: "simplify", extra: Extra::None, hint: "Simplify the selected expression" },
+    Act { label: "Expand", func: "expand", extra: Extra::None, hint: "Multiply out" },
+    Act { label: "Factor", func: "factor", extra: Extra::None, hint: "Factor" },
+    Act { label: "Solve", func: "solve", extra: Extra::Var, hint: "Solve the equation or inequality" },
+    Act { label: "Differentiate", func: "diff", extra: Extra::Var, hint: "Derivative" },
+    Act { label: "Integrate", func: "integrate", extra: Extra::Var, hint: "Indefinite integral" },
+    Act { label: "Numeric", func: "N", extra: Extra::None, hint: "Decimal value" },
+    Act { label: "Plot", func: "plot", extra: Extra::Range, hint: "Draw it" },
+];
+
+/// The variable an expression is about: the one name in it that is neither a function nor a constant, else `x`.
+pub fn guess_variable(expr: &str, is_known: &dyn Fn(&str) -> bool) -> String {
+    let mut names: Vec<String> = Vec::new();
+    let mut word = String::new();
+    let chars: Vec<char> = expr.chars().chain(std::iter::once(' ')).collect();
+    for (i, c) in chars.iter().enumerate() {
+        if c.is_alphanumeric() || *c == '_' {
+            word.push(*c);
+            continue;
+        }
+        let starts_with_letter = word.chars().next().is_some_and(char::is_alphabetic);
+        let is_call = chars.get(i) == Some(&'(');
+        if starts_with_letter && !is_call && !is_known(&word) && !names.contains(&word) {
+            names.push(word.clone());
+        }
+        word.clear();
+    }
+    match names.as_slice() {
+        [only] => only.clone(),
+        _ if names.iter().any(|n| n == "x") => "x".to_owned(),
+        [first, ..] if names.len() == 2 => first.clone(),
+        _ => "x".to_owned(),
+    }
+}
+
+/// The char range of the expression on `line` that an action acts on: the whole line, minus indentation, a trailing
+/// comment, and the `name =` of an assignment.
+pub fn expression_span(line: &str) -> (usize, usize) {
+    let chars: Vec<char> = line.chars().collect();
+    let mut start = chars.iter().take_while(|c| c.is_whitespace()).count();
+    // `name = ` (a single equals sign after one identifier)
+    let ident_end = start + chars.iter().skip(start).take_while(|c| c.is_alphanumeric() || **c == '_').count();
+    if ident_end > start {
+        let mut k = ident_end;
+        while chars.get(k) == Some(&' ') {
+            k += 1;
+        }
+        if chars.get(k) == Some(&'=') && chars.get(k + 1) != Some(&'=') {
+            start = k + 1;
+            while chars.get(start) == Some(&' ') {
+                start += 1;
+            }
+        }
+    }
+    let mut end = chars.len();
+    if let Some(hash) = chars.iter().position(|c| *c == '#') {
+        end = hash.max(start);
+    }
+    while end > start && chars.get(end - 1).is_some_and(|c| c.is_whitespace()) {
+        end -= 1;
+    }
+    (start, end.max(start))
+}
+
+/// The call that wraps `expr` for `act`, and the char range inside it that should be selected afterwards (the variable
+/// or range, so it is easy to change).
+pub fn wrap(act: &Act, expr: &str, var: &str) -> (String, Option<(usize, usize)>) {
+    let head = format!("{}({expr}", act.func);
+    let base = head.chars().count();
+    match act.extra {
+        Extra::None => (format!("{head})"), None),
+        Extra::Var => (format!("{head}, {var})"), Some((base + 2, base + 2 + var.chars().count()))),
+        Extra::Range => (format!("{head}, ({var}, -5, 5))"), Some((base + 3, base + 3 + var.chars().count()))),
+    }
+}
+
 /// The contents of the symbols window; returns the template that was clicked.
 pub fn contents(ui: &mut egui::Ui, theme: &Theme) -> Option<&'static Template> {
     let mut clicked = None;
@@ -184,6 +279,38 @@ mod tests {
                 assert_eq!(stops(template.code, template.select).len(), template.select.split_whitespace().count(), "{}", template.label);
             }
         }
+    }
+
+    #[test]
+    fn actions_wrap_an_expression_and_select_the_variable() {
+        let act = |name: &str| ACTIONS.iter().find(|a| a.func == name).unwrap();
+        assert_eq!(wrap(act("solve"), "x**2 - 4", "x"), ("solve(x**2 - 4, x)".to_owned(), Some((16, 17))));
+        assert_eq!(wrap(act("expand"), "(a+b)**2", "a"), ("expand((a+b)**2)".to_owned(), None));
+        let (code, sel) = wrap(act("plot"), "sin(t)", "t");
+        assert_eq!(code, "plot(sin(t), (t, -5, 5))");
+        assert_eq!(sel.map(|(a, b)| code.chars().skip(a).take(b - a).collect::<String>()), Some("t".to_owned()));
+    }
+
+    #[test]
+    fn the_expression_on_a_line_skips_the_assignment_and_comment() {
+        let span = |l: &str| {
+            let (a, b) = expression_span(l);
+            l.chars().skip(a).take(b - a).collect::<String>()
+        };
+        assert_eq!(span("y = x**2 - 1  # note"), "x**2 - 1");
+        assert_eq!(span("  x**2 == 4"), "x**2 == 4");
+        assert_eq!(span("eq = x == 3"), "x == 3");
+        assert_eq!(span(""), "");
+    }
+
+    #[test]
+    fn the_variable_is_the_one_unknown_name() {
+        let known = |n: &str| matches!(n, "pi" | "E" | "I" | "oo");
+        assert_eq!(guess_variable("t**2 - 4", &known), "t");
+        assert_eq!(guess_variable("sin(t) + pi", &known), "t");
+        assert_eq!(guess_variable("a*x + b", &known), "x", "x wins among several");
+        assert_eq!(guess_variable("4 + 4", &known), "x");
+        assert_eq!(guess_variable("m*n", &known), "m", "otherwise the first of two");
     }
 
     #[test]
