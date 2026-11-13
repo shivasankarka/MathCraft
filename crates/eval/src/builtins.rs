@@ -150,6 +150,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("integrate", "integrate(f, x) | integrate(f, (x, a, b))", "antiderivative, or definite integral (numeric if no closed form)"),
     ("Integral", "Integral(f, x) | Integral(f, (x, a, b))", "an integral left unevaluated and typeset as one; doit() evaluates it"),
     ("Sum", "Sum(f, (k, a, b))", "a sum left unevaluated and typeset as one; doit() evaluates it"),
+    ("Derivative", "Derivative(f, x) | Derivative(f, x, n)", "a derivative left unevaluated and typeset as d/dx; doit() evaluates it"),
     ("Limit", "Limit(f, x, a)", "a limit left unevaluated and typeset as one; doit() evaluates it"),
     ("doit", "doit(expr)", "evaluate the Integral, Sum and Limit objects inside an expression"),
     ("limit", "limit(f, x, a, dir='+-')", "limit as x approaches a (a may be oo or -oo; dir='+' or '-' for one side)"),
@@ -1037,6 +1038,14 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             let [k, lo, hi] = range.as_slice() else { return err("the range is written (k, a, b)") };
             it.checked(Expr::call(name, vec![a.expr(0)?, as_symbol(k)?, lo.to_expr()?, hi.to_expr()?]))
         }
+        "Derivative" => {
+            a.limits(name, 2, 3)?;
+            let mut parts = vec![a.expr(0)?, as_symbol(a.get(1)?)?];
+            if a.pos.len() == 3 {
+                parts.push(a.expr(2)?);
+            }
+            it.checked(Expr::call(name, parts))
+        }
         "Limit" => {
             a.limits(name, 3, 3)?;
             it.checked(Expr::call(name, vec![a.expr(0)?, as_symbol(a.get(1)?)?, a.expr(2)?]))
@@ -1448,7 +1457,7 @@ fn plot(a: &Args) -> R<Value> {
     Ok(Value::Plot(Arc::new(PlotSpec { series, x_label: x.to_string() })))
 }
 
-/// Evaluate the `Integral`, `Sum` and `Limit` objects inside `e`; one with no closed form stays as it is.
+/// Evaluate the `Integral`, `Sum`, `Limit` and `Derivative` objects inside `e`; one with no closed form stays as it is.
 fn doit(e: &Expr) -> Result<Expr, EvalError> {
     let inner = e.map_children(|c| doit(c).map_err(|x| mathcraft_core::MathError::unsupported(x.to_string())))?;
     let Kind::Call(name, args) = inner.kind() else { return Ok(inner) };
@@ -1457,6 +1466,11 @@ fn doit(e: &Expr) -> Result<Expr, EvalError> {
         ("Integral", [f, x, lo, hi]) => alg::integrate_definite(f, x, lo, hi)?,
         ("Sum", [f, k, lo, hi]) => alg::summation(f, k, lo, hi)?.unwrap_or(inner),
         ("Limit", [f, x, a]) => alg::limit(f, x, a)?,
+        ("Derivative", [f, x]) => alg::diff(f, x)?,
+        ("Derivative", [f, x, n]) => match n.as_i64().and_then(|k| u32::try_from(k).ok()) {
+            Some(k) => alg::diff_n(f, x, k)?,
+            None => inner,
+        },
         _ => inner,
     })
 }
