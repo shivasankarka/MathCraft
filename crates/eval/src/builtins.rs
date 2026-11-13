@@ -3,6 +3,7 @@
 
 use crate::array::{self, DType};
 use crate::interp::{Interp, numeric, order_numbers};
+use crate::numerics;
 use crate::value::{EvalError, PlotSeries, PlotSpec, R, Value, err};
 use dashu::integer::IBig;
 use mathcraft_algebra as alg;
@@ -158,6 +159,10 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("pycode", "pycode(expr, args=None, name='f', numpy=False)", "Python source of a function computing expr (a list gives a tuple)"),
     ("rustcode", "rustcode(expr, args=None, name='f')", "Rust source of an f64 function computing expr"),
     ("nroots", "nroots(poly, x)", "every complex root of a polynomial, numerically (for equations solve cannot do)"),
+    ("nintegrate", "nintegrate(f, (x, a, b))", "numeric integral by adaptive quadrature; a and b may be oo or -oo; for integrals with no closed form"),
+    ("fzero", "fzero(f, (x, a, b))", "a root of f between a and b, where f changes sign (Brent's method)"),
+    ("minimize", "minimize(f, (x, a, b))", "[x, f(x)] at the lowest point of f on [a, b]"),
+    ("maximize", "maximize(f, (x, a, b))", "[x, f(x)] at the highest point of f on [a, b]"),
     ("nsolve", "nsolve(eq, x, guess)", "numeric root near a starting guess (Newton's method)"),
     ("apart", "apart(f, x)", "partial fractions of a rational function"),
     ("series", "series(f, x, x0=0, n=6)", "Taylor polynomial up to order n"),
@@ -219,6 +224,10 @@ const METHODS: &[&str] = &[
     "limit",
     "apart",
     "nroots",
+    "nintegrate",
+    "fzero",
+    "minimize",
+    "maximize",
     "nsolve",
     "latex",
     "pycode",
@@ -1108,6 +1117,7 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             let code = mathcraft_core::codegen::function(&body, &args, &fname, target)?;
             Ok(Value::Str(code.into()))
         }
+        "nintegrate" | "fzero" | "minimize" | "maximize" => numeric_tool(it, name, &a),
         "nsolve" => {
             a.limits(name, 3, 3)?;
             let f = eq_to_zero_form(&a.expr(0)?);
@@ -1385,6 +1395,59 @@ fn solve(it: &Interp<'_>, a: &Args) -> R<Value> {
             roots.into_iter().filter(|r| alg::admissible(r, &x, &asm)).map(|r| it.checked(r)).collect::<R<Vec<_>>>().map(Value::list)
         }
     }
+}
+
+/// An end point of a numeric range: a number, or `oo` / `-oo`.
+fn numeric_bound(e: &Expr) -> R<f64> {
+    if *e == Expr::infinity() {
+        return Ok(f64::INFINITY);
+    }
+    if *e == Expr::infinity().neg() {
+        return Ok(f64::NEG_INFINITY);
+    }
+    eval_f64(e, &|_| None).map_err(Into::into)
+}
+
+/// `nintegrate`, `fzero`, `minimize` and `maximize`: `name(f, (x, a, b))` on plain floats.
+fn numeric_tool(it: &Interp<'_>, name: &str, a: &Args) -> R<Value> {
+    a.limits(name, 2, 2)?;
+    let f = a.expr(0)?;
+    let (Value::Tuple(range) | Value::List(range)) = a.get(1)? else { return err(format!("the range is written {name}(f, (x, a, b))")) };
+    let [x, lo, hi] = range.as_slice() else { return err("the range is written (x, a, b)") };
+    let (x, lo, hi) = (as_symbol(x)?, numeric_bound(&lo.to_expr()?)?, numeric_bound(&hi.to_expr()?)?);
+    if lo.is_nan() || hi.is_nan() || (name != "nintegrate" && (!lo.is_finite() || !hi.is_finite() || lo >= hi)) {
+        return err(if name == "nintegrate" { "the range ends must be numbers or oo" } else { "the range must be finite numbers with a < b" });
+    }
+    if f.free_symbols().iter().any(|s| Some(&**s) != x.as_sym()) {
+        return err(format!("{name}: the only symbol allowed is {x}; give the others values"));
+    }
+    // a runaway call is stopped through the budget: the first error is kept and the function turns into NaN
+    let failure = std::cell::RefCell::new(None);
+    let sign = if name == "maximize" { -1.0 } else { 1.0 };
+    let mut eval = |v: f64| match (budget::tick(), eval_f64(&f, &|n| (Some(n) == x.as_sym()).then_some(v))) {
+        (Ok(()), Ok(r)) => sign * r,
+        (Err(e), _) => {
+            failure.borrow_mut().get_or_insert(EvalError::new(e.to_string()));
+            f64::NAN
+        }
+        (_, Err(_)) => f64::NAN,
+    };
+    let out = match name {
+        "nintegrate" => numerics::integrate(&mut eval, lo, hi).map(|v| Value::Expr(Expr::float(v))),
+        "fzero" => numerics::find_root(&mut eval, lo, hi).map(|v| Value::Expr(Expr::float(v))),
+        _ => numerics::minimize(&mut eval, lo, hi).map(|(p, v)| Value::list(vec![Value::Expr(Expr::float(p)), Value::Expr(Expr::float(sign * v))])),
+    };
+    if let Some(e) = failure.into_inner() {
+        return Err(e);
+    }
+    let _ = it;
+    out.ok_or_else(|| {
+        EvalError::new(match name {
+            "nintegrate" => "nintegrate: the integrand is not finite on this range, or the integral did not settle".to_owned(),
+            "fzero" => "fzero: f must be finite and change sign between a and b".to_owned(),
+            _ => format!("{name}: f has no finite value on this range"),
+        })
+    })
 }
 
 fn dsolve(it: &Interp<'_>, a: &Args) -> R<Value> {
