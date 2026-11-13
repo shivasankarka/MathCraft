@@ -4,6 +4,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- CSV and TSV files: `read_csv("data.csv", header=True, columns=True)` reads numbers as numbers (`x, y = read_csv(...)` feeds `scatter(x, y)`), and `write_csv("out.csv", rows, header=[...])` writes a list of rows or a matrix. Files are only reachable inside the notebook's own folder (the working directory in the command line tool): no absolute paths, no `..`, symbolic links are checked, and only `.csv`, `.tsv` and `.txt` are accepted. Save a new notebook first so it has a folder. The MCP server and the browser build have no file access.
 - An action row under the menus: Simplify, Expand, Factor, Solve, Differentiate, Integrate, Numeric and Plot wrap the selected text (or the expression on the cursor's line, after any `name =`) in that call, guessing the variable and selecting it so it is easy to change. View > Show or hide the action row.
 - Symbols palette: Tab moves to the next placeholder of the inserted template (`integrate(f, (x, a, b))`: f, x, a, b), and after the last one past the template.
 - `integrate` handles a polynomial times `exp` times `sin` or `cos` (`x**2*exp(x)*sin(x)`), and integrals of powers of `sin` and `cos` come out as one flat sum (`sin(x)**5*cos(x)/6 - …`) instead of nested fractions.
