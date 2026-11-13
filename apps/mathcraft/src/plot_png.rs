@@ -2,8 +2,8 @@
 //! font's glyph outlines (read with `skrifa`, filled here by sub-scanline coverage). No rendering library; the
 //! picture mirrors the SVG export (`plot_export::svg`) and is written with the `png` encoder.
 
-use crate::plot_export::{View, ticks};
-use mathcraft_eval::PlotSpec;
+use crate::plot_export::{View, ticks, x_marks};
+use mathcraft_eval::{PlotSpec, SeriesKind};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{FontRef, MetadataProvider};
@@ -75,6 +75,37 @@ impl Canvas {
                 let (cx, cy) = (a[0] + t * dx, a[1] + t * dy);
                 let d = ((px - cx).powi(2) + (py - cy).powi(2)).sqrt();
                 self.blend(x, y, color, half + 0.5 - d);
+            }
+        }
+    }
+
+    /// A solid rectangle, clipped to `clip`, with anti-aliased edges.
+    fn fill_rect(&mut self, a: [f32; 2], b: [f32; 2], color: Rgb, clip: [f32; 4]) {
+        let (lx, hx) = (a[0].min(b[0]).max(clip[0]), a[0].max(b[0]).min(clip[2]));
+        let (ly, hy) = (a[1].min(b[1]).max(clip[1]), a[1].max(b[1]).min(clip[3]));
+        if !(lx.is_finite() && hx.is_finite() && ly.is_finite() && hy.is_finite()) || hx <= lx || hy <= ly {
+            return;
+        }
+        for y in ly.floor() as i64..hy.ceil() as i64 {
+            let cover_y = (hy.min(y as f32 + 1.0) - ly.max(y as f32)).clamp(0.0, 1.0);
+            for x in lx.floor() as i64..hx.ceil() as i64 {
+                let cover_x = (hx.min(x as f32 + 1.0) - lx.max(x as f32)).clamp(0.0, 1.0);
+                self.blend(x, y, color, cover_x * cover_y);
+            }
+        }
+    }
+
+    /// A filled dot of the given radius.
+    fn dot(&mut self, at: [f32; 2], radius: f32, color: Rgb, clip: [f32; 4]) {
+        let (x0, x1) = ((at[0] - radius - 1.0).max(clip[0]).floor() as i64, (at[0] + radius + 1.0).min(clip[2]).ceil() as i64);
+        let (y0, y1) = ((at[1] - radius - 1.0).max(clip[1]).floor() as i64, (at[1] + radius + 1.0).min(clip[3]).ceil() as i64);
+        if !at.iter().all(|v| v.is_finite()) || x1 - x0 > 20_000 || y1 - y0 > 20_000 {
+            return;
+        }
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let d = ((x as f32 + 0.5 - at[0]).powi(2) + (y as f32 + 0.5 - at[1]).powi(2)).sqrt();
+                self.blend(x, y, color, radius + 0.5 - d);
             }
         }
     }
@@ -255,10 +286,10 @@ pub fn png(p: &PlotSpec, view: View, colors: &Colors, tick_label: &dyn Fn(f64) -
     let all = [0.0, 0.0, wpx as f32, hpx as f32];
     let frame = [LEFT * s, TOP * s, (LEFT + pw) * s, (TOP + ph) * s];
     let font_px = 11.0 * s;
-    for t in ticks(x0, x1) {
+    for (t, label) in x_marks(p, x0, x1, tick_label) {
         let x = sx(t);
         cv.line([x, frame[1]], [x, frame[3]], s, colors.grid, all);
-        face.text(&mut cv, &tick_label(t), [x, (TOP + ph + 16.0) * s], font_px, Anchor::Middle, colors.text);
+        face.text(&mut cv, &label, [x, (TOP + ph + 16.0) * s], font_px, Anchor::Middle, colors.text);
     }
     for t in ticks(y0, y1) {
         let y = sy(t);
@@ -272,9 +303,23 @@ pub fn png(p: &PlotSpec, view: View, colors: &Colors, tick_label: &dyn Fn(f64) -
     let color_of = |i: usize| colors.series.get(i % colors.series.len().max(1)).copied().unwrap_or([31, 111, 235]);
     for (i, series) in p.series.iter().enumerate() {
         for seg in &series.segments {
-            for pair in seg.windows(2) {
-                if let [a, b] = pair {
-                    cv.line([sx(a[0]), sy(a[1])], [sx(b[0]), sy(b[1])], 1.75 * s, color_of(i), frame);
+            match series.kind {
+                SeriesKind::Line => {
+                    for pair in seg.windows(2) {
+                        if let [a, b] = pair {
+                            cv.line([sx(a[0]), sy(a[1])], [sx(b[0]), sy(b[1])], 1.75 * s, color_of(i), frame);
+                        }
+                    }
+                }
+                SeriesKind::Points => {
+                    for [x, y] in seg {
+                        cv.dot([sx(*x), sy(*y)], 3.0 * s, color_of(i), frame);
+                    }
+                }
+                SeriesKind::Bars { width } => {
+                    for [x, h] in seg {
+                        cv.fill_rect([sx(x - width / 2.0), sy(*h)], [sx(x + width / 2.0), sy(0.0)], color_of(i), frame);
+                    }
                 }
             }
         }
@@ -300,15 +345,13 @@ pub fn png(p: &PlotSpec, view: View, colors: &Colors, tick_label: &dyn Fn(f64) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mathcraft_eval::PlotSeries;
+    use mathcraft_eval::{PlotSeries, SeriesKind};
 
     fn spec() -> PlotSpec {
         PlotSpec {
             x_label: "x".into(),
-            series: vec![
-                PlotSeries { label: "sin".into(), segments: vec![vec![[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]]] },
-                PlotSeries { label: "flat".into(), segments: vec![vec![[0.0, 0.5], [2.0, 0.5]]] },
-            ],
+            x_ticks: vec![],
+            series: vec![PlotSeries::line("sin", vec![vec![[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]]]), PlotSeries::line("flat", vec![vec![[0.0, 0.5], [2.0, 0.5]]])],
         }
     }
 
@@ -337,6 +380,31 @@ mod tests {
     }
 
     #[test]
+    fn bars_and_dots_are_filled() {
+        let colors = Colors { series: &[[200, 0, 0]], text: [0, 0, 0], grid: [220, 220, 220] };
+        let bars = PlotSpec {
+            x_label: String::new(),
+            series: vec![PlotSeries { label: String::new(), segments: vec![vec![[0.0, 1.0], [1.0, 2.0]]], kind: SeriesKind::Bars { width: 0.8 } }],
+            x_ticks: vec![(0.0, "a".into()), (1.0, "b".into())],
+        };
+        let view = crate::plot_export::data_view(&bars);
+        let bytes = png(&bars, view, &colors, &|v| format!("{v}"), crate::fonts::INTER, 1.0).unwrap_or_else(|e| panic!("{e}"));
+        let (_, _, px) = decode(&bytes);
+        let red = px.chunks(3).filter(|c| c.first().is_some_and(|r| *r > 180) && c.get(1).is_some_and(|g| *g < 60)).count();
+        // two bars, about 0.8 of a unit wide, 1 and 2 tall: a few thousand solid pixels
+        assert!(red > 5_000, "{red}");
+        let dots = PlotSpec {
+            series: vec![PlotSeries { label: String::new(), segments: vec![vec![[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]], kind: SeriesKind::Points }],
+            x_label: String::new(),
+            x_ticks: vec![],
+        };
+        let bytes = png(&dots, crate::plot_export::data_view(&dots), &colors, &|v| format!("{v}"), crate::fonts::INTER, 1.0).unwrap_or_else(|e| panic!("{e}"));
+        let red = decode(&bytes).2.chunks(3).filter(|c| c.first().is_some_and(|r| *r > 180) && c.get(1).is_some_and(|g| *g < 60)).count();
+        // the middle dot is whole (about pi * 3^2 pixels); the two at the frame's edge are half cut
+        assert!((28..400).contains(&red), "{red}");
+    }
+
+    #[test]
     fn scale_makes_a_bigger_picture() {
         let colors = Colors { series: &[[0, 0, 0]], text: [0, 0, 0], grid: [200, 200, 200] };
         let bytes = png(&spec(), [0.0, 2.0, 0.0, 1.0], &colors, &|v| format!("{v}"), crate::fonts::INTER, 2.0).unwrap_or_else(|e| panic!("{e}"));
@@ -350,10 +418,8 @@ mod tests {
         let curve = |f: fn(f64) -> f64| -> Vec<[f64; 2]> { (0..=200).map(|i| i as f64 * 0.05).map(|x| [x, f(x)]).collect() };
         let p = PlotSpec {
             x_label: "x".into(),
-            series: vec![
-                PlotSeries { label: "sin(x)".into(), segments: vec![curve(f64::sin)] },
-                PlotSeries { label: "cos(x)/2".into(), segments: vec![curve(|x| x.cos() / 2.0)] },
-            ],
+            x_ticks: vec![],
+            series: vec![PlotSeries::line("sin(x)", vec![curve(f64::sin)]), PlotSeries::line("cos(x)/2", vec![curve(|x| x.cos() / 2.0)])],
         };
         let colors = Colors { series: &[[31, 111, 235], [230, 120, 20]], text: [0x33, 0x33, 0x33], grid: [0xe4, 0xe4, 0xe8] };
         let bytes = png(&p, [0.0, 10.0, -1.2, 1.2], &colors, &|v| format!("{v}"), crate::fonts::INTER, 2.0).unwrap_or_default();
