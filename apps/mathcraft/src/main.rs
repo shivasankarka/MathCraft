@@ -581,7 +581,8 @@ impl App {
     }
 
     /// Put a formula template into the code cell that was being edited, with its first placeholder selected.
-    fn insert_template(&mut self, template: &symbols::Template, ctx: &egui::Context) {
+    /// Put `what` at the cursor of the last code cell with its first placeholder selected (Tab visits the others).
+    fn insert_code(&mut self, what: &symbols::Insert, ctx: &egui::Context) {
         let target = self.last_cell.and_then(|id| self.cur.nb.cell(id)).filter(|c| c.kind == CellKind::Code);
         let Some(cell) = target else {
             self.status = "Click into a code cell first, then insert a symbol".into();
@@ -592,22 +593,22 @@ impl App {
         let start = egui::TextEdit::load_state(ctx, editor)
             .and_then(|s| s.cursor.char_range())
             .map_or_else(|| text.chars().count(), |r| usize::from(r.primary.index).min(usize::from(r.secondary.index)).min(text.chars().count()));
-        if !insert_at_cursor(ctx, editor, &mut text, template.code) {
-            text.push_str(template.code);
+        if !insert_at_cursor(ctx, editor, &mut text, &what.code) {
+            text.push_str(&what.code);
         }
-        if let Some((from, to)) = symbols::selection(template.code, template.select)
+        if let Some((from, to)) = symbols::selection(&what.code, &what.select)
             && let Some(mut state) = egui::TextEdit::load_state(ctx, editor)
         {
             let at = |n: usize| egui::text::CCursor::new(start + n);
             state.cursor.set_char_range(Some(CCursorRange::two(at(from), at(to))));
             state.store(ctx, editor);
             // Tab visits the other placeholders
-            let stops = symbols::Stops::new(template.code, template.select, start, text.chars().count());
+            let stops = symbols::Stops::new(&what.code, &what.select, start, text.chars().count());
             ctx.data_mut(|d| d.insert_temp(stops_key(editor), stops));
         }
         self.apply(vec![Action::SetSource(id, text)]);
         self.cur.focus = Some(id);
-        self.status = format!("Inserted {}", template.code);
+        self.status = format!("Inserted {}", what.code);
     }
 
     /// The row of one-click actions on the expression being edited.
@@ -1182,8 +1183,8 @@ impl App {
                 ui.label(RichText::new("Click into a code cell, then pick a symbol.").size(theme::TEXT_CAPTION).color(theme.text_faint));
                 egui::ScrollArea::vertical().auto_shrink([true, false]).show(ui, |ui| picked = symbols::contents(ui, theme));
             });
-        if let Some(template) = picked {
-            self.insert_template(template, ctx);
+        if let Some(what) = picked {
+            self.insert_code(&what, ctx);
         }
         self.show_symbols = open;
     }
@@ -3310,7 +3311,7 @@ mod tests {
         h.run();
         let ctx = h.ctx.clone();
         if let Some(app) = h.state_mut() {
-            app.insert_template(&symbols::GROUPS[0].1[0], &ctx);
+            app.insert_code(&symbols::Insert::from(&symbols::GROUPS[0].1[0]), &ctx);
         }
         h.run();
         h.run();
@@ -3319,6 +3320,29 @@ mod tests {
         h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("sin(x)");
         h.run();
         assert_eq!(source(&h), "y = integrate(sin(x), x)");
+    }
+
+    #[test]
+    fn a_matrix_of_the_chosen_size_is_filled_in_with_tab() {
+        let mut h = typing_harness();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("A = ");
+        h.run();
+        let ctx = h.ctx.clone();
+        if let Some(app) = h.state_mut() {
+            app.insert_code(&symbols::matrix(2, 2), &ctx);
+        }
+        h.run();
+        h.run();
+        assert_eq!(source(&h), "A = [[a11, a12], [a21, a22]]");
+        for (i, digit) in ["1", "2", "3", "4"].into_iter().enumerate() {
+            if i > 0 {
+                h.key_press(Key::Tab);
+                h.run();
+            }
+            h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text(digit);
+            h.run();
+        }
+        assert_eq!(source(&h), "A = [[1, 2], [3, 4]]");
     }
 
     #[test]
@@ -3347,7 +3371,7 @@ mod tests {
         h.run();
         let ctx = h.ctx.clone();
         if let Some(app) = h.state_mut() {
-            app.insert_template(&symbols::GROUPS[0].1[1], &ctx);
+            app.insert_code(&symbols::Insert::from(&symbols::GROUPS[0].1[1]), &ctx);
         }
         h.run();
         h.run();
