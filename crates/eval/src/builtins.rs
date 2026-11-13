@@ -1467,10 +1467,15 @@ fn dsolve(it: &Interp<'_>, a: &Args) -> R<Value> {
     let (eq, f) = (a.expr(0)?, a.expr(1)?);
     let mut sols = alg::dsolve(&eq, &f)?;
     if let Some(ics) = a.opt(2, "ics") {
-        let values: Vec<Expr> = match ics {
-            Value::List(v) | Value::Tuple(v) => v.iter().map(Value::to_expr).collect::<R<_>>()?,
-            single => vec![single.to_expr()?],
+        let items: Vec<&Value> = match ics {
+            Value::List(v) | Value::Tuple(v) => v.iter().collect(),
+            single => vec![single],
         };
+        // `y(0) == 1` is a comparison (a boolean) or an equation, never a value
+        if items.iter().any(|v| matches!(v, Value::Bool(_)) || matches!(v, Value::Expr(e) if matches!(e.kind(), Kind::Eq(..)))) {
+            return err("ics lists the values y(x0), y'(x0), ...: write ics=[1, 0], not equations like y(0) == 1");
+        }
+        let values: Vec<Expr> = items.into_iter().map(Value::to_expr).collect::<R<_>>()?;
         let x0 = a.opt(3, "x0").map(Value::to_expr).transpose()?.unwrap_or_else(Expr::zero);
         let Some(x) = f.children().first().cloned() else { return err("the unknown is written y(x)") };
         let mut fixed = Vec::new();
