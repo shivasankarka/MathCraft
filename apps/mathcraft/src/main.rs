@@ -21,6 +21,7 @@ mod session;
 mod settings;
 mod sidebar;
 mod slider;
+mod symbols;
 mod tabs;
 mod text_view;
 mod theme;
@@ -79,6 +80,7 @@ enum Cmd {
     View(View),
     ToggleSidebar,
     Functions,
+    Symbols,
     Theme(ThemePreference),
     ToggleVim,
     TogglePretty,
@@ -117,6 +119,7 @@ struct App {
     next_id: u64,
     ctx: egui::Context,
     show_help: bool,
+    show_symbols: bool,
     help_filter: String,
     status: String,
     last_title: String,
@@ -286,6 +289,7 @@ impl App {
             next_id: 1,
             ctx,
             show_help: false,
+            show_symbols: false,
             help_filter: String::new(),
             status,
             last_title: String::new(),
@@ -465,6 +469,7 @@ impl App {
             item("View", "Text view", key(Modifiers::COMMAND | Modifiers::SHIFT, Key::T), Cmd::View(View::Text)),
             item("View", "Show or hide the sidebar", key(Modifiers::COMMAND, Key::B), Cmd::ToggleSidebar),
             item("View", "Browse all functions", "F1".to_owned(), Cmd::Functions),
+            item("View", "Insert symbols and formulas", "F2".to_owned(), Cmd::Symbols),
             item("Theme", "Match the system", String::new(), Cmd::Theme(ThemePreference::System)),
             item("Theme", "Light", String::new(), Cmd::Theme(ThemePreference::Light)),
             item("Theme", "Dark", String::new(), Cmd::Theme(ThemePreference::Dark)),
@@ -527,6 +532,7 @@ impl App {
             Cmd::View(v) => self.cur.set_view(v),
             Cmd::ToggleSidebar => self.toggle_sidebar(),
             Cmd::Functions => self.show_help = true,
+            Cmd::Symbols => self.show_symbols = true,
             Cmd::Theme(t) => ctx.set_theme(t),
             Cmd::ToggleVim => self.vim = !self.vim,
             Cmd::TogglePretty => self.pretty = !self.pretty,
@@ -567,6 +573,33 @@ impl App {
         self.apply(vec![Action::SetSource(id, text)]);
         self.cur.focus = Some(id);
         self.status = format!("Inserted {name}(");
+    }
+
+    /// Put a formula template into the code cell that was being edited, with its first placeholder selected.
+    fn insert_template(&mut self, template: &symbols::Template, ctx: &egui::Context) {
+        let target = self.last_cell.and_then(|id| self.cur.nb.cell(id)).filter(|c| c.kind == CellKind::Code);
+        let Some(cell) = target else {
+            self.status = "Click into a code cell first, then insert a symbol".into();
+            return;
+        };
+        let (id, mut text) = (cell.id, cell.source.clone());
+        let editor = editor_id(id);
+        let start = egui::TextEdit::load_state(ctx, editor)
+            .and_then(|s| s.cursor.char_range())
+            .map_or_else(|| text.chars().count(), |r| usize::from(r.primary.index).min(usize::from(r.secondary.index)).min(text.chars().count()));
+        if !insert_at_cursor(ctx, editor, &mut text, template.code) {
+            text.push_str(template.code);
+        }
+        if let Some((from, to)) = symbols::selection(template.code, template.select)
+            && let Some(mut state) = egui::TextEdit::load_state(ctx, editor)
+        {
+            let at = |n: usize| egui::text::CCursor::new(start + n);
+            state.cursor.set_char_range(Some(CCursorRange::two(at(from), at(to))));
+            state.store(ctx, editor);
+        }
+        self.apply(vec![Action::SetSource(id, text)]);
+        self.cur.focus = Some(id);
+        self.status = format!("Inserted {}", template.code);
     }
 
     /// A Vim `:` command.
@@ -753,6 +786,9 @@ impl App {
                 i.consume_key(Modifiers::COMMAND, Key::P) || i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::P),
             )
         });
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F2)) {
+            self.show_symbols = !self.show_symbols;
+        }
         // Cell-level undo only when no text editor has the keyboard (the editor's own undo handles typing).
         if !ctx.egui_wants_keyboard_input() {
             if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)) {
@@ -955,6 +991,9 @@ impl App {
             if ui.button("Functions").on_hover_text("List every function (F1)").clicked() {
                 self.show_help = !self.show_help;
             }
+            if ui.button("Symbols").on_hover_text("Insert integrals, sums, roots and more (F2)").clicked() {
+                self.show_symbols = !self.show_symbols;
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 if self.busy() {
@@ -1045,6 +1084,34 @@ impl App {
                 });
             });
         self.show_help = open;
+    }
+
+    fn symbols_window(&mut self, ctx: &egui::Context, theme: &Theme) {
+        if !self.show_symbols {
+            return;
+        }
+        let mut open = true;
+        let mut picked = None;
+        egui::Window::new("Symbols")
+            .title_bar(false)
+            .default_rect(egui::Rect::from_min_size(ctx.content_rect().right_top() + vec2(-360.0, 64.0), vec2(330.0, 540.0)))
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Symbols").font(egui::FontId::new(theme::TEXT_TITLE, fonts::strong_family())).color(theme.text));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if icons::button(ui, theme, Icon::Close, "Close (F2)").clicked() {
+                            open = false;
+                        }
+                    });
+                });
+                ui.label(RichText::new("Click into a code cell, then pick a symbol.").size(theme::TEXT_CAPTION).color(theme.text_faint));
+                egui::ScrollArea::vertical().auto_shrink([true, false]).show(ui, |ui| picked = symbols::contents(ui, theme));
+            });
+        if let Some(template) = picked {
+            self.insert_template(template, ctx);
+        }
+        self.show_symbols = open;
     }
 
     fn status_bar(&self, ui: &mut egui::Ui, theme: &Theme) {
@@ -1278,6 +1345,7 @@ impl App {
         }
         self.apply(actions);
         self.help_window(ctx, &theme);
+        self.symbols_window(ctx, &theme);
         if self.palette.open {
             let items = self.commands(ctx);
             let mut state = std::mem::take(&mut self.palette);
@@ -3090,6 +3158,38 @@ mod tests {
     }
 
     #[test]
+    fn every_symbol_label_has_glyphs_in_the_math_font() {
+        // egui panics when a glyph is missing, so check the font file itself
+        use skrifa::MetadataProvider;
+        let font = skrifa::FontRef::new(fonts::STIX_MATH).unwrap();
+        let charmap = font.charmap();
+        let missing: Vec<String> = symbols::GROUPS
+            .iter()
+            .flat_map(|(_, items)| items.iter())
+            .flat_map(|t| t.label.chars().filter(|c| charmap.map(*c).is_none()).map(move |c| format!("{c:?} in {:?}", t.label)))
+            .collect();
+        assert!(missing.is_empty(), "not in STIX Two Math: {missing:?}");
+    }
+
+    #[test]
+    fn a_symbol_is_inserted_at_the_cursor_with_its_placeholder_selected() {
+        let mut h = typing_harness();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("y = ");
+        h.run();
+        let ctx = h.ctx.clone();
+        if let Some(app) = h.state_mut() {
+            app.insert_template(&symbols::GROUPS[0].1[0], &ctx);
+        }
+        h.run();
+        h.run();
+        assert_eq!(source(&h), "y = integrate(f, x)");
+        // the placeholder is selected, so typing replaces it
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("sin(x)");
+        h.run();
+        assert_eq!(source(&h), "y = integrate(sin(x), x)");
+    }
+
+    #[test]
     fn cmd_alt_arrows_move_between_cells() {
         let mut h = typing_harness();
         if let Some(app) = h.state_mut() {
@@ -3256,6 +3356,32 @@ mod tests {
                 h.render().unwrap().save(dir.join(format!("menu-{menu}-{name}.png"))).unwrap();
             }
         }
+    }
+
+    #[test]
+    #[ignore = "renders with the GPU; needs MATHCRAFT_SHOTS=<dir>"]
+    fn symbols_screenshot() {
+        let Some(dir) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = egui_kittest::Harness::builder()
+            .wgpu()
+            .with_size(vec2(900.0, 620.0))
+            .build_ui_state(|ui, app: &mut Option<App>| app.get_or_insert_with(|| App::with_context(ui.ctx().clone(), None)).show(ui), None);
+        h.ctx.set_theme(ThemePreference::Light);
+        h.run_steps(4);
+        if let Some(app) = h.state_mut() {
+            app.replace_notebook(
+                Notebook::from_text(
+                    "# %%
+y = diff(f(x), x)
+",
+                ),
+                None,
+            );
+            app.show_symbols = true;
+        }
+        h.run_steps(6);
+        h.render().unwrap().save(dir.join("symbols.png")).unwrap();
     }
 
     #[test]
