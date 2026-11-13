@@ -209,6 +209,8 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("scatter", "scatter(xs, ys) | scatter(ys)", "draw points (x against y, or against 0, 1, 2, …)"),
     ("bar", "bar(heights) | bar(labels, heights)", "draw a bar chart"),
     ("hist", "hist(data, bins=10)", "draw a histogram of the data"),
+    ("read_csv", "read_csv(\"data.csv\", header=False, columns=False)", "read a CSV or TSV file from the notebook's folder"),
+    ("write_csv", "write_csv(\"out.csv\", rows, header=None)", "write rows to a CSV or TSV file in the notebook's folder"),
     ("help", "help() | help('name')", "list the functions, or describe one"),
 ];
 
@@ -1332,6 +1334,8 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
         "scatter" => crate::plots::scatter(&a),
         "bar" => crate::plots::bar(&a),
         "hist" => crate::plots::hist(&a),
+        "read_csv" => crate::files::read_csv(&a),
+        "write_csv" => crate::files::write_csv(&a),
         "help" => {
             a.limits(name, 0, 1)?;
             let text = match a.pos.first() {
