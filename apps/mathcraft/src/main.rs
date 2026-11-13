@@ -10,6 +10,7 @@
 mod complete;
 mod doc;
 mod fonts;
+mod git;
 mod highlight;
 mod icons;
 mod markdown;
@@ -128,6 +129,10 @@ struct App {
     /// The opened folder and its notebooks (sidebar).
     folder: Option<PathBuf>,
     tree: Vec<workspace::Node>,
+    /// What git says about the opened folder, and the reading in progress (done on another thread).
+    git: Option<git::Status>,
+    git_pending: Option<std::sync::mpsc::Receiver<Option<git::Status>>>,
+    git_checked: Option<std::time::Instant>,
     collapsed: HashSet<PathBuf>,
     show_sidebar: bool,
     /// Vim keys in editors (Settings), and the status text of the focused editor ("NORMAL", ":wq", ...).
@@ -298,6 +303,9 @@ impl App {
             last_title: String::new(),
             folder,
             tree,
+            git: None,
+            git_pending: None,
+            git_checked: None,
             collapsed: HashSet::new(),
             show_sidebar,
             vim: std::env::var_os("MATHCRAFT_VIM").is_some_and(|v| v == "1"),
@@ -710,12 +718,46 @@ impl App {
         self.folder = Some(dir);
         self.collapsed.clear();
         self.show_sidebar = true;
+        self.git = None;
+        self.refresh_git();
     }
 
     fn rescan(&mut self) {
         if let Some(dir) = &self.folder {
             self.tree = workspace::scan(dir);
         }
+        self.refresh_git();
+    }
+
+    /// Ask git about the opened folder on another thread (a big repository can take a moment).
+    fn refresh_git(&mut self) {
+        let Some(dir) = self.folder.clone() else { return };
+        if self.git_pending.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        if std::thread::Builder::new().name("mathcraft-git".into()).spawn(move || drop(tx.send(git::status(&dir)))).is_ok() {
+            self.git_pending = Some(rx);
+        }
+        self.git_checked = Some(std::time::Instant::now());
+    }
+
+    /// Take a finished reading, and ask again now and then (every few seconds in a repository, rarely elsewhere).
+    fn poll_git(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.git_pending
+            && let Ok(result) = rx.try_recv()
+        {
+            self.git = result;
+            self.git_pending = None;
+        }
+        if self.folder.is_none() {
+            return;
+        }
+        let every = Duration::from_secs(if self.git.is_some() { 4 } else { 30 });
+        if self.git_checked.is_none_or(|t| t.elapsed() >= every) {
+            self.refresh_git();
+        }
+        ctx.request_repaint_after(every);
     }
 
     fn toggle_sidebar(&mut self) {
@@ -1212,6 +1254,10 @@ impl App {
                     ui.label(dim(format!("{n} {label}")));
                 }
             }
+            if let Some(git) = &self.git {
+                ui.add_space(10.0);
+                ui.label(dim(git.summary())).on_hover_text("Git branch of the opened folder, and how many notebooks changed since the last commit");
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let mode = if self.cur.nb.mode == RunMode::Auto { "Dependents run automatically" } else { "Dependents wait (lazy)" };
                 // what is left of the bar after the counts on the left: drop the wordy parts first
@@ -1250,6 +1296,7 @@ impl App {
         let ctx = root.ctx().clone();
         let ctx = &ctx;
         self.poll_kernel();
+        self.poll_git(ctx);
         self.persist_settings();
         self.persist_session();
         if let Some(c) = self.cur.nb.cells().iter().find(|c| ctx.memory(|m| m.has_focus(editor_id(c.id)))) {
@@ -1331,7 +1378,7 @@ impl App {
                 .size_range(160.0..=420.0)
                 .show_separator_line(false)
                 .frame(egui::Frame::new().fill(theme.chrome).inner_margin(Margin::symmetric(4, 0)))
-                .show(root, |ui| sidebar::sidebar(ui, &theme, &folder, &tree, &mut self.collapsed, &open_files));
+                .show(root, |ui| sidebar::sidebar(ui, &theme, &folder, &tree, &mut self.collapsed, &open_files, self.git.as_ref()));
             let r = side.response.rect;
             root.painter().vline(r.right() - 0.5, r.y_range(), Stroke::new(1.0, theme.separator));
             self.tree = tree;
@@ -2813,6 +2860,45 @@ mod tests {
         dir
     }
 
+    /// Make `dir` a repository with one commit, then change one notebook and add another. `false` without `git`.
+    fn init_git(dir: &Path) -> bool {
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+                .args(args)
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        let ok = run(&["init", "-q", "-b", "main"]) && run(&["add", "."]) && run(&["commit", "-q", "-m", "first"]);
+        std::fs::write(dir.join("derivatives.py"), "# %%\nf = sin(x)**3\n# %%\ndiff(f, x)\n").unwrap();
+        std::fs::write(dir.join("lectures/week2.py"), "# %%\n2 + 2\n").unwrap();
+        ok
+    }
+
+    #[test]
+    fn a_git_folder_shows_marks_and_the_branch() {
+        let dir = sample_folder("git");
+        if !init_git(&dir) {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+        let start = Instant::now();
+        while app.git.is_none() && start.elapsed() < Duration::from_secs(20) {
+            frame(&ctx, &mut app);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let git = app.git.clone().unwrap_or_default();
+        assert_eq!(git.summary(), "main · 2 changed");
+        assert_eq!(git.mark(Path::new("derivatives.py"), false), Some(git::Mark::Modified));
+        assert_eq!(git.mark(Path::new("lectures/week2.py"), false), Some(git::Mark::Untracked));
+        assert_eq!(git.mark(Path::new("lectures"), true), Some(git::Mark::Untracked));
+        assert_eq!(git.mark(Path::new("solving.py"), false), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_folder_fills_the_sidebar_and_files_open_in_tabs() {
         let dir = sample_folder("open");
@@ -2869,6 +2955,7 @@ mod tests {
         let Some(out) = std::env::var_os("MATHCRAFT_SHOTS").map(PathBuf::from) else { return };
         std::fs::create_dir_all(&out).unwrap();
         let dir = sample_folder("shot");
+        init_git(&dir);
         for (name, pref) in [("dark", ThemePreference::Dark), ("light", ThemePreference::Light)] {
             let d = dir.clone();
             let mut harness = egui_kittest::Harness::builder().wgpu().with_size(vec2(1000.0, 520.0)).build_ui_state(
@@ -3320,6 +3407,16 @@ mod tests {
         h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("sin(x)");
         h.run();
         assert_eq!(source(&h), "y = integrate(sin(x), x)");
+    }
+
+    #[test]
+    fn the_interface_font_has_the_git_summary_symbols() {
+        use skrifa::MetadataProvider;
+        let font = skrifa::FontRef::new(fonts::INTER).unwrap();
+        let charmap = font.charmap();
+        for c in ['↑', '↓', '·'] {
+            assert!(charmap.map(c).is_some(), "{c:?} is not in the interface font");
+        }
     }
 
     #[test]
