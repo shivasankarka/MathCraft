@@ -98,7 +98,7 @@ fn comparisons_are_symbolic_or_decided() {
     assert_eq!(ev("x == x"), "True");
     assert_eq!(ev("x**2 == 4"), "x**2 == 4");
     assert_eq!(ev("sin(pi/7)**2 + cos(pi/7)**2 == 1"), "True");
-    assert!(ev("x < 3").starts_with("ERROR"));
+    assert_eq!(ev("x < 3"), "x < 3");
     assert!(ev("if x == 3:\n    pass").contains("equation"));
 }
 
@@ -732,6 +732,29 @@ fn nested_fractions_simple_roots_and_atan2_derivative() {
     assert_eq!(ev("solve(x**2 - a**2, x)"), "[a, -a]");
     assert_eq!(ev("diff(atan2(y, x), x)"), "-y/(x**2 + y**2)");
     assert_eq!(ev("simplify(diff(atan2(sin(x), cos(x)), x))"), "1");
+}
+
+#[test]
+fn inequalities() {
+    let cases = [
+        ("solve(x**2 > 4, x)", "(-oo, -2) \u{222a} (2, oo)"),
+        ("solve(x**2 <= 4, x)", "[-2, 2]"),
+        ("solve((x-1)/(x+2) <= 0, x)", "(-2, 1]"),
+        ("solve(log(x) < 1, x)", "(0, E)"),
+        ("solve(abs(x-1) >= 2, x)", "(-oo, -1] \u{222a} [3, oo)"),
+        ("solve(x**2 + 1 < 0, x)", "\u{2205}"),
+        ("solve((x-1)**2 > 0, x)", "(-oo, 1) \u{222a} (1, oo)"),
+        ("solve(x*(x-1)**2 <= 0, x)", "(-oo, 0] \u{222a} {1}"),
+        ("solve(sqrt(x) < 2, x)", "[0, 4)"),
+        ("solve(x**3 - x > 0, x)", "(-1, 0) \u{222a} (1, oo)"),
+        ("solve(x**2 >= 0)", "(-oo, oo)"),
+        ("x < 3", "x < 3"),
+    ];
+    for (src, want) in cases {
+        assert_eq!(ev(src), want, "{src}");
+    }
+    assert!(ev("solve(sin(x) > 0, x)").starts_with("ERROR"));
+    assert!(ev("if x < 3:\n    pass").starts_with("ERROR"));
 }
 
 #[test]
