@@ -145,6 +145,7 @@ fn int(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
             match sinc(fs, x)? {
                 Some(r) => Some(r),
                 None if let Some(sum) = trig_product(fs, x)? => int(&sum, x, depth + 1)?,
+                None if let Some(r) = poly_exp_trig(fs, x, depth)? => Some(r),
                 None => match by_parts(fs, x, depth)? {
                     Some(r) => Some(r),
                     None => parts_inverse(fs, x, depth)?,
@@ -405,7 +406,8 @@ fn trig_powers(e: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
         return Ok(None);
     }
     let Some((a, _)) = linear_in(&u, x)? else { return Ok(None) };
-    Ok(Some(trig_antiderivative(m, n, &u)?.div(&a)))
+    // expanded, so the nested reduction steps come out as one flat sum
+    Ok(Some(expand(&trig_antiderivative(m, n, &u)?.div(&a))?))
 }
 
 /// An antiderivative with respect to `u` of `sin(u)**m * cos(u)**n`.
@@ -596,6 +598,24 @@ fn by_parts(fs: &[Expr], x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
     let Some(r) = int(&rest, x, depth + 1)? else { return Ok(None) };
     let total = Expr::add(vec![Expr::mul(vec![mono.clone(), big_g]), Expr::mul(vec![Expr::int(-n), r])]);
     Ok(Some(expand(&total)?))
+}
+
+/// `x**n * exp(p) * sin(q)` (or `cos`) with linear `p` and `q`: by parts with `u = x**n`, using the closed form of
+/// `∫ exp(p) sin(q)`, so `∫ x^n E = x^n F - n ∫ x^(n-1) F`. Each step lowers `n` until `exp_trig` finishes it.
+fn poly_exp_trig(fs: &[Expr], x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
+    if fs.len() != 3 || depth >= MAX_INT_DEPTH + 4 {
+        return Ok(None);
+    }
+    for (i, mono) in fs.iter().enumerate() {
+        let Some(n) = power_of_x(mono, x).filter(|n| *n >= 1) else { continue };
+        let rest = Expr::mul(fs.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, f)| f.clone()).collect());
+        let Some(big_f) = exp_trig(&rest, x)? else { continue };
+        let lower = expand(&Expr::mul(vec![Expr::pow(x, &Expr::int(n - 1)), big_f.clone()]))?;
+        let Some(r) = int(&lower, x, depth + 1)? else { continue };
+        let total = Expr::add(vec![Expr::mul(vec![mono.clone(), big_f]), Expr::mul(vec![Expr::int(-n), r])]);
+        return Ok(Some(expand(&total)?));
+    }
+    Ok(None)
 }
 
 /// Functions that are easier to differentiate than to integrate: `log(x)`, `atan(x)`, `asin(x)` and friends.
