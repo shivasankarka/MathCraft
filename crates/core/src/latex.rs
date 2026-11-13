@@ -1,7 +1,7 @@
 //! LaTeX source for an expression, so a result can be pasted into a paper, a slide or a Markdown note.
 //! Term and factor order come from the printer (`sum_terms`, `product_of`) so the LaTeX reads like the text form.
 
-use crate::expr::{Expr, Kind, SYM_E, SYM_I, SYM_OO, SYM_PI, relation_op};
+use crate::expr::{Expr, Kind, SYM_E, SYM_I, SYM_OO, SYM_PI, derivative_parts, relation_op};
 use crate::{Num, product_of, sum_terms};
 
 // precedence levels
@@ -78,6 +78,14 @@ fn float(s: &str) -> String {
 
 fn call(name: &str, args: &[Expr]) -> (String, u8) {
     let list = |args: &[Expr]| args.iter().map(latex).collect::<Vec<_>>().join(",\\,");
+    if matches!(name, "diff" | "Derivative")
+        && let Some((f, x, order)) = derivative_parts(&Expr::call(name, args.to_vec()))
+    {
+        // a partial derivative when the expression has other variables than the one differentiated
+        let d = if f.free_symbols().len() > 1 { "\\partial" } else { "d" };
+        let power = if order > 1 { format!("^{{{order}}}") } else { String::new() };
+        return (format!("\\frac{{{d}{power}}}{{{d} {}{power}}} {}", latex(&x), paren(emit(&f), MUL)), MUL);
+    }
     match (name, args) {
         (n, [a, b]) if relation_op(n).is_some() => (format!("{} {} {}", latex(a), relation_op(n).map_or("", |o| o.1), latex(b)), ADD),
         ("Union", parts) if !parts.is_empty() => (parts.iter().map(latex).collect::<Vec<_>>().join(" \\cup "), ADD),
