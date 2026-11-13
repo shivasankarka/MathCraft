@@ -1,7 +1,7 @@
 //! Plots out of the app: an SVG picture of what is on screen, and the sampled points as CSV. Both are written by
 //! hand (no rendering dependency) from the same `PlotSpec` the window draws.
 
-use mathcraft_eval::PlotSpec;
+use mathcraft_eval::{PlotSpec, SeriesKind};
 use std::fmt::Write;
 
 const W: f64 = 720.0;
@@ -24,8 +24,15 @@ pub type View = [f64; 4];
 /// The box around all points, with a little room; the view when nothing was zoomed.
 pub fn data_view(p: &PlotSpec) -> View {
     let mut v = [f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY];
-    for [x, y] in p.series.iter().flat_map(|s| s.segments.iter().flatten()) {
-        v = [v[0].min(*x), v[1].max(*x), v[2].min(*y), v[3].max(*y)];
+    for s in &p.series {
+        // a bar stands on zero and is `width` wide
+        let (half, base) = match s.kind {
+            SeriesKind::Bars { width } => (width / 2.0, Some(0.0)),
+            _ => (0.0, None),
+        };
+        for [x, y] in s.segments.iter().flatten() {
+            v = [v[0].min(x - half), v[1].max(x + half), v[2].min(*y).min(base.unwrap_or(*y)), v[3].max(*y).max(base.unwrap_or(*y))];
+        }
     }
     if !v.iter().all(|c| c.is_finite()) {
         return [-1.0, 1.0, -1.0, 1.0];
@@ -50,6 +57,14 @@ pub fn ticks(lo: f64, hi: f64) -> Vec<f64> {
     (first..=last).take(64).map(|k| k as f64 * step).collect()
 }
 
+/// The marks under the x axis: the plot's own names, else round numbers.
+pub fn x_marks(p: &PlotSpec, lo: f64, hi: f64, tick_label: &dyn Fn(f64) -> String) -> Vec<(f64, String)> {
+    if p.x_ticks.is_empty() {
+        return ticks(lo, hi).into_iter().map(|t| (t, tick_label(t))).collect();
+    }
+    p.x_ticks.iter().filter(|(x, _)| *x >= lo && *x <= hi).cloned().collect()
+}
+
 fn escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
@@ -64,10 +79,10 @@ pub fn svg(p: &PlotSpec, view: View, colors: &SvgColors, tick_label: &dyn Fn(f64
     let _ = writeln!(o, r#"<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" font-family="sans-serif" font-size="11">"#);
     let _ = writeln!(o, r##"<rect width="{W}" height="{H}" fill="#ffffff"/>"##);
     let _ = writeln!(o, r#"<defs><clipPath id="c"><rect x="{LEFT}" y="{TOP}" width="{pw}" height="{ph}"/></clipPath></defs>"#);
-    for t in ticks(x0, x1) {
+    for (t, label) in x_marks(p, x0, x1, tick_label) {
         let x = sx(t);
         let _ = writeln!(o, r#"<line x1="{x:.2}" y1="{TOP}" x2="{x:.2}" y2="{:.2}" stroke="{}"/>"#, TOP + ph, colors.grid);
-        let _ = writeln!(o, r#"<text x="{x:.2}" y="{:.2}" text-anchor="middle" fill="{}">{}</text>"#, TOP + ph + 16.0, colors.text, escape(&tick_label(t)));
+        let _ = writeln!(o, r#"<text x="{x:.2}" y="{:.2}" text-anchor="middle" fill="{}">{}</text>"#, TOP + ph + 16.0, colors.text, escape(&label));
     }
     for t in ticks(y0, y1) {
         let y = sy(t);
@@ -81,12 +96,33 @@ pub fn svg(p: &PlotSpec, view: View, colors: &SvgColors, tick_label: &dyn Fn(f64
     for (i, s) in p.series.iter().enumerate() {
         let color = colors.series.get(i % colors.series.len().max(1)).map_or("#1f6feb", String::as_str);
         for seg in &s.segments {
-            let pts: Vec<String> = seg.iter().map(|[x, y]| format!("{:.2},{:.2}", sx(*x), sy(*y))).collect();
-            let _ = writeln!(
-                o,
-                r#"<polyline clip-path="url(#c)" fill="none" stroke="{color}" stroke-width="1.75" stroke-linejoin="round" points="{}"/>"#,
-                pts.join(" ")
-            );
+            match s.kind {
+                SeriesKind::Line => {
+                    let pts: Vec<String> = seg.iter().map(|[x, y]| format!("{:.2},{:.2}", sx(*x), sy(*y))).collect();
+                    let _ = writeln!(
+                        o,
+                        r#"<polyline clip-path="url(#c)" fill="none" stroke="{color}" stroke-width="1.75" stroke-linejoin="round" points="{}"/>"#,
+                        pts.join(" ")
+                    );
+                }
+                SeriesKind::Points => {
+                    for [x, y] in seg {
+                        let _ = writeln!(o, r#"<circle clip-path="url(#c)" cx="{:.2}" cy="{:.2}" r="3" fill="{color}"/>"#, sx(*x), sy(*y));
+                    }
+                }
+                SeriesKind::Bars { width } => {
+                    for [x, h] in seg {
+                        let (left, right) = (sx(x - width / 2.0), sx(x + width / 2.0));
+                        let (top, base) = (sy(h.max(0.0)), sy(h.min(0.0)));
+                        let _ = writeln!(
+                            o,
+                            r##"<rect clip-path="url(#c)" x="{left:.2}" y="{top:.2}" width="{:.2}" height="{:.2}" fill="{color}" stroke="#ffffff"/>"##,
+                            right - left,
+                            base - top
+                        );
+                    }
+                }
+            }
         }
     }
     if p.series.len() > 1 {
@@ -123,9 +159,10 @@ mod tests {
         PlotSpec {
             x_label: "x".into(),
             series: vec![
-                PlotSeries { label: "a<b".into(), segments: vec![vec![[0.0, 0.0], [1.0, 1.0]], vec![[2.0, 4.0], [3.0, 9.0]]] },
-                PlotSeries { label: "c,d".into(), segments: vec![vec![[0.0, 1.0], [3.0, 1.0]]] },
+                PlotSeries::line("a<b", vec![vec![[0.0, 0.0], [1.0, 1.0]], vec![[2.0, 4.0], [3.0, 9.0]]]),
+                PlotSeries::line("c,d", vec![vec![[0.0, 1.0], [3.0, 1.0]]]),
             ],
+            x_ticks: vec![],
         }
     }
 
@@ -133,7 +170,7 @@ mod tests {
     fn view_covers_the_data() {
         let [x0, x1, y0, y1] = data_view(&spec());
         assert!(x0 == 0.0 && x1 == 3.0 && y0 < 0.0 && y1 > 9.0);
-        assert_eq!(data_view(&PlotSpec { series: vec![], x_label: String::new() }), [-1.0, 1.0, -1.0, 1.0]);
+        assert_eq!(data_view(&PlotSpec { series: vec![], x_label: String::new(), x_ticks: vec![] }), [-1.0, 1.0, -1.0, 1.0]);
     }
 
     #[test]
@@ -151,6 +188,27 @@ mod tests {
         assert_eq!(s.matches("<polyline").count(), 3, "one per segment");
         assert!(s.contains("a&lt;b") && !s.contains("a<b"));
         assert!(s.contains("stroke=\"#222\""));
+    }
+
+    #[test]
+    fn dots_and_bars_are_drawn_and_bars_stand_on_zero() {
+        let colors = SvgColors { series: &["#111".to_owned()], text: "#000", grid: "#ddd" };
+        let bars = PlotSpec {
+            x_label: String::new(),
+            series: vec![PlotSeries { label: String::new(), segments: vec![vec![[0.0, 3.0], [1.0, 5.0]]], kind: SeriesKind::Bars { width: 0.7 } }],
+            x_ticks: vec![(0.0, "a".into()), (1.0, "b".into())],
+        };
+        let [x0, x1, y0, y1] = data_view(&bars);
+        assert!(x0 < -0.3 && x1 > 1.3 && y0 <= 0.0 && y1 >= 5.0, "{x0} {x1} {y0} {y1}");
+        let s = svg(&bars, data_view(&bars), &colors, &|v| format!("{v}"));
+        assert_eq!(s.matches("<rect clip-path").count(), 2);
+        assert!(s.contains(">a</text>") && s.contains(">b</text>"), "category names replace numbers");
+        let dots = PlotSpec {
+            series: vec![PlotSeries { label: String::new(), segments: vec![vec![[0.0, 1.0], [2.0, 3.0]]], kind: SeriesKind::Points }],
+            x_label: String::new(),
+            x_ticks: vec![],
+        };
+        assert_eq!(svg(&dots, data_view(&dots), &colors, &|v| format!("{v}")).matches("<circle").count(), 2);
     }
 
     #[test]
