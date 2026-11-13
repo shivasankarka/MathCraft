@@ -1,4 +1,5 @@
-//! Ordinary differential equations: first order linear and separable, and linear with constant coefficients.
+//! Ordinary differential equations: first order linear, separable, Bernoulli and homogeneous (`y' = F(y/x)`), and
+//! linear with constant coefficients.
 //!
 //! The unknown `y(x)` and its derivatives (`diff(y(x), x)`, ...) are lifted to plain symbols, the equation is
 //! classified on those, and the solution is returned as `y(x) == ...` with arbitrary constants `C1`, `C2`, ...
@@ -99,7 +100,7 @@ pub fn dsolve(eq: &Expr, f: &Expr) -> MathResult<Vec<Expr>> {
             return unsupported("linear equations of order above one need constant coefficients");
         }
     } else if order == 1 {
-        separable(&lifted, x)?
+        first_order_nonlinear(&lifted, x)?
     } else {
         return unsupported("it is not linear");
     };
@@ -119,6 +120,98 @@ fn first_order_linear(a: &[Expr], g: &Expr, x: &Expr) -> MathResult<Expr> {
     let inverse = Expr::pow(&mu, &Expr::int(-1));
     let sol = Expr::mul(vec![inverse, Expr::add(vec![particular, constant(1)])]);
     simplify(&expand(&sol)?)
+}
+
+/// The right side `F` of `y' = F(x, y)` for an equation linear in `y'`.
+fn rate_of(lifted: &Expr) -> MathResult<Option<Expr>> {
+    let Some(c) = to_poly(lifted, &lifted_symbol(1))? else { return Ok(None) };
+    let (Some(c0), Some(c1)) = (c.first(), c.get(1)) else { return Ok(None) };
+    if c.len() != 2 {
+        return Ok(None);
+    }
+    Ok(Some(simplify(&c0.neg().div(c1))?))
+}
+
+/// Nonlinear first order equations solved for `y'`: separable, else Bernoulli, else homogeneous.
+fn first_order_nonlinear(lifted: &Expr, x: &Expr) -> MathResult<Vec<Expr>> {
+    let first = match separable(lifted, x) {
+        Ok(v) => return Ok(v),
+        Err(e) => e,
+    };
+    if let Some(rate) = rate_of(lifted)? {
+        if let Some(v) = bernoulli(&rate, x)? {
+            return Ok(v);
+        }
+        if let Some(v) = homogeneous(&rate, x)? {
+            return Ok(v);
+        }
+    }
+    Err(first)
+}
+
+/// `y' = a(x) y + b(x) y^n` (`n` a number other than 0 and 1): with `v = y^(1-n)` it is linear,
+/// `v' = (1-n)(a v + b)`, and `y = v^(1/(1-n))`.
+fn bernoulli(rate: &Expr, x: &Expr) -> MathResult<Option<Vec<Expr>>> {
+    let y = lifted_symbol(0);
+    let expanded = expand(rate)?;
+    let terms = match expanded.kind() {
+        Kind::Add(t) => t.clone(),
+        _ => vec![expanded.clone()],
+    };
+    // the coefficient of each power of y, as a sum of the terms that carry it
+    let mut powers: Vec<(Expr, Vec<Expr>)> = Vec::new();
+    for t in terms {
+        let factors = match t.kind() {
+            Kind::Mul(f) => f.clone(),
+            _ => vec![t.clone()],
+        };
+        let (mut exponent, mut coefficient) = (Expr::zero(), Vec::new());
+        for f in factors {
+            if !f.contains(&y) {
+                coefficient.push(f);
+            } else if f == y {
+                exponent = Expr::add(vec![exponent, Expr::one()]);
+            } else if let Kind::Pow(b, k) = f.kind()
+                && *b == y
+                && k.as_num().is_some()
+            {
+                exponent = Expr::add(vec![exponent, k.clone()]);
+            } else {
+                return Ok(None);
+            }
+        }
+        let coefficient = Expr::mul(coefficient);
+        match powers.iter_mut().find(|(k, _)| *k == exponent) {
+            Some((_, c)) => c.push(coefficient),
+            None => powers.push((exponent, vec![coefficient])),
+        }
+    }
+    let [first, second] = powers.as_slice() else { return Ok(None) };
+    let ((a, n, b), one) = (if first.0 == Expr::one() { (&first.1, &second.0, &second.1) } else { (&second.1, &first.0, &first.1) }, Expr::one());
+    if (first.0 == one) == (second.0 == one) || n.is_zero() {
+        return Ok(None);
+    }
+    let (a, b) = (Expr::add(a.clone()), Expr::add(b.clone()));
+    let k = one.sub(n);
+    // v' - k a v - k b = 0
+    let a0 = simplify(&Expr::mul(vec![Expr::int(-1), k.clone(), a]))?;
+    let g = simplify(&Expr::mul(vec![Expr::int(-1), k.clone(), b]))?;
+    let v = first_order_linear(&[a0, Expr::one()], &g, x)?;
+    let sol = Expr::pow(&v, &Expr::one().div(&k));
+    Ok(Some(vec![simplify(&sol)?]))
+}
+
+/// `y' = F(y/x)`: with `y = u x` it is `x u' = F(u) - u`, which is separable.
+fn homogeneous(rate: &Expr, x: &Expr) -> MathResult<Option<Vec<Expr>>> {
+    let (y, u) = (lifted_symbol(0), lifted_symbol(0));
+    let scaled = simplify(&subs(rate, &[(y, Expr::mul(vec![u.clone(), x.clone()]))])?)?;
+    if scaled.contains(x) {
+        return Ok(None);
+    }
+    let equation = lifted_symbol(1).sub(&simplify(&scaled.sub(&u).div(x))?);
+    let Ok(sols) = separable(&equation, x) else { return Ok(None) };
+    let times_x = |s: &Expr| simplify(&expand(&Expr::mul(vec![x.clone(), s.clone()]))?);
+    Ok(Some(sols.iter().map(times_x).collect::<MathResult<_>>()?))
 }
 
 /// `y' = f(x) g(y)`: `int dy/g = int f dx + C1`, solved for `y` when possible.
