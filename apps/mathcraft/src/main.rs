@@ -8,6 +8,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod complete;
+mod diff;
 mod doc;
 mod fonts;
 mod git;
@@ -64,6 +65,19 @@ fn unified_title_bar(builder: egui::ViewportBuilder) -> egui::ViewportBuilder {
     if cfg!(target_os = "macos") { builder.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false) } else { builder }
 }
 
+/// The notebook at `path` as of the last commit, in the form `Notebook::to_text` writes (so formatting alone is not a change).
+fn committed(path: &Path) -> Option<String> {
+    git::head_text(path).map(|text| mathcraft_notebook::format::write(&mathcraft_notebook::format::parse(&text)))
+}
+
+/// The open "Changes" window: the committed text of the notebook, and the diff of it against the notebook now.
+struct Changes {
+    /// `None` when the notebook is not in the last commit.
+    head: Option<String>,
+    current: String,
+    lines: Vec<diff::Line>,
+}
+
 /// What a command-palette entry does.
 enum Cmd {
     New,
@@ -82,6 +96,7 @@ enum Cmd {
     ToggleSidebar,
     Functions,
     Symbols,
+    Changes,
     ToggleActions,
     Theme(ThemePreference),
     ToggleVim,
@@ -122,6 +137,7 @@ struct App {
     ctx: egui::Context,
     show_help: bool,
     show_symbols: bool,
+    changes: Option<Changes>,
     show_actions: bool,
     help_filter: String,
     status: String,
@@ -297,6 +313,7 @@ impl App {
             ctx,
             show_help: false,
             show_symbols: false,
+            changes: None,
             show_actions: true,
             help_filter: String::new(),
             status,
@@ -481,6 +498,7 @@ impl App {
             item("View", "Show or hide the sidebar", key(Modifiers::COMMAND, Key::B), Cmd::ToggleSidebar),
             item("View", "Browse all functions", "F1".to_owned(), Cmd::Functions),
             item("View", "Insert symbols and formulas", "F2".to_owned(), Cmd::Symbols),
+            item("View", "Changes since the last git commit", String::new(), Cmd::Changes),
             item("View", "Show or hide the action row (Simplify, Solve, …)", String::new(), Cmd::ToggleActions),
             item("Theme", "Match the system", String::new(), Cmd::Theme(ThemePreference::System)),
             item("Theme", "Light", String::new(), Cmd::Theme(ThemePreference::Light)),
@@ -545,6 +563,7 @@ impl App {
             Cmd::ToggleSidebar => self.toggle_sidebar(),
             Cmd::Functions => self.show_help = true,
             Cmd::Symbols => self.show_symbols = true,
+            Cmd::Changes => self.open_changes(),
             Cmd::ToggleActions => self.show_actions = !self.show_actions,
             Cmd::Theme(t) => ctx.set_theme(t),
             Cmd::ToggleVim => self.vim = !self.vim,
@@ -1203,6 +1222,92 @@ impl App {
         self.show_help = open;
     }
 
+    /// Open the changes window for the current notebook, reading the committed text from git.
+    fn open_changes(&mut self) {
+        let Some(path) = self.cur.path.clone() else {
+            self.status = "Save the notebook first, then its changes can be compared with git".into();
+            return;
+        };
+        self.changes = Some(Changes { head: committed(&path), current: String::new(), lines: Vec::new() });
+    }
+
+    fn changes_window(&mut self, ctx: &egui::Context, theme: &Theme) {
+        let Some(mut changes) = self.changes.take() else { return };
+        let current = self.cur.nb.to_text();
+        if let Some(head) = &changes.head
+            && (changes.current != current || changes.lines.is_empty())
+        {
+            changes.lines = diff::diff(head, &current);
+            changes.current = current;
+        }
+        let (mut open, mut refresh) = (true, false);
+        egui::Window::new("Changes")
+            .title_bar(false)
+            .default_rect(egui::Rect::from_min_size(ctx.content_rect().right_top() + vec2(-560.0, 64.0), vec2(520.0, 420.0)))
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Changes").font(egui::FontId::new(theme::TEXT_TITLE, fonts::strong_family())).color(theme.text));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if icons::button(ui, theme, Icon::Close, "Close").clicked() {
+                            open = false;
+                        }
+                        refresh = ui.button("Refresh").on_hover_text("Read the last commit again").clicked();
+                    });
+                });
+                if changes.head.is_none() {
+                    ui.label(
+                        RichText::new("This notebook is not in the last commit (new file, no repository, or git is missing).")
+                            .size(theme::TEXT_SMALL)
+                            .color(theme.text_dim),
+                    );
+                    return;
+                }
+                let (added, removed) = diff::counts(&changes.lines);
+                if added + removed == 0 {
+                    ui.label(RichText::new("No changes since the last commit.").size(theme::TEXT_SMALL).color(theme.text_dim));
+                    return;
+                }
+                ui.label(RichText::new(format!("{added} added, {removed} removed since the last commit")).size(theme::TEXT_CAPTION).color(theme.text_faint));
+                egui::ScrollArea::both().auto_shrink([false, true]).max_height(360.0).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    for row in diff::rows(&changes.lines, 2) {
+                        match row {
+                            diff::Row::Skipped(n) => {
+                                ui.label(
+                                    RichText::new(format!("   … {n} unchanged line{}", if n == 1 { "" } else { "s" }))
+                                        .monospace()
+                                        .size(theme::TEXT_CAPTION)
+                                        .color(theme.text_faint),
+                                );
+                            }
+                            diff::Row::Line(line) => {
+                                let (sign, color) = match line.kind {
+                                    diff::Kind::Same => (' ', theme.text_dim),
+                                    diff::Kind::Added => ('+', theme.ok),
+                                    diff::Kind::Removed => ('-', theme.danger),
+                                };
+                                let text = RichText::new(format!("{sign} {}", line.text)).monospace().size(13.0).color(color);
+                                let label = if line.kind == diff::Kind::Same {
+                                    egui::Label::new(text)
+                                } else {
+                                    egui::Label::new(text.background_color(color.gamma_multiply(0.12)))
+                                };
+                                ui.add(label.extend());
+                            }
+                        }
+                    }
+                });
+            });
+        if refresh && let Some(path) = &self.cur.path {
+            changes.head = committed(path);
+            changes.lines.clear();
+        }
+        if open {
+            self.changes = Some(changes);
+        }
+    }
+
     fn symbols_window(&mut self, ctx: &egui::Context, theme: &Theme) {
         if !self.show_symbols {
             return;
@@ -1478,6 +1583,7 @@ impl App {
         self.apply(actions);
         self.help_window(ctx, &theme);
         self.symbols_window(ctx, &theme);
+        self.changes_window(ctx, &theme);
         if self.palette.open {
             let items = self.commands(ctx);
             let mut state = std::mem::take(&mut self.palette);
@@ -2896,6 +3002,33 @@ mod tests {
         assert_eq!(git.mark(Path::new("lectures/week2.py"), false), Some(git::Mark::Untracked));
         assert_eq!(git.mark(Path::new("lectures"), true), Some(git::Mark::Untracked));
         assert_eq!(git.mark(Path::new("solving.py"), false), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn changes_compare_the_notebook_with_the_last_commit() {
+        let dir = sample_folder("changes");
+        if !init_git(&dir) {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+        app.open_path(dir.join("derivatives.py"));
+        app.open_changes();
+        frame(&ctx, &mut app);
+        let changes = app.changes.as_ref().unwrap();
+        assert_eq!(diff::counts(&changes.lines), (1, 1), "sin(x)**2 became sin(x)**3: {:?}", changes.lines);
+        assert!(changes.lines.iter().any(|l| l.kind == diff::Kind::Added && l.text == "f = sin(x)**3"));
+        // an edit shows up without asking again
+        let id = app.cur.nb.cells().last().map(|c| c.id).unwrap();
+        app.apply(vec![Action::SetSource(id, "diff(f, x) + 1".into())]);
+        frame(&ctx, &mut app);
+        assert_eq!(diff::counts(&app.changes.as_ref().unwrap().lines), (2, 2));
+        // a notebook that was never committed has nothing to compare with
+        app.open_path(dir.join("lectures/week2.py"));
+        app.open_changes();
+        frame(&ctx, &mut app);
+        assert!(app.changes.as_ref().unwrap().head.is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
