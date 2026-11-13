@@ -147,6 +147,13 @@ pub fn status(folder: &Path) -> Option<Status> {
     Some(parse(&prefix, &out))
 }
 
+/// The text of `file` as of the last commit; `None` when it is not tracked, there is no commit yet, or git is missing.
+pub fn head_text(file: &Path) -> Option<String> {
+    let dir = file.parent()?;
+    let name = file.file_name()?.to_str()?;
+    git(dir, &["show", &format!("HEAD:./{name}")])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +215,9 @@ mod tests {
         assert_eq!(st.mark(Path::new("sub/new.py"), false), Some(Mark::Untracked));
         assert_eq!(st.mark(Path::new("sub"), true), Some(Mark::Untracked));
         // opened one level down, the paths are relative to that folder
+        assert_eq!(head_text(&dir.join("a.py")).as_deref(), Some("x = 1\n"), "the committed text, not the edited file");
+        assert_eq!(head_text(&dir.join("sub/new.py")), None, "an untracked file has no committed text");
+        assert_eq!(head_text(&dir.join("sub/b.py")).as_deref(), Some("y = 2\n"));
         let below = status(&dir.join("sub")).unwrap_or_default();
         assert_eq!(below.mark(Path::new("new.py"), false), Some(Mark::Untracked));
         assert_eq!(below.files.len(), 1);
