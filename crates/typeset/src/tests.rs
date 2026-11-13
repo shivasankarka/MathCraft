@@ -275,3 +275,21 @@ fn integrals_sums_and_limits_have_their_own_signs() {
     // an indefinite integral from a failed `integrate` is drawn the same way
     assert_eq!(strokes(&lay(&Expr::call("integrate", vec![x(), x()]))), 1);
 }
+
+#[test]
+fn derivatives_are_drawn_as_fractions() {
+    let y = Expr::call("y", vec![x()]);
+    // d/dx of an unknown function: one fraction bar, `d` over `d x`
+    let l = lay(&Expr::call("diff", vec![y.clone(), x()]));
+    assert_eq!(rules(&l), 1);
+    assert_eq!(texts(&l)[..3], ["d", "d", "𝑥"]);
+    assert_inside(&l, "derivative");
+    // the second order is one `d²/dx²`, not two nested fractions
+    let l = lay(&Expr::call("diff", vec![Expr::call("diff", vec![y, x()]), x()]));
+    assert_eq!(rules(&l), 1);
+    assert!(texts(&l).contains(&"2".to_owned()), "{:?}", texts(&l));
+    // a partial derivative when other variables are present
+    let f = Expr::mul(vec![x(), Expr::sym("t")]);
+    let l = lay(&Expr::call("Derivative", vec![f, x()]));
+    assert_eq!(texts(&l)[0], "\u{2202}");
+}
