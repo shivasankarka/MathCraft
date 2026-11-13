@@ -9,6 +9,7 @@ mod calculus;
 mod complex;
 mod expand;
 mod extension;
+mod inequality;
 mod limits;
 pub mod linalg;
 mod ode;
@@ -40,6 +41,7 @@ pub fn poly_lcm(a: &mathcraft_core::Expr, b: &mathcraft_core::Expr) -> mathcraft
     sparse::lcm(a, b)
 }
 
+pub use inequality::solve_inequality;
 pub use limits::{Side, limit, limit_side};
 pub use ode::{apply_conditions, dsolve};
 pub use pattern::{Bindings, find_all, match_expr, replace};
