@@ -112,11 +112,17 @@ fn real_main() -> ExitCode {
     }
 }
 
+/// Code run from the command line may read and write files below the working directory (the MCP server never gets this).
+fn allow_files() {
+    mathcraft_eval::set_file_root(std::env::current_dir().ok());
+}
+
 fn budget_guard(timeout: Duration) -> budget::Guard {
     budget::install(Budget::new(Some(timeout), Arc::new(AtomicBool::new(false)), 400_000_000))
 }
 
 fn eval(code: &str, timeout: Duration) -> ExitCode {
+    allow_files();
     let _g = budget_guard(timeout);
     let code = match read_arg(code) {
         Ok(c) => c,
@@ -166,6 +172,7 @@ fn run_notebook(text: &str, timeout: Duration) -> Notebook {
 }
 
 fn run_file(path: &str, timeout: Duration) -> ExitCode {
+    allow_files();
     let text = match read(path) {
         Ok(t) => t,
         Err(c) => return c,
@@ -267,6 +274,7 @@ fn mcp() -> ExitCode {
 }
 
 fn repl(timeout: Duration) -> ExitCode {
+    allow_files();
     println!("MathCraft REPL. One statement per line; help() lists functions; Ctrl-D or `exit` quits.");
     let mut globals: HashMap<String, Value> = HashMap::new();
     let stdin = std::io::stdin();
