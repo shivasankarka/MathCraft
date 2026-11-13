@@ -40,6 +40,22 @@ pub fn interval_parts(e: &Expr) -> Option<(&Expr, &Expr, bool, bool)> {
     }
 }
 
+/// An unevaluated derivative as `(f, x, order)`: `Derivative(f, x)`, `Derivative(f, x, n)`, and `diff(f, x)` left
+/// as it is for an unknown function (nested `diff` calls in the same variable add up).
+pub fn derivative_parts(e: &Expr) -> Option<(Expr, Expr, usize)> {
+    let Kind::Call(name, args) = e.kind() else { return None };
+    let (inner, x, n) = match (&**name, args.as_slice()) {
+        ("diff" | "Derivative", [f, x]) => (f, x, 1),
+        ("Derivative", [f, x, n]) => (f, x, usize::try_from(n.as_i64()?).ok().filter(|k| (1..=99).contains(k))?),
+        _ => return None,
+    };
+    x.as_sym()?;
+    match derivative_parts(inner) {
+        Some((f, y, m)) if y == *x => Some((f, y, m + n)),
+        _ => Some((inner.clone(), x.clone(), n)),
+    }
+}
+
 #[derive(Clone)]
 pub struct Expr(Arc<Node>);
 
