@@ -20,6 +20,26 @@ pub const SYM_I: &str = "I";
 /// Positive infinity (`-oo` is `-1 * oo`). A plain constant symbol: arithmetic on it is not simplified.
 pub const SYM_OO: &str = "oo";
 
+/// Relations are calls `Lt(a, b)`, `Le`, `Gt`, `Ge`; this gives the Python and LaTeX operator of one.
+pub fn relation_op(name: &str) -> Option<(&'static str, &'static str)> {
+    match name {
+        "Lt" => Some(("<", "<")),
+        "Le" => Some(("<=", "\\le")),
+        "Gt" => Some((">", ">")),
+        "Ge" => Some((">=", "\\ge")),
+        _ => None,
+    }
+}
+
+/// The parts of `Interval(lo, hi, closed_lo, closed_hi)`: the end points and whether each is included.
+pub fn interval_parts(e: &Expr) -> Option<(&Expr, &Expr, bool, bool)> {
+    let Kind::Call(name, args) = e.kind() else { return None };
+    match args.as_slice() {
+        [lo, hi, a, b] if &**name == "Interval" => Some((lo, hi, !a.as_num()?.is_zero(), !b.as_num()?.is_zero())),
+        _ => None,
+    }
+}
+
 #[derive(Clone)]
 pub struct Expr(Arc<Node>);
 
