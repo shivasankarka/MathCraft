@@ -3,6 +3,8 @@
 //! The UI is a thin client: the notebook model, dependency analysis and scheduling live in `mathcraft-notebook`,
 //! and computation runs on its kernel thread, so the window never blocks.
 
+// Release builds on Windows are GUI programs: without this, double-clicking opens a console window too.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod complete;
