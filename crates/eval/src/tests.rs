@@ -864,3 +864,54 @@ fn secant_cosecant_trig_products_and_fractional_powers_with_log() {
     assert_eq!(ev("integrate(sin(2*x)*cos(3*x), (x, 0, pi))"), "-4/5");
     assert_eq!(ev("N(integrate(sec(x), (x, 0, pi/4)))"), "0.8813735870195429");
 }
+
+#[test]
+fn file_access_is_off_unless_the_host_allows_it() {
+    assert!(ev("read_csv('a.csv')").contains("file access is off"));
+    assert!(ev("write_csv('a.csv', [[1]])").contains("file access is off"));
+}
+
+#[test]
+fn csv_files_round_trip_inside_the_allowed_folder() {
+    let dir = std::env::temp_dir().join(format!("mathcraft-csv-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(std::fs::create_dir_all(dir.join("sub")).is_ok());
+    crate::set_file_root(Some(dir.clone()));
+    assert_eq!(ev("write_csv('t.csv', [[1, 2.5, 'a,b'], [3, 4, 'say \"hi\"']], header=['x', 'y', 'note'])"), "");
+    let text = std::fs::read_to_string(dir.join("t.csv")).unwrap_or_default();
+    assert_eq!(text, "x,y,note\n1,2.5,\"a,b\"\n3,4,\"say \"\"hi\"\"\"\n");
+    assert_eq!(ev("read_csv('t.csv', header=True)"), "[[1, 2.5, 'a,b'], [3, 4, 'say \"hi\"']]");
+    assert_eq!(ev("read_csv('t.csv', header=True, columns=True)"), "[[1, 3], [2.5, 4], ['a,b', 'say \"hi\"']]");
+    // columns feed straight into a chart
+    assert!(ev("x, y = read_csv('t.csv', header=True, columns=True)[:2]\nscatter(x, y)").starts_with("<plot"));
+    // a flat list is one column, a matrix is rows; tabs for .tsv
+    assert_eq!(ev("write_csv('c.tsv', [1, 2, 3])"), "");
+    assert_eq!(std::fs::read_to_string(dir.join("c.tsv")).unwrap_or_default(), "1\n2\n3\n");
+    assert_eq!(ev("write_csv('sub/m.csv', matrix([[1, 2], [3, 4]]))"), "");
+    assert_eq!(std::fs::read_to_string(dir.join("sub/m.csv")).unwrap_or_default(), "1,2\n3,4\n");
+    // the ways out are closed
+    for (src, msg) in [
+        ("read_csv('../t.csv')", "no .."),
+        ("read_csv('/etc/hosts.csv')", "no absolute"),
+        ("read_csv('t.exe')", "only .csv"),
+        ("read_csv('missing.csv')", "no file named"),
+        ("write_csv('nodir/x.csv', [[1]])", "does not exist"),
+        ("read_csv('t.csv', width=2)", "unknown keyword"),
+        ("write_csv('x.csv', 5)", "must be a list"),
+    ] {
+        let e = ev(src);
+        assert!(e.contains("ERROR") && e.contains(msg), "{src}: {e}");
+    }
+    #[cfg(unix)]
+    {
+        let outside = std::env::temp_dir().join(format!("mathcraft-outside-{}.csv", std::process::id()));
+        assert!(std::fs::write(&outside, "1,2\n").is_ok());
+        assert!(std::os::unix::fs::symlink(&outside, dir.join("link.csv")).is_ok());
+        assert!(ev("read_csv('link.csv')").contains("outside the notebook's folder"));
+        assert!(ev("write_csv('link.csv', [[9]])").contains("symbolic link"));
+        assert_eq!(std::fs::read_to_string(&outside).unwrap_or_default(), "1,2\n", "the file behind the link is untouched");
+        let _ = std::fs::remove_file(&outside);
+    }
+    crate::set_file_root(None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
