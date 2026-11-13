@@ -263,9 +263,33 @@ pub fn matrix(rows: usize, cols: usize) -> Insert {
     Insert { code, select: names.concat().join(" ") }
 }
 
+/// Calculator keys, four to a row: what the key shows, and what it types.
+pub const KEYPAD: &[[(&str, &str); 4]] = &[
+    [("7", "7"), ("8", "8"), ("9", "9"), ("÷", " / ")],
+    [("4", "4"), ("5", "5"), ("6", "6"), ("×", " * ")],
+    [("1", "1"), ("2", "2"), ("3", "3"), ("−", " - ")],
+    [("0", "0"), (".", "."), ("^", "**"), ("+", " + ")],
+    [("(", "("), (")", ")"), (",", ", "), ("=", " = ")],
+    [("√", "sqrt("), ("π", "pi"), ("e", "e"), ("x", "x")],
+];
+
 /// The contents of the symbols window; returns what was clicked.
 pub fn contents(ui: &mut egui::Ui, theme: &Theme) -> Option<Insert> {
     let mut clicked = None;
+    ui.add_space(8.0);
+    ui.label(RichText::new("Keypad").size(theme::TEXT_CAPTION).color(theme.text_faint));
+    ui.add_space(2.0);
+    ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+    for row in KEYPAD {
+        ui.horizontal(|ui| {
+            for (label, code) in row {
+                let text = RichText::new(*label).font(fonts::math_font(16.0)).color(theme.text);
+                if ui.add(egui::Button::new(text).min_size(vec2(44.0, 30.0))).on_hover_text(format!("Types {}", code.trim())).clicked() {
+                    clicked = Some(Insert { code: (*code).to_owned(), select: String::new() });
+                }
+            }
+        });
+    }
     for (name, items) in GROUPS {
         ui.add_space(8.0);
         ui.label(RichText::new(*name).size(theme::TEXT_CAPTION).color(theme.text_faint));
@@ -304,6 +328,12 @@ pub fn contents(ui: &mut egui::Ui, theme: &Theme) -> Option<Insert> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keypad_keys_type_something() {
+        assert!(KEYPAD.iter().flatten().all(|(label, code)| !label.is_empty() && !code.is_empty()));
+        assert!(KEYPAD.iter().flatten().any(|(_, code)| *code == "**"), "a power key");
+    }
 
     #[test]
     fn selects_the_first_placeholder() {
