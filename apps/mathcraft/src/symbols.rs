@@ -240,8 +240,31 @@ pub fn wrap(act: &Act, expr: &str, var: &str) -> (String, Option<(usize, usize)>
     }
 }
 
-/// The contents of the symbols window; returns the template that was clicked.
-pub fn contents(ui: &mut egui::Ui, theme: &Theme) -> Option<&'static Template> {
+/// Code to insert, and the placeholders in it (see [`Template::select`]).
+pub struct Insert {
+    pub code: String,
+    pub select: String,
+}
+
+impl From<&Template> for Insert {
+    fn from(t: &Template) -> Insert {
+        Insert { code: t.code.to_owned(), select: t.select.to_owned() }
+    }
+}
+
+/// Largest matrix the size fields offer.
+pub const MAX_MATRIX: usize = 8;
+
+/// A `rows` by `cols` matrix with a placeholder for each entry: `[[a11, a12], [a21, a22]]`.
+pub fn matrix(rows: usize, cols: usize) -> Insert {
+    let (rows, cols) = (rows.clamp(1, MAX_MATRIX), cols.clamp(1, MAX_MATRIX));
+    let names: Vec<Vec<String>> = (1..=rows).map(|i| (1..=cols).map(|j| format!("a{i}{j}")).collect()).collect();
+    let code = format!("[{}]", names.iter().map(|r| format!("[{}]", r.join(", "))).collect::<Vec<_>>().join(", "));
+    Insert { code, select: names.concat().join(" ") }
+}
+
+/// The contents of the symbols window; returns what was clicked.
+pub fn contents(ui: &mut egui::Ui, theme: &Theme) -> Option<Insert> {
     let mut clicked = None;
     for (name, items) in GROUPS {
         ui.add_space(8.0);
@@ -253,10 +276,27 @@ pub fn contents(ui: &mut egui::Ui, theme: &Theme) -> Option<&'static Template> {
                 let label = RichText::new(template.label).font(fonts::math_font(16.0)).color(theme.text);
                 let response = ui.add(egui::Button::new(label).min_size(vec2(38.0, 30.0)));
                 if response.on_hover_text(format!("{}\n{}", template.hint, template.code)).clicked() {
-                    clicked = Some(template);
+                    clicked = Some(Insert::from(template));
                 }
             }
         });
+        if *name == "Matrices" {
+            // a matrix of any size: name the rows and columns, then insert
+            let key = ui.scope_id().with("matrix-size");
+            let (mut rows, mut cols) = ui.data(|d| d.get_temp::<(usize, usize)>(key)).unwrap_or((3, 3));
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.label(RichText::new("Matrix").size(theme::TEXT_SMALL).color(theme.text_dim));
+                ui.add(egui::DragValue::new(&mut rows).range(1..=MAX_MATRIX).speed(0.1));
+                ui.label(RichText::new("×").color(theme.text_dim));
+                ui.add(egui::DragValue::new(&mut cols).range(1..=MAX_MATRIX).speed(0.1));
+                if ui.button("Insert").on_hover_text("A matrix with this many rows and columns; Tab moves between the entries").clicked() {
+                    clicked = Some(matrix(rows, cols));
+                }
+            });
+            ui.data_mut(|d| d.insert_temp(key, (rows, cols)));
+        }
     }
     clicked
 }
@@ -311,6 +351,17 @@ mod tests {
         assert_eq!(guess_variable("a*x + b", &known), "x", "x wins among several");
         assert_eq!(guess_variable("4 + 4", &known), "x");
         assert_eq!(guess_variable("m*n", &known), "m", "otherwise the first of two");
+    }
+
+    #[test]
+    fn a_matrix_of_any_size_has_a_placeholder_per_entry() {
+        let m = matrix(2, 3);
+        assert_eq!(m.code, "[[a11, a12, a13], [a21, a22, a23]]");
+        assert_eq!(stops(&m.code, &m.select).len(), 6);
+        let one = matrix(1, 1);
+        assert_eq!(one.code, "[[a11]]");
+        let big = matrix(99, 0);
+        assert_eq!(big.code.matches("[a").count(), MAX_MATRIX, "clamped to the largest size and at least one column");
     }
 
     #[test]
