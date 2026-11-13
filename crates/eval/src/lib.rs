@@ -15,12 +15,13 @@ mod format;
 mod interp;
 mod numerics;
 mod numtheory;
+mod plots;
 mod value;
 
 pub use array::{Array, DType};
 pub use builtins::DOCS;
 pub use interp::{MAX_CALL_DEPTH, MAX_EXPR_DEPTH, Outcome, run, run_source};
-pub use value::{EvalError, PlotSeries, PlotSpec, Value};
+pub use value::{EvalError, PlotSeries, PlotSpec, SeriesKind, Value};
 
 #[cfg(test)]
 mod tests;
