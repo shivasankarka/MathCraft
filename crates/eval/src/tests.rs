@@ -741,6 +741,37 @@ fn nested_fractions_simple_roots_and_atan2_derivative() {
 }
 
 #[test]
+fn data_charts() {
+    use crate::SeriesKind;
+    let plot = |src: &str| match run_source(&mut HashMap::new(), src, false).result {
+        Ok(Some(Value::Plot(p))) => p,
+        other => panic!("{src}: {other:?}"),
+    };
+    let s = plot("scatter([1, 2, 3], [4, 5, 7])");
+    assert_eq!(s.series[0].kind, SeriesKind::Points);
+    assert_eq!(s.series[0].segments[0], vec![[1.0, 4.0], [2.0, 5.0], [3.0, 7.0]]);
+    assert_eq!(plot("scatter([5, 6])").series[0].segments[0], vec![[0.0, 5.0], [1.0, 6.0]]);
+    let b = plot("bar(['a', 'b'], [3, 4])");
+    assert_eq!(b.x_ticks, vec![(0.0, "a".to_owned()), (1.0, "b".to_owned())]);
+    assert!(matches!(b.series[0].kind, SeriesKind::Bars { .. }));
+    // five values over 0..4 in two bins: [0,2) holds 0,1; [2,4] holds 2,3,4
+    let h = plot("hist([0, 1, 2, 3, 4], bins=2)");
+    assert_eq!(h.series[0].segments[0], vec![[1.0, 2.0], [3.0, 3.0]]);
+    assert_eq!(plot("hist([7, 7, 7])").series[0].segments[0].len(), 10, "equal values still get a range");
+    for (src, msg) in [
+        ("scatter([1, 2], [1])", "as many"),
+        ("scatter([1, x])", "only numbers"),
+        ("bar([1], [1, 2])", "one label"),
+        ("hist([])", "at least one"),
+        ("hist([1, 2], bins=0)", "between 1 and 1000"),
+        ("hist([1], width=2)", "unknown keyword"),
+    ] {
+        let e = ev(src);
+        assert!(e.contains(msg), "{src}: {e}");
+    }
+}
+
+#[test]
 fn numeric_integration_roots_and_minima() {
     let num = |src: &str| ev(src).parse::<f64>().unwrap_or(f64::NAN);
     assert!((num("nintegrate(exp(-x**2), (x, -oo, oo))") - std::f64::consts::PI.sqrt()).abs() < 1e-8);
