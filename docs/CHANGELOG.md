@@ -4,6 +4,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- Charts of data: `scatter(xs, ys)` (dots), `bar(labels, heights)` and `hist(data, bins=10)`. They zoom, pan, copy as CSV and save as SVG or PNG like any plot.
 - Windows: the app no longer opens a console window beside it.
 - Numerics: `nintegrate(f, (x, a, b))` (adaptive quadrature; `oo` ends allowed, for integrals with no closed form), `fzero(f, (x, a, b))` (a root where `f` changes sign) and `minimize` / `maximize(f, (x, a, b))` (`[x, f(x)]`).
 - Symbols palette (F2, or the Symbols button): buttons for integrals, derivatives, sums, limits, roots, fractions, trigonometry, constants, relations and matrices insert the code at the cursor with the first placeholder selected. Notebooks stay plain text.
