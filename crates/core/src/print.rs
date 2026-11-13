@@ -1,6 +1,6 @@
 //! Python-syntax printing of expressions. The output parses back to the same expression.
 
-use crate::expr::{Expr, Kind, SYM_E};
+use crate::expr::{Expr, Kind, SYM_E, interval_parts, relation_op};
 use crate::number::Num;
 use std::fmt;
 
@@ -24,6 +24,8 @@ fn prec(e: &Expr) -> u8 {
                 5
             }
         }
+        Kind::Call(name, args) if args.len() == 2 && relation_op(name).is_some() => 0,
+        Kind::Call(name, _) if &**name == "Union" => 1,
         Kind::Sym(_) | Kind::Call(..) | Kind::List(_) => 5,
         Kind::Add(_) => 1,
         Kind::Mul(fs) => match fs.first().map(Expr::kind) {
@@ -71,6 +73,39 @@ fn write_inner(e: &Expr, out: &mut String) {
     match e.kind() {
         Kind::Num(n) => out.push_str(&n.to_string()),
         Kind::Sym(s) => out.push_str(s),
+        Kind::Call(name, args) if args.len() == 2 && relation_op(name).is_some() => {
+            let op = relation_op(name).map_or("", |o| o.0);
+            for (i, a) in args.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(&format!(" {op} "));
+                }
+                write_expr(a, 1, out);
+            }
+        }
+        Kind::Call(name, args) if &**name == "Union" && !args.is_empty() => {
+            for (i, a) in args.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(" \u{222a} ");
+                }
+                write_expr(a, 5, out);
+            }
+        }
+        Kind::Call(name, args) if &**name == "EmptySet" && args.is_empty() => out.push('\u{2205}'),
+        Kind::Call(..) if interval_parts(e).is_some() => {
+            if let Some((lo, hi, closed_lo, closed_hi)) = interval_parts(e) {
+                if lo == hi {
+                    out.push('{');
+                    write_expr(lo, 0, out);
+                    out.push('}');
+                } else {
+                    out.push(if closed_lo { '[' } else { '(' });
+                    write_expr(lo, 0, out);
+                    out.push_str(", ");
+                    write_expr(hi, 0, out);
+                    out.push(if closed_hi { ']' } else { ')' });
+                }
+            }
+        }
         Kind::Call(name, args) => {
             out.push_str(name);
             out.push('(');
