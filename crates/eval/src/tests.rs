@@ -253,6 +253,14 @@ fn infinity_one_sided_limits_and_partial_fractions() {
     assert_eq!(ev("apart(x**3/(x**2 - 1))"), "x + 1/(2*(x - 1)) + 1/(2*(x + 1))");
     assert_eq!(ev("integrate(1/(x**2 - 1), x)"), "log(x - 1)/2 - log(x + 1)/2");
     assert_eq!(ev("abs(N(subs(diff(integrate(1/(x**2 + x + 1), x), x) - 1/(x**2 + x + 1), x, 2))) < 1e-9"), "True");
+    // a polynomial times exp times sin or cos: by parts, checked by differentiating back
+    for f in ["x**2*exp(x)*sin(x)", "x*exp(2*x)*cos(3*x)", "x**3*exp(-x)*sin(2*x)"] {
+        assert_eq!(ev(&format!("abs(N(subs(diff(integrate({f}, x), x) - {f}, x, 0.7))) < 1e-9")), "True", "{f}");
+    }
+    assert_eq!(ev("integrate(x**2*exp(x)*sin(x), (x, 0, 1))"), "1/2");
+    // powers of sin and cos come out as one flat sum
+    assert_eq!(ev("integrate(sin(x)**3*cos(x)**2, x)"), "cos(x)**5/5 - cos(x)**3/3");
+    assert_eq!(ev("integrate(sin(x)**4*cos(x)**2, x)"), "sin(x)**5*cos(x)/6 - sin(x)**3*cos(x)/24 - cos(x)*sin(x)/16 + x/16");
     assert_eq!(ev("free_symbols(oo*x)"), "[x]");
 }
 
