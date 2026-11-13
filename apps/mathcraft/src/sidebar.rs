@@ -1,6 +1,7 @@
 //! The folder sidebar: the notebooks of the opened folder as a tree.
 
 use crate::fonts;
+use crate::git;
 use crate::theme::{self, Theme};
 use crate::workspace::Node;
 use eframe::egui::{self, RichText, Sense, Stroke, vec2};
@@ -24,7 +25,15 @@ pub struct OpenFile<'a> {
 const ROW: f32 = theme::ROW;
 const HEADER: f32 = 28.0;
 
-pub fn sidebar(ui: &mut egui::Ui, theme: &Theme, folder: &Path, tree: &[Node], collapsed: &mut HashSet<PathBuf>, open: &[OpenFile<'_>]) -> Option<SideAction> {
+pub fn sidebar(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    folder: &Path,
+    tree: &[Node],
+    collapsed: &mut HashSet<PathBuf>,
+    open: &[OpenFile<'_>],
+    git: Option<&git::Status>,
+) -> Option<SideAction> {
     let mut action = None;
     ui.add_space(6.0);
     // The header: folder name on the left, its buttons on the right. The buttons are laid out first so a long name
@@ -62,7 +71,7 @@ pub fn sidebar(ui: &mut egui::Ui, theme: &Theme, folder: &Path, tree: &[Node], c
                 });
             });
         }
-        rows(ui, theme, tree, 0, collapsed, open, &mut action);
+        rows(ui, &mut TreeCx { theme, collapsed, open, git: git.map(|g| (folder, g)) }, tree, 0, &mut action);
         ui.add_space(8.0);
     });
     action
@@ -112,6 +121,14 @@ fn small_button(ui: &mut egui::Ui, theme: &Theme, glyph: Glyph, tip: &str) -> eg
     resp.on_hover_text(tip)
 }
 
+fn mark_color(theme: &Theme, mark: git::Mark) -> egui::Color32 {
+    match mark {
+        git::Mark::Added | git::Mark::Untracked => theme.ok,
+        git::Mark::Modified => theme.warn,
+        git::Mark::Deleted | git::Mark::Conflict => theme.danger,
+    }
+}
+
 fn chevron(painter: &egui::Painter, center: egui::Pos2, down: bool, color: egui::Color32) {
     let s = Stroke::new(1.3, color);
     if down {
@@ -123,21 +140,22 @@ fn chevron(painter: &egui::Painter, center: egui::Pos2, down: bool, color: egui:
     }
 }
 
-fn rows(
-    ui: &mut egui::Ui,
-    theme: &Theme,
-    nodes: &[Node],
-    depth: usize,
-    collapsed: &mut HashSet<PathBuf>,
-    open: &[OpenFile<'_>],
-    action: &mut Option<SideAction>,
-) {
+/// What drawing the tree needs besides the nodes themselves.
+struct TreeCx<'a> {
+    theme: &'a Theme,
+    collapsed: &'a mut HashSet<PathBuf>,
+    open: &'a [OpenFile<'a>],
+    git: Option<(&'a Path, &'a git::Status)>,
+}
+
+fn rows(ui: &mut egui::Ui, cx: &mut TreeCx<'_>, nodes: &[Node], depth: usize, action: &mut Option<SideAction>) {
+    let (theme, open, git) = (cx.theme, cx.open, cx.git);
     for node in nodes {
         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
         let indent = 8.0 + depth as f32 * 14.0;
         match node {
             Node::Dir { path, name, children } => {
-                let is_collapsed = collapsed.contains(path);
+                let is_collapsed = cx.collapsed.contains(path);
                 if resp.hovered() {
                     ui.painter().rect_filled(rect.shrink2(vec2(4.0, 1.0)), theme::RADIUS, theme.surface_hover);
                 }
@@ -149,11 +167,16 @@ fn rows(
                     egui::FontId::new(theme::TEXT_UI, fonts::strong_family()),
                     theme.text_dim,
                 );
-                if resp.clicked() && !collapsed.remove(path) {
-                    collapsed.insert(path.clone());
+                let mark = git.and_then(|(root, g)| path.strip_prefix(root).ok().and_then(|rel| g.mark(rel, true)));
+                // a folder with changes inside shows a dot while it is closed
+                if let Some(m) = mark.filter(|_| is_collapsed) {
+                    ui.painter().circle_filled(egui::pos2(rect.right() - 14.0, rect.center().y), 2.5, mark_color(theme, m));
+                }
+                if resp.clicked() && !cx.collapsed.remove(path) {
+                    cx.collapsed.insert(path.clone());
                 }
                 if !is_collapsed {
-                    rows(ui, theme, children, depth + 1, collapsed, open, action);
+                    rows(ui, cx, children, depth + 1, action);
                 }
             }
             Node::File { path, name } => {
@@ -169,7 +192,8 @@ fn rows(
                 let font = egui::FontId::new(theme::TEXT_UI, egui::FontFamily::Proportional);
                 let galley = ui.painter().layout_no_wrap(name.clone(), font, color);
                 let x = rect.left() + indent + 14.0;
-                let max = rect.right() - 22.0;
+                let mark = git.and_then(|(root, g)| path.strip_prefix(root).ok().and_then(|rel| g.mark(rel, false)));
+                let max = rect.right() - if mark.is_some() { 40.0 } else { 22.0 };
                 ui.painter().with_clip_rect(egui::Rect::from_min_max(rect.min, egui::pos2(max, rect.max.y))).galley(
                     egui::pos2(x, rect.center().y - galley.size().y / 2.0),
                     galley,
@@ -184,10 +208,23 @@ fn rows(
                         ui.painter().circle_stroke(c, 2.75, Stroke::new(1.0, theme.text_faint));
                     }
                 }
+                if let Some(m) = mark {
+                    ui.painter().text(
+                        egui::pos2(rect.right() - 30.0, rect.center().y),
+                        egui::Align2::CENTER_CENTER,
+                        m.letter(),
+                        egui::FontId::new(theme::TEXT_CAPTION, fonts::strong_family()),
+                        mark_color(theme, m),
+                    );
+                }
                 if resp.clicked() {
                     *action = Some(SideAction::Open(path.clone()));
                 }
-                resp.on_hover_text(path.display().to_string());
+                let tip = match mark {
+                    Some(m) => format!("{}\nGit: {}", path.display(), m.describe()),
+                    None => path.display().to_string(),
+                };
+                resp.on_hover_text(tip);
             }
         }
     }
