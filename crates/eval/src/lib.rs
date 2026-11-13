@@ -13,6 +13,7 @@ mod builtins;
 mod fastla;
 mod format;
 mod interp;
+mod numerics;
 mod numtheory;
 mod value;
 
