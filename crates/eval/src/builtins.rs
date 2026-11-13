@@ -168,7 +168,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     (
         "dsolve",
         "dsolve(eq, y(x), ics=None, x0=0)",
-        "solve an ordinary differential equation: first order linear or separable, or linear with constant coefficients; ics lists y(x0), y'(x0), ...",
+        "solve an ordinary differential equation: first order linear, separable, Bernoulli or homogeneous, or linear with constant coefficients; ics lists y(x0), y'(x0), ...",
     ),
     ("coeffs", "coeffs(poly, x)", "coefficients, lowest degree first"),
     ("degree", "degree(poly, x)", "degree of a polynomial"),
