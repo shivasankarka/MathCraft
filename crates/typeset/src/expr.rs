@@ -2,7 +2,7 @@
 
 use crate::layout::{Delim, Layout, Role, Tx};
 use crate::names::{function_name, is_trig, symbol};
-use mathcraft_core::expr::SYM_E;
+use mathcraft_core::expr::{SYM_E, derivative_parts};
 use mathcraft_core::{Expr, Kind, Num, Product, product_of, split_product, sum_terms};
 
 /// Deepest expression we lay out; deeper ones are shown as plain text by the caller.
@@ -264,6 +264,19 @@ fn arguments(tx: &Tx, args: &[Expr], st: St) -> Option<Layout> {
 
 fn call(tx: &Tx, name: &str, args: &[Expr], st: St) -> Option<Layout> {
     let sign = |op: &str| operator(tx, op, st);
+    if matches!(name, "diff" | "Derivative")
+        && let Some((f, x, order)) = derivative_parts(&Expr::call(name, args.to_vec()))
+    {
+        // a partial derivative when the expression has other variables than the one differentiated
+        let d = if f.free_symbols().len() > 1 { "\u{2202}" } else { "d" };
+        let power = |base: Layout| {
+            if order > 1 { tx.sup(&base, &tx.text(&order.to_string(), Tx::script(st.size), Role::Number, false), st.size) } else { base }
+        };
+        let top = power(tx.text(d, st.size, Role::Text, false));
+        let bottom = Tx::hcat(vec![tx.text(d, st.size, Role::Text, false), expr(tx, &x, st)?]);
+        let fraction = tx.frac(&top, &power(bottom), st.size);
+        return Some(Tx::hcat(vec![fraction, Tx::space(0.16 * st.size), operand(tx, &f, st)?]));
+    }
     match (name, args) {
         ("Lt" | "Gt", [a, b]) => Some(Tx::hcat(vec![expr(tx, a, st)?, sign(if name == "Lt" { "<" } else { ">" }), expr(tx, b, st)?])),
         ("Le" | "Ge", [a, b]) => Some(Tx::hcat(vec![expr(tx, a, st)?, sign(if name == "Le" { "\u{2264}" } else { "\u{2265}" }), expr(tx, b, st)?])),
