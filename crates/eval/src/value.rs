@@ -94,12 +94,30 @@ pub struct Function {
 pub struct PlotSpec {
     pub series: Vec<PlotSeries>,
     pub x_label: String,
+    /// Names to put under the x axis instead of numbers (a bar chart's categories), as `(x, text)`.
+    pub x_ticks: Vec<(f64, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlotSeries {
     pub label: String,
     pub segments: Vec<Vec<[f64; 2]>>,
+    pub kind: SeriesKind,
+}
+
+/// How a series is drawn: joined by lines, as separate dots, or as bars standing on zero (the points are the bar
+/// centres and heights; `width` is each bar's width in x).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SeriesKind {
+    Line,
+    Points,
+    Bars { width: f64 },
+}
+
+impl PlotSeries {
+    pub fn line(label: impl Into<String>, segments: Vec<Vec<[f64; 2]>>) -> PlotSeries {
+        PlotSeries { label: label.into(), segments, kind: SeriesKind::Line }
+    }
 }
 
 #[derive(Debug, Clone)]
