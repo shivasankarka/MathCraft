@@ -5,6 +5,8 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 ## Unreleased
 
 - Windows: the app no longer opens a console window beside it.
+- Symbols palette (F2, or the Symbols button): buttons for integrals, derivatives, sums, limits, roots, fractions, trigonometry, constants, relations and matrices insert the code at the cursor with the first placeholder selected. Notebooks stay plain text.
+- Derivatives are typeset as d/dx, dⁿ/dxⁿ and ∂/∂x (an unknown function's `diff(y(x), x)` too), in the app and in `latex()`. New `Derivative(f, x, n)` stays unevaluated, like `Integral`; `doit()` evaluates it.
 
 ## 0.3.0 (2026-11-13)
 
