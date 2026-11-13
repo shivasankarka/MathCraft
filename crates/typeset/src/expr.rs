@@ -263,7 +263,38 @@ fn arguments(tx: &Tx, args: &[Expr], st: St) -> Option<Layout> {
 }
 
 fn call(tx: &Tx, name: &str, args: &[Expr], st: St) -> Option<Layout> {
+    let sign = |op: &str| operator(tx, op, st);
     match (name, args) {
+        ("Lt" | "Gt", [a, b]) => Some(Tx::hcat(vec![expr(tx, a, st)?, sign(if name == "Lt" { "<" } else { ">" }), expr(tx, b, st)?])),
+        ("Le" | "Ge", [a, b]) => Some(Tx::hcat(vec![expr(tx, a, st)?, sign(if name == "Le" { "\u{2264}" } else { "\u{2265}" }), expr(tx, b, st)?])),
+        ("Union", parts) if !parts.is_empty() => {
+            let mut items = Vec::new();
+            for (i, p) in parts.iter().enumerate() {
+                if i > 0 {
+                    items.push(sign("\u{222a}"));
+                }
+                items.push(expr(tx, p, st)?);
+            }
+            Some(Tx::hcat(items))
+        }
+        ("EmptySet", []) => Some(tx.text("\u{2205}", st.size, Role::Text, false)),
+        ("Interval", [lo, hi, a, b]) => {
+            let (closed_lo, closed_hi) = (!a.as_num()?.is_zero(), !b.as_num()?.is_zero());
+            let text = |t: &str| tx.text(t, st.size, Role::Text, false);
+            if lo == hi {
+                return Some(Tx::hcat(vec![text("{"), expr(tx, lo, st)?, text("}")]));
+            }
+            let comma = tx.text(",", st.size, Role::Text, false);
+            let gap = Tx::space(0.16 * st.size);
+            Some(Tx::hcat(vec![
+                text(if closed_lo { "[" } else { "(" }),
+                expr(tx, lo, st)?,
+                comma,
+                gap,
+                expr(tx, hi, st)?,
+                text(if closed_hi { "]" } else { ")" }),
+            ]))
+        }
         ("abs", [a]) => Some(tx.delimited(Delim::Bar, &expr(tx, a, st)?, st.size)),
         ("Integral" | "integrate", [f, x]) => {
             let tail = Tx::hcat(vec![expr(tx, f, st)?, Tx::space(0.16 * st.size), tx.text("d", st.size, Role::Text, false), expr(tx, x, st)?]);
