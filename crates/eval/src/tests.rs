@@ -649,7 +649,9 @@ fn complex_functions() {
     assert_eq!(ev("arg(1 + I)"), "pi/4");
     assert_eq!(ev("arg(-1 - I)"), "-3*pi/4");
     assert_eq!(ev("arg(x + I)"), "atan2(1, x)");
-    assert_eq!(ev("N(atan2(1, 2))"), "0.46364760900080615");
+    // the last digit of `atan` differs between platform math libraries
+    let atan: f64 = ev("N(atan2(1, 2))").parse().unwrap_or(f64::NAN);
+    assert!((atan - 0.463_647_609_000_806_1).abs() < 1e-15, "{atan}");
     assert_eq!(ev("sqrt(3 + 4*I)"), "2 + I");
     assert_eq!(ev("sqrt(-3 - 4*I)"), "1 - 2*I");
     assert_eq!(ev("sqrt(I)"), "sqrt(2)/2 + I*sqrt(2)/2");
