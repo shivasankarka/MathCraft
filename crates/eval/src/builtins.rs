@@ -8,6 +8,7 @@ use dashu::integer::IBig;
 use mathcraft_algebra as alg;
 use mathcraft_algebra::linalg;
 use mathcraft_amplitude as amp;
+use mathcraft_core::expr::relation_op;
 use mathcraft_core::numeric::{approximate, eval_f64};
 use mathcraft_core::{Expr, Kind, Num, budget};
 use std::cmp::Ordering;
@@ -161,8 +162,8 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("series", "series(f, x, x0=0, n=6)", "Taylor polynomial up to order n"),
     (
         "solve",
-        "solve(eq, x) | solve([eq1, eq2], [x, y])",
-        "solutions of one equation (polynomial, exp/log/trig), a linear system, or a polynomial system (a list of solutions)",
+        "solve(eq, x) | solve([eq1, eq2], [x, y]) | solve(x**2 > 4, x)",
+        "solutions of one equation (polynomial, exp/log/trig), a linear system, a polynomial system (a list of solutions), or an inequality (an interval set)",
     ),
     (
         "dsolve",
@@ -1356,6 +1357,15 @@ fn solve(it: &Interp<'_>, a: &Args) -> R<Value> {
         }
         single => {
             let eq = single.to_expr()?;
+            if let Kind::Call(name, _) = eq.kind()
+                && relation_op(name).is_some()
+            {
+                let x = match a.pos.get(1) {
+                    Some(v) => as_symbol(v)?,
+                    None => only_symbol(&eq, "solve")?,
+                };
+                return it.checked(alg::solve_inequality(&eq, &x)?);
+            }
             let f = eq_to_zero_form(&eq);
             let x = match a.pos.get(1) {
                 Some(v) => as_symbol(v)?,
