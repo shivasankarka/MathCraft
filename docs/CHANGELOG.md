@@ -4,6 +4,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- View > Changes since the last git commit: the open notebook compared with its committed version, line by line (added in green, removed in red, with two lines of context), updating as you edit. Formatting alone is not a change. Read-only; nothing is staged or committed.
 - Symbols palette: a calculator keypad (digits, operators, brackets, √, π, e) at the top; each key types at the cursor in the code cell you were editing.
 - Git, read-only: when the opened folder is in a git repository (and `git` is installed), the sidebar marks notebooks that are changed (M), new (U), staged (A), deleted (D) or in conflict (!), a closed folder shows a dot when something inside changed, and the status bar shows the branch with how far ahead or behind it is and how many files changed. It refreshes every few seconds and after saving.
 - Symbols palette: a matrix of any size (up to 8 × 8): set the rows and columns, press Insert, and Tab through the entries.
