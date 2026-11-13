@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 pub const INTER: &[u8] = include_bytes!("../../../assets/fonts/InterVariable.ttf");
 const JETBRAINS: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
-const STIX_MATH: &[u8] = include_bytes!("../../../assets/fonts/STIX2Math.otf");
+pub const STIX_MATH: &[u8] = include_bytes!("../../../assets/fonts/STIX2Math.otf");
 
 pub fn math_family() -> FontFamily {
     FontFamily::Name("math".into())
