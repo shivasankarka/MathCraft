@@ -3420,6 +3420,22 @@ mod tests {
     }
 
     #[test]
+    fn keypad_keys_are_typed_at_the_cursor() {
+        let mut h = typing_harness();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("2");
+        h.run();
+        let ctx = h.ctx.clone();
+        if let Some(app) = h.state_mut() {
+            for (_, code) in [("^", "**"), ("3", "3")] {
+                app.insert_code(&symbols::Insert { code: code.into(), select: String::new() }, &ctx);
+            }
+        }
+        h.run();
+        h.run();
+        assert_eq!(source(&h), "2**3");
+    }
+
+    #[test]
     fn a_matrix_of_the_chosen_size_is_filled_in_with_tab() {
         let mut h = typing_harness();
         h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("A = ");
