@@ -34,11 +34,11 @@ impl Args {
     }
 
     /// Positional argument `i`, or the keyword `name`.
-    fn opt(&self, i: usize, name: &str) -> Option<&Value> {
+    pub(crate) fn opt(&self, i: usize, name: &str) -> Option<&Value> {
         self.pos.get(i).or_else(|| self.kw.iter().find(|(k, _)| k == name).map(|(_, v)| v))
     }
 
-    fn get(&self, i: usize) -> R<&Value> {
+    pub(crate) fn get(&self, i: usize) -> R<&Value> {
         self.pos.get(i).ok_or_else(|| EvalError::new("missing argument"))
     }
 
@@ -206,6 +206,9 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("pdot", "pdot(p, q)", "Lorentz product p.q of two four-vectors"),
     ("contract", "contract(expr)", "sum over repeated Lorentz indices (metric, comp); metric(mu, mu) is 4"),
     ("plot", "plot(f, (x, a, b)) | plot([f, g], (x, a, b))", "draw one or more curves"),
+    ("scatter", "scatter(xs, ys) | scatter(ys)", "draw points (x against y, or against 0, 1, 2, …)"),
+    ("bar", "bar(heights) | bar(labels, heights)", "draw a bar chart"),
+    ("hist", "hist(data, bins=10)", "draw a histogram of the data"),
     ("help", "help() | help('name')", "list the functions, or describe one"),
 ];
 
@@ -1326,6 +1329,9 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             Ok(Value::int(i64::try_from(linalg::rank(&matrix_arg(&a)?)?).unwrap_or(0)))
         }
         "plot" => plot(&a),
+        "scatter" => crate::plots::scatter(&a),
+        "bar" => crate::plots::bar(&a),
+        "hist" => crate::plots::hist(&a),
         "help" => {
             a.limits(name, 0, 1)?;
             let text = match a.pos.first() {
@@ -1510,14 +1516,14 @@ fn plot(a: &Args) -> R<Value> {
             let (re, im) = alg::complex_parts(c)?;
             for (label, part) in [("re", re), ("im", im)] {
                 if !part.is_zero() {
-                    series.push(PlotSeries { label: format!("{label}({c})"), segments: plot_points(&part, &x, lo, hi)? });
+                    series.push(PlotSeries::line(format!("{label}({c})"), plot_points(&part, &x, lo, hi)?));
                 }
             }
             continue;
         }
-        series.push(PlotSeries { label: c.to_string(), segments: plot_points(c, &x, lo, hi)? });
+        series.push(PlotSeries::line(c.to_string(), plot_points(c, &x, lo, hi)?));
     }
-    Ok(Value::Plot(Arc::new(PlotSpec { series, x_label: x.to_string() })))
+    Ok(Value::Plot(Arc::new(PlotSpec { series, x_label: x.to_string(), x_ticks: Vec::new() })))
 }
 
 /// Evaluate the `Integral`, `Sum`, `Limit` and `Derivative` objects inside `e`; one with no closed form stays as it is.
