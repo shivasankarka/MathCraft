@@ -11,6 +11,7 @@ mod array;
 mod bench;
 mod builtins;
 mod fastla;
+mod files;
 mod format;
 mod interp;
 mod numerics;
@@ -20,6 +21,7 @@ mod value;
 
 pub use array::{Array, DType};
 pub use builtins::DOCS;
+pub use files::set_file_root;
 pub use interp::{MAX_CALL_DEPTH, MAX_EXPR_DEPTH, Outcome, run, run_source};
 pub use value::{EvalError, PlotSeries, PlotSpec, SeriesKind, Value};
 
