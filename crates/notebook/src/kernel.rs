@@ -7,6 +7,7 @@ use crate::notebook::{CellId, Job};
 use crate::runner::{CellResult, Event, JobResult, Runner, execute};
 use mathcraft_eval::EvalError;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -14,7 +15,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 enum Cmd {
-    Run(Vec<Job>),
+    /// Cells to run, and the folder their code may read and write files in (none: no file access).
+    Run(Vec<Job>, Option<PathBuf>),
     Forget(CellId),
     Reset,
     Shutdown,
@@ -45,7 +47,8 @@ impl Kernel {
                     Cmd::Forget(id) => runner.forget_cell(id),
                     Cmd::Reset => runner.reset(),
                     Cmd::Shutdown => break,
-                    Cmd::Run(jobs) => {
+                    Cmd::Run(jobs, root) => {
+                        mathcraft_eval::set_file_root(root);
                         b2.store(true, Ordering::Relaxed);
                         let current: Mutex<Option<CellId>> = Mutex::new(None);
                         let outcome = catch_unwind(AssertUnwindSafe(|| {
@@ -79,8 +82,9 @@ impl Kernel {
         Ok(Kernel { tx, events, cancel, busy, handle: Some(handle) })
     }
 
-    pub fn run(&self, jobs: Vec<Job>) {
-        let _ = self.tx.send(Cmd::Run(jobs));
+    /// Run `jobs`; their code may read and write files below `files` (`None`: it may not).
+    pub fn run(&self, jobs: Vec<Job>, files: Option<PathBuf>) {
+        let _ = self.tx.send(Cmd::Run(jobs, files));
     }
 
     pub fn forget_cell(&self, id: CellId) {
