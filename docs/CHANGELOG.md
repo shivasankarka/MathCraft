@@ -4,6 +4,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- `integrate` handles a polynomial times `exp` times `sin` or `cos` (`x**2*exp(x)*sin(x)`), and integrals of powers of `sin` and `cos` come out as one flat sum (`sin(x)**5*cos(x)/6 - …`) instead of nested fractions.
 - Charts of data: `scatter(xs, ys)` (dots), `bar(labels, heights)` and `hist(data, bins=10)`. They zoom, pan, copy as CSV and save as SVG or PNG like any plot.
 - Windows: the app no longer opens a console window beside it.
 - Numerics: `nintegrate(f, (x, a, b))` (adaptive quadrature; `oo` ends allowed, for integrals with no closed form), `fzero(f, (x, a, b))` (a root where `f` changes sign) and `minimize` / `maximize(f, (x, a, b))` (`[x, f(x)]`).
