@@ -176,7 +176,7 @@ fn kernel_thread_runs_jobs_and_can_be_interrupted() {
     let (mut nb, ids) = build(&["a = 6 * 7", "while True:\n    pass", "z = a"]);
     let kernel = Kernel::spawn(|| {}).unwrap();
     let jobs = nb.plan(RunRequest::Cell(ids[0]));
-    kernel.run(jobs);
+    kernel.run(jobs, None);
     let mut seen = 0;
     while seen < 2 {
         match kernel.events.recv_timeout(Duration::from_secs(10)).unwrap() {
@@ -191,7 +191,7 @@ fn kernel_thread_runs_jobs_and_can_be_interrupted() {
     assert_eq!(state(&nb, ids[0]), CellState::Fresh);
     // a runaway cell: interrupt it
     let jobs = nb.plan(RunRequest::Cell(ids[1]));
-    kernel.run(jobs);
+    kernel.run(jobs, None);
     loop {
         match kernel.events.recv_timeout(Duration::from_secs(10)).unwrap() {
             crate::Event::Started(_) => {
