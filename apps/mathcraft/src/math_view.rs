@@ -187,3 +187,22 @@ impl MathCache {
         l
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_math_is_typeset_when_it_is_an_expression_and_left_as_text_otherwise() {
+        let ctx = Context::default();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            let ctx = ui.ctx();
+            assert!(inline_layout(ctx, "x**2 - 2", 16.0).is_some());
+            assert!(inline_layout(ctx, "exp(I*pi) + 1", 16.0).is_some(), "it is evaluated, so this is 0");
+            assert!(inline_layout(ctx, "expand((x + y + z)**200)", 16.0).is_none(), "an error, so it stays text");
+            assert!(inline_layout(ctx, "x = ", 16.0).is_none(), "not an expression");
+            assert!(inline_layout(ctx, &"x + ".repeat(100), 16.0).is_none(), "too long");
+        })
+        .drop_without_applying_deltas();
+    }
+}
