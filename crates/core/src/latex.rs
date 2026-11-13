@@ -1,7 +1,7 @@
 //! LaTeX source for an expression, so a result can be pasted into a paper, a slide or a Markdown note.
 //! Term and factor order come from the printer (`sum_terms`, `product_of`) so the LaTeX reads like the text form.
 
-use crate::expr::{Expr, Kind, SYM_E, SYM_I, SYM_OO, SYM_PI};
+use crate::expr::{Expr, Kind, SYM_E, SYM_I, SYM_OO, SYM_PI, relation_op};
 use crate::{Num, product_of, sum_terms};
 
 // precedence levels
@@ -79,6 +79,17 @@ fn float(s: &str) -> String {
 fn call(name: &str, args: &[Expr]) -> (String, u8) {
     let list = |args: &[Expr]| args.iter().map(latex).collect::<Vec<_>>().join(",\\,");
     match (name, args) {
+        (n, [a, b]) if relation_op(n).is_some() => (format!("{} {} {}", latex(a), relation_op(n).map_or("", |o| o.1), latex(b)), ADD),
+        ("Union", parts) if !parts.is_empty() => (parts.iter().map(latex).collect::<Vec<_>>().join(" \\cup "), ADD),
+        ("EmptySet", []) => ("\\varnothing".to_owned(), ATOM),
+        ("Interval", [lo, hi, a, b]) => {
+            let (cl, cr) = (!a.as_num().is_some_and(Num::is_zero), !b.as_num().is_some_and(Num::is_zero));
+            if lo == hi {
+                (format!("\\left\\{{{}\\right\\}}", latex(lo)), ATOM)
+            } else {
+                (format!("{}{},\\,{}{}", if cl { "[" } else { "(" }, latex(lo), latex(hi), if cr { "]" } else { ")" }), ATOM)
+            }
+        }
         ("sqrt", [a]) => (format!("\\sqrt{{{}}}", latex(a)), ATOM),
         ("abs", [a]) => (format!("\\left|{}\\right|", latex(a)), ATOM),
         ("Integral" | "integrate", [f, x]) => (format!("\\int {}\\,d{}", latex(f), latex(x)), MUL),
