@@ -81,6 +81,7 @@ enum Cmd {
     ToggleSidebar,
     Functions,
     Symbols,
+    ToggleActions,
     Theme(ThemePreference),
     ToggleVim,
     TogglePretty,
@@ -120,6 +121,7 @@ struct App {
     ctx: egui::Context,
     show_help: bool,
     show_symbols: bool,
+    show_actions: bool,
     help_filter: String,
     status: String,
     last_title: String,
@@ -290,6 +292,7 @@ impl App {
             ctx,
             show_help: false,
             show_symbols: false,
+            show_actions: true,
             help_filter: String::new(),
             status,
             last_title: String::new(),
@@ -470,6 +473,7 @@ impl App {
             item("View", "Show or hide the sidebar", key(Modifiers::COMMAND, Key::B), Cmd::ToggleSidebar),
             item("View", "Browse all functions", "F1".to_owned(), Cmd::Functions),
             item("View", "Insert symbols and formulas", "F2".to_owned(), Cmd::Symbols),
+            item("View", "Show or hide the action row (Simplify, Solve, …)", String::new(), Cmd::ToggleActions),
             item("Theme", "Match the system", String::new(), Cmd::Theme(ThemePreference::System)),
             item("Theme", "Light", String::new(), Cmd::Theme(ThemePreference::Light)),
             item("Theme", "Dark", String::new(), Cmd::Theme(ThemePreference::Dark)),
@@ -533,6 +537,7 @@ impl App {
             Cmd::ToggleSidebar => self.toggle_sidebar(),
             Cmd::Functions => self.show_help = true,
             Cmd::Symbols => self.show_symbols = true,
+            Cmd::ToggleActions => self.show_actions = !self.show_actions,
             Cmd::Theme(t) => ctx.set_theme(t),
             Cmd::ToggleVim => self.vim = !self.vim,
             Cmd::TogglePretty => self.pretty = !self.pretty,
@@ -603,6 +608,72 @@ impl App {
         self.apply(vec![Action::SetSource(id, text)]);
         self.cur.focus = Some(id);
         self.status = format!("Inserted {}", template.code);
+    }
+
+    /// The row of one-click actions on the expression being edited.
+    fn action_row(&self, ui: &mut egui::Ui, theme: &Theme) -> Option<&'static symbols::Act> {
+        let mut chosen = None;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.spacing_mut().button_padding = vec2(10.0, 3.0);
+            ui.label(RichText::new("On the selection").size(theme::TEXT_CAPTION).color(theme.text_faint));
+            ui.add_space(4.0);
+            for act in symbols::ACTIONS {
+                if ui.add(egui::Button::new(RichText::new(act.label).size(13.0)).frame(false)).on_hover_text(act.hint).clicked() {
+                    chosen = Some(act);
+                }
+            }
+        });
+        chosen
+    }
+
+    /// Wrap the selected text (or the expression on the cursor's line) of the last code cell in `act`'s call.
+    fn apply_action(&mut self, act: &symbols::Act, ctx: &egui::Context) {
+        let target = self.last_cell.and_then(|id| self.cur.nb.cell(id)).filter(|c| c.kind == CellKind::Code);
+        let Some(cell) = target else {
+            self.status = "Click into a code cell first, then choose an action".into();
+            return;
+        };
+        let (id, mut text) = (cell.id, cell.source.clone());
+        let editor = editor_id(id);
+        let total = text.chars().count();
+        let (mut lo, mut hi) = egui::TextEdit::load_state(ctx, editor).and_then(|s| s.cursor.char_range()).map_or((total, total), |r| {
+            (
+                usize::from(r.primary.index).min(usize::from(r.secondary.index)).min(total),
+                usize::from(r.primary.index).max(usize::from(r.secondary.index)).min(total),
+            )
+        });
+        if lo == hi {
+            // no selection: the expression on this line
+            let chars: Vec<char> = text.chars().collect();
+            let line_start = chars.iter().take(lo).rposition(|c| *c == '\n').map_or(0, |i| i + 1);
+            let line_end = chars.iter().skip(lo).position(|c| *c == '\n').map_or(total, |i| lo + i);
+            let line: String = chars.iter().skip(line_start).take(line_end - line_start).collect();
+            let (a, b) = symbols::expression_span(&line);
+            (lo, hi) = (line_start + a, line_start + b);
+        }
+        let expr: String = text.chars().skip(lo).take(hi - lo).collect();
+        let known = |n: &str| matches!(n, "pi" | "E" | "I" | "oo") || mathcraft_eval::DOCS.iter().any(|d| d.0 == n);
+        let (code, pick) = if expr.trim().is_empty() {
+            // nothing to wrap: an empty call with the argument selected
+            let (code, _) = symbols::wrap(act, "f", "x");
+            (code, Some((act.func.chars().count() + 1, act.func.chars().count() + 2)))
+        } else {
+            let var = symbols::guess_variable(&expr, &known);
+            symbols::wrap(act, expr.trim(), &var)
+        };
+        let (lo, hi) = if expr.trim().is_empty() { (lo, lo) } else { (lo, hi) };
+        replace_chars(ctx, editor, &mut text, lo, hi, &code);
+        if let Some((from, to)) = pick
+            && let Some(mut state) = egui::TextEdit::load_state(ctx, editor)
+        {
+            let at = |n: usize| egui::text::CCursor::new(lo + n);
+            state.cursor.set_char_range(Some(CCursorRange::two(at(from), at(to))));
+            state.store(ctx, editor);
+        }
+        self.apply(vec![Action::SetSource(id, text)]);
+        self.cur.focus = Some(id);
+        self.status = format!("Wrapped in {}(…). Shift+Enter runs it", act.func);
     }
 
     /// A Vim `:` command.
@@ -1206,6 +1277,16 @@ impl App {
             .show(root, |ui| self.toolbar(ui, &theme));
         self.toolbar_height = top.response.rect.height();
         hairline(root, &theme, top.response.rect.x_range(), top.response.rect.bottom() - 0.5);
+        if self.show_actions {
+            let row = egui::Panel::top("actions")
+                .show_separator_line(false)
+                .frame(egui::Frame::new().fill(theme.chrome).inner_margin(Margin { left: 12, right: 12, top: 4, bottom: 5 }))
+                .show(root, |ui| self.action_row(ui, &theme));
+            hairline(root, &theme, row.response.rect.x_range(), row.response.rect.bottom() - 0.5);
+            if let Some(act) = row.inner {
+                self.apply_action(act, root.ctx());
+            }
+        }
         if self.order.len() > 1 {
             let tabs: Vec<TabInfo> = self
                 .order
@@ -3238,6 +3319,25 @@ mod tests {
         h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("sin(x)");
         h.run();
         assert_eq!(source(&h), "y = integrate(sin(x), x)");
+    }
+
+    #[test]
+    fn an_action_wraps_the_expression_on_the_line() {
+        let mut h = typing_harness();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("y = x**2 - 4");
+        h.run();
+        let ctx = h.ctx.clone();
+        let act = |name: &str| symbols::ACTIONS.iter().find(|a| a.func == name).unwrap();
+        if let Some(app) = h.state_mut() {
+            app.apply_action(act("solve"), &ctx);
+        }
+        h.run();
+        h.run();
+        assert_eq!(source(&h), "y = solve(x**2 - 4, x)");
+        // the variable is selected, so typing changes it
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("t");
+        h.run();
+        assert_eq!(source(&h), "y = solve(x**2 - 4, t)");
     }
 
     #[test]
