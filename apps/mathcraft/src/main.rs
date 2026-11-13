@@ -596,6 +596,9 @@ impl App {
             let at = |n: usize| egui::text::CCursor::new(start + n);
             state.cursor.set_char_range(Some(CCursorRange::two(at(from), at(to))));
             state.store(ctx, editor);
+            // Tab visits the other placeholders
+            let stops = symbols::Stops::new(template.code, template.select, start, text.chars().count());
+            ctx.data_mut(|d| d.insert_temp(stops_key(editor), stops));
         }
         self.apply(vec![Action::SetSource(id, text)]);
         self.cur.focus = Some(id);
@@ -1890,7 +1893,9 @@ fn editor(ui: &mut egui::Ui, env: &mut Env, cell: &Cell, code: bool) -> bool {
         run_advance = shift_enter;
         run_stay = cmd_enter;
         if tab && code {
-            edited |= insert_at_cursor(&ctx, id, &mut text, "    ");
+            if !next_placeholder(&ctx, id, &text) {
+                edited |= insert_at_cursor(&ctx, id, &mut text, "    ");
+            }
         } else if tab {
             ctx.memory_mut(|m| m.request_focus(id));
         }
@@ -2122,6 +2127,32 @@ fn split_at_cursor(ctx: &egui::Context, id: egui::Id, text: &str) -> (String, St
 }
 
 /// Insert text at the cursor (replacing any selection) and put the cursor after it. Returns whether text changed.
+fn stops_key(editor: egui::Id) -> egui::Id {
+    editor.with("placeholders")
+}
+
+/// Tab after a symbol was inserted from the palette: select the next placeholder (or move past the template).
+/// `false` when no walk is in progress, so Tab indents as usual.
+fn next_placeholder(ctx: &egui::Context, id: egui::Id, text: &str) -> bool {
+    let key = stops_key(id);
+    let Some(mut stops) = ctx.data(|d| d.get_temp::<symbols::Stops>(key)) else { return false };
+    let cursor = egui::TextEdit::load_state(ctx, id)
+        .and_then(|s| s.cursor.char_range())
+        .map_or(usize::MAX, |r| usize::from(r.primary.index).min(usize::from(r.secondary.index)));
+    let next = stops.advance(text.chars().count(), cursor);
+    if stops.at.is_empty() {
+        ctx.data_mut(|d| d.remove::<symbols::Stops>(key));
+    } else {
+        ctx.data_mut(|d| d.insert_temp(key, stops));
+    }
+    let Some((from, to)) = next else { return false };
+    if let Some(mut state) = egui::TextEdit::load_state(ctx, id) {
+        state.cursor.set_char_range(Some(CCursorRange::two(egui::text::CCursor::new(from), egui::text::CCursor::new(to))));
+        state.store(ctx, id);
+    }
+    true
+}
+
 fn insert_at_cursor(ctx: &egui::Context, id: egui::Id, text: &mut String, ins: &str) -> bool {
     let Some(state) = egui::TextEdit::load_state(ctx, id) else { return false };
     let total = text.chars().count();
@@ -3207,6 +3238,35 @@ mod tests {
         h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("sin(x)");
         h.run();
         assert_eq!(source(&h), "y = integrate(sin(x), x)");
+    }
+
+    #[test]
+    fn tab_moves_through_a_templates_placeholders() {
+        let mut h = typing_harness();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("y = ");
+        h.run();
+        let ctx = h.ctx.clone();
+        if let Some(app) = h.state_mut() {
+            app.insert_template(&symbols::GROUPS[0].1[1], &ctx);
+        }
+        h.run();
+        h.run();
+        assert_eq!(source(&h), "y = integrate(f, (x, a, b))");
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("x**2");
+        h.run();
+        for (key_text, _) in [("x", 0), ("0", 1), ("3", 2)] {
+            h.key_press(Key::Tab);
+            h.run();
+            h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text(key_text);
+            h.run();
+        }
+        assert_eq!(source(&h), "y = integrate(x**2, (x, 0, 3))");
+        // after the last placeholder Tab goes past the template, and then it indents
+        h.key_press(Key::Tab);
+        h.run();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("+1");
+        h.run();
+        assert_eq!(source(&h), "y = integrate(x**2, (x, 0, 3))+1");
     }
 
     #[test]
