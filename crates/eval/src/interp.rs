@@ -7,6 +7,7 @@ use crate::builtins::{self, Args};
 use crate::value::{EvalError, FastMap, FuncBody, Function, R, TopMap, Value, err};
 use dashu::integer::IBig;
 use mathcraft_algebra::linalg;
+use mathcraft_core::expr::relation_op;
 use mathcraft_core::numeric::eval_f64;
 use mathcraft_core::{Expr, Kind, Num, budget};
 use mathcraft_syntax::ast::{BinOp, CmpOp, Comp, Ex, Param, Stmt, StmtKind, Target, UnOp};
@@ -420,6 +421,9 @@ impl Interp<'_> {
             Value::Expr(e) => match e.kind() {
                 Kind::Num(n) => !n.is_zero(),
                 Kind::Eq(..) => return err("an equation can't be used as a condition; solve it or compare numbers"),
+                Kind::Call(name, _) if relation_op(name).is_some() => {
+                    return err("an inequality with symbols can't be used as a condition; solve it or compare numbers");
+                }
                 _ if e.free_symbols().is_empty() => eval_f64(e, &|_| None).map(|x| x != 0.0).unwrap_or(true),
                 _ => return err(format!("cannot decide whether `{e}` is true or false because it contains symbols")),
             },
@@ -776,6 +780,18 @@ impl Interp<'_> {
                 }
             }
             CmpOp::Lt | CmpOp::LtE | CmpOp::Gt | CmpOp::GtE => {
+                // with symbols the comparison cannot be decided: it stays an inequality, for solve()
+                if let (Some(x), Some(y)) = (numeric(a), numeric(b))
+                    && !(x.free_symbols().is_empty() && y.free_symbols().is_empty())
+                {
+                    let name = match op {
+                        CmpOp::Lt => "Lt",
+                        CmpOp::LtE => "Le",
+                        CmpOp::Gt => "Gt",
+                        _ => "Ge",
+                    };
+                    return Ok(Value::Expr(Expr::call(name, vec![x, y])));
+                }
                 let ord = match (a, b) {
                     (Value::Str(x), Value::Str(y)) => x.cmp(y),
                     _ => match (numeric(a), numeric(b)) {
