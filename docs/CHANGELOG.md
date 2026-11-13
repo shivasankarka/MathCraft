@@ -4,6 +4,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- Symbols palette: a calculator keypad (digits, operators, brackets, √, π, e) at the top; each key types at the cursor in the code cell you were editing.
 - Git, read-only: when the opened folder is in a git repository (and `git` is installed), the sidebar marks notebooks that are changed (M), new (U), staged (A), deleted (D) or in conflict (!), a closed folder shows a dot when something inside changed, and the status bar shows the branch with how far ahead or behind it is and how many files changed. It refreshes every few seconds and after saving.
 - Symbols palette: a matrix of any size (up to 8 × 8): set the rows and columns, press Insert, and Tab through the entries.
 - CSV and TSV files: `read_csv("data.csv", header=True, columns=True)` reads numbers as numbers (`x, y = read_csv(...)` feeds `scatter(x, y)`), and `write_csv("out.csv", rows, header=[...])` writes a list of rows or a matrix. Files are only reachable inside the notebook's own folder (the working directory in the command line tool): no absolute paths, no `..`, symbolic links are checked, and only `.csv`, `.tsv` and `.txt` are accepted. Save a new notebook first so it has a folder. The MCP server and the browser build have no file access.
