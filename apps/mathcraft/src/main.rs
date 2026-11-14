@@ -2584,12 +2584,64 @@ fn copy_as_menu(ui: &mut egui::Ui, theme: &Theme, v: &Value) {
 #[derive(Clone, Copy, Default)]
 struct ResetPlot(bool);
 
+/// What one plot shows, chosen from its context menu and kept while the app runs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PlotOptions {
+    grid: bool,
+    axes: bool,
+    marks: Marks,
+}
+
+impl Default for PlotOptions {
+    fn default() -> Self {
+        PlotOptions { grid: false, axes: true, marks: Marks::Auto }
+    }
+}
+
+/// How far apart the tick marks (and grid lines) are drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+enum Marks {
+    #[default]
+    Auto,
+    Wide,
+    Tight,
+}
+
+impl Marks {
+    fn next(self) -> Marks {
+        match self {
+            Marks::Auto => Marks::Wide,
+            Marks::Wide => Marks::Tight,
+            Marks::Tight => Marks::Auto,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Marks::Auto => "automatic",
+            Marks::Wide => "far apart",
+            Marks::Tight => "close together",
+        }
+    }
+
+    /// The range of pixels between two marks.
+    fn spacing(self) -> std::ops::RangeInclusive<f32> {
+        match self {
+            Marks::Auto => 80.0..=400.0,
+            Marks::Wide => 160.0..=800.0,
+            Marks::Tight => 40.0..=200.0,
+        }
+    }
+}
+
 /// A plot you can look around in: drag to pan, pinch or Ctrl+scroll to zoom, right-drag a box to zoom into it,
 /// double-click to reset. The coordinates under the pointer show in the corner; the context menu resets the view,
-/// copies the points as CSV or saves the view as an SVG picture.
+/// shows or hides the grid and the axes, changes how far apart the marks are, copies the points as CSV or saves the view as a picture.
 fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::PlotSpec, actions: &mut Vec<Action>) {
     let plot_id = egui::Id::unique(("plot", id));
     let reset_key = plot_id.with("reset");
+    let options_key = plot_id.with("options");
+    let options = ui.ctx().data(|d| d.get_temp::<PlotOptions>(options_key)).unwrap_or_default();
     ui.scope(|ui| {
         // The plot draws its frame, labels and legend from the visuals; keep them quiet and on the page colour.
         let v = ui.visuals_mut();
@@ -2598,7 +2650,7 @@ fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::Plo
         v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, theme.border);
         let mut plot = egui_plot::Plot::new(plot_id)
             .height(280.0)
-            .grid_spacing(80.0..=400.0)
+            .grid_spacing(options.marks.spacing())
             .x_grid_spacer(nice_grid(1.0))
             .y_grid_spacer(nice_grid(0.25))
             .x_axis_formatter(|m, _| category_label(&p.x_ticks, m.value).unwrap_or_else(|| tick_label(m.value)))
@@ -2606,7 +2658,8 @@ fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::Plo
             .coordinates_formatter(egui_plot::Corner::LeftBottom, egui_plot::CoordinatesFormatter::new(|pt, b| coordinate_text(pt.x, pt.y, b)))
             .allow_scroll(false)
             .allow_boxed_zoom(true)
-            .show_grid(false)
+            .show_grid(options.grid)
+            .show_axes(options.axes)
             .x_axis_label(p.x_label.clone());
         if ui.ctx().data_mut(|d| d.get_temp::<ResetPlot>(reset_key).is_some_and(|r| r.0)) {
             ui.ctx().data_mut(|d| d.insert_temp(reset_key, ResetPlot(false)));
@@ -2642,6 +2695,23 @@ fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::Plo
                 ui.ctx().data_mut(|d| d.insert_temp(reset_key, ResetPlot(true)));
                 ui.close();
             }
+            let mut changed = options;
+            if menu_row(ui, theme, if options.grid { "Hide grid" } else { "Show grid" }, None).clicked() {
+                changed.grid = !options.grid;
+                ui.close();
+            }
+            if menu_row(ui, theme, if options.axes { "Hide axes" } else { "Show axes" }, None).clicked() {
+                changed.axes = !options.axes;
+                ui.close();
+            }
+            if menu_row(ui, theme, &format!("Marks: {}", options.marks.name()), None).clicked() {
+                changed.marks = options.marks.next();
+                ui.close();
+            }
+            if changed != options {
+                ui.ctx().data_mut(|d| d.insert_temp(options_key, changed));
+            }
+            ui.separator();
             if menu_row(ui, theme, "Copy points as CSV", None).clicked() {
                 ui.ctx().copy_text(plot_export::csv(p));
                 actions.push(Action::Status("Copied the plot's points as CSV".into()));
@@ -2830,6 +2900,27 @@ mod tests {
         ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("plot", id)).with("reset"), ResetPlot(true)));
         frame(&ctx, &mut app);
         assert!(ctx.data(|d| d.get_temp::<ResetPlot>(egui::Id::unique(("plot", id)).with("reset"))).is_some_and(|r| !r.0), "the request is consumed");
+    }
+
+    #[test]
+    fn plot_options_are_applied_and_marks_cycle() {
+        assert_eq!(Marks::Auto.next().next().next(), Marks::Auto);
+        assert!(Marks::Wide.spacing().start() > Marks::Auto.spacing().start());
+        assert!(Marks::Tight.spacing().start() < Marks::Auto.spacing().start());
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        app.replace_notebook(Notebook::from_text("# %%\nplot(sin(x), (x, 0, 6))\n"), None);
+        let start = Instant::now();
+        while app.busy() || start.elapsed() < Duration::from_millis(200) {
+            frame(&ctx, &mut app);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let id = app.cur.nb.cells().first().map(|c| c.id).unwrap_or(0);
+        let key = egui::Id::unique(("plot", id)).with("options");
+        let chosen = PlotOptions { grid: true, axes: false, marks: Marks::Tight };
+        ctx.data_mut(|d| d.insert_temp(key, chosen));
+        frame(&ctx, &mut app);
+        assert_eq!(ctx.data(|d| d.get_temp::<PlotOptions>(key)), Some(chosen), "drawing with the options keeps them");
     }
 
     #[test]
