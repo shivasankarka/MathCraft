@@ -4,6 +4,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- The interface size you set with Cmd or Ctrl and + / - (0 resets) is remembered between runs.
 - Browser page: every cell has a Run button (so it works on a phone, where there is no Shift+Enter); Ctrl or Cmd+Enter also run.
 - The notebook that opens on first start is now a tutorial and reference: the app (keys, palette, symbols window, action row, folders, git, results), exact numbers, Python, algebra, equations, calculus, trigonometry and complex numbers, special functions, matrices, numerics, plots and data, sliders, exporting code, Dirac traces, the command line, and a list of what does not work yet. Every cell runs.
 - `dsolve` refuses `ics=[y(0) == 1]` (an equation or comparison) with a message instead of silently answering `y(x) == 0`; write `ics=[1]`.
