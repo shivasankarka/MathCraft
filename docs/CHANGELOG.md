@@ -4,6 +4,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- Plots: right-click to show or hide the grid and the axes and to space the tick marks (automatic, far apart, close together). The choice is per plot and lasts until you close the app; saved SVG and PNG pictures do not use it yet.
 - README rewritten for newcomers: who it is for, a two-minute install table, a first-five-minutes guide, and an honest list of what does not work yet.
 - The interface size you set with Cmd or Ctrl and + / - (0 resets) is remembered between runs.
 - Browser page: every cell has a Run button (so it works on a phone, where there is no Shift+Enter); Ctrl or Cmd+Enter also run.
