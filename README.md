@@ -1,17 +1,49 @@
 # MathCraft
 
-A fast, friendly, open-source symbolic-computation notebook in pure Rust. Exact algebra and calculus, a Python-flavoured
-language, and a reactive notebook where changing one cell updates every cell that depends on it.
+A notebook for doing maths on a computer: type an expression, get an exact answer. Algebra, calculus, equations, matrices
+and plots, with Python-style syntax, in one small app you download and open. No Python, no installer, no account.
 
 ![MathCraft notebook, dark theme](docs/images/notebook-dark.png)
 
-**Status: v0.3.0, early but usable.** It works and is usable, but it is young: expect rough edges, and see
-[Limitations](#limitations). Built and tested mainly on macOS (Apple silicon); Windows and Linux builds come from CI
-and have had little hands-on use.
+```python
+f = sin(x) * exp(-x / 5)          # x is not defined, so it is a symbol
+diff(f, x)                        # exp(-x/5)*cos(x) - exp(-x/5)*sin(x)/5
+solve(x**2 - 5*x + 6, x)          # [2, 3]
+integrate(sin(x)**2, (x, 0, pi))  # pi/2
+plot(f, (x, 0, 20))               # a plot, right under the cell
+```
 
-## Install
+**Status: v0.3.0, early but usable.** It works, but it is young: expect rough edges, and read [What does not work yet](#what-does-not-work-yet).
+It is built and tested mainly on macOS (Apple silicon); the Windows and Linux builds come from CI and have had little
+hands-on use.
 
-Download a build for your system from the [Releases](../../releases) page: `mathcraft-<version>-<system>` has the desktop app and the command line tool, and `mathcraft-cli-<version>-<system>` has only the command line tool (no window system needed). On macOS, `mathcraft-<version>-macos-<cpu>-app.zip` holds `MathCraft.app` with the app icon (not signed yet: right-click it and choose Open the first time). Or build from source (Rust 1.97 or newer):
+## Who it is for
+
+- Students and teachers who want a symbolic calculator that shows exact results (`1/3 + 1/6` is `1/2`, `sqrt(8)` is
+  `2*sqrt(2)`), typeset like a textbook.
+- People who know a little Python and want algebra without installing SymPy, Sage or a Python environment.
+- Physicists: it can do Dirac traces and Lorentz contractions (see [Also included](#also-included)).
+- Anyone who wants notebooks as plain text files that diff well in git.
+
+It is not a replacement for Mathematica, Maple or Sage; see [What does not work yet](#what-does-not-work-yet).
+
+## Install (about two minutes)
+
+1. Open the [Releases](../../releases) page and download the file for your computer from the newest release:
+
+   | System | File | Then |
+   |---|---|---|
+   | macOS | `mathcraft-<version>-macos-arm64-app.zip` (Apple silicon: M1 and later) or `...-macos-x64-app.zip` (Intel) | Unzip, drag `MathCraft.app` to Applications. It is not signed yet, so the first time right-click it and choose **Open**. |
+   | Windows | `mathcraft-<version>-windows-x64.zip` | Unzip and double-click `mathcraft.exe`. Windows may warn about an unknown publisher (not signed yet): choose **More info**, then **Run anyway**. |
+   | Linux | `mathcraft-<version>-linux-x64.tar.gz` | Extract and run `./mathcraft`. |
+
+2. Open the app. The first notebook that opens is a tutorial and reference: every feature, with cells you can run.
+
+The same downloads contain `mathcraft-cli`, a command line tool. `mathcraft-cli-<version>-<system>` is the command line tool
+alone (no window system needed).
+
+<details>
+<summary>Build from source instead (Rust 1.97 or newer)</summary>
 
 ```sh
 cargo install --path apps/mathcraft        # the desktop app
@@ -19,78 +51,95 @@ cargo install --path apps/mathcraft-cli    # the command line tool
 ```
 
 On Linux you also need the usual GUI development libraries (`libxkbcommon-dev`, `libwayland-dev`, `libgtk-3-dev`).
+</details>
 
-### In the browser
+## Your first five minutes
 
-The engine also builds to WebAssembly (`mathcraft-web-<version>.zip` on the Releases page, or `./scripts/build-wasm.sh` from source): unzip it, serve the folder with any static server (`python3 -m http.server`) and open `index.html`. `mathcraft.js` is the whole interface: `const mc = await load("mathcraft_wasm.wasm"); mc.run("integrate(x**2, x)")` gives `{ stdout, value, latex, error }`. It is the engine only (no editor yet), without the fast matrix library and without threads, so large polynomial gcds are slower than on the desktop.
+1. In the first notebook, press **Shift+Enter** to run a cell and move to the next one.
+2. Change `f = ...` in the first cell and run it again: every cell that uses `f` updates by itself.
+3. Press **F2** for the symbols window (a keypad, integrals, sums, matrices, Greek letters); press **F1** for the list of all functions.
+4. Press **⌘P** (Ctrl+P on Windows and Linux) for the command palette: open files, switch theme, jump to a cell.
+5. Make your own: ⌘N (File, New notebook), type in a cell, and save. A notebook is a plain `.py` file.
 
-## Try it
+| Key | Does |
+|---|---|
+| Shift+Enter | run the cell and move on |
+| ⌘/Ctrl+Enter | run the cell and stay |
+| ⌘/Ctrl+Shift+Enter | run all cells |
+| ⌘/Ctrl+. | interrupt a running cell |
+| ⌘/Ctrl+S | save |
+| ⌘/Ctrl + and - | make the interface bigger or smaller (remembered) |
 
-```sh
-cargo run --release -p mathcraft                         # opens a welcome notebook
-cargo run --release -p mathcraft -- examples/tour.py     # open a file
-cargo run --release -p mathcraft-cli -- eval 'integrate(sin(x)**2, (x, 0, pi))'
-cargo run --release -p mathcraft-cli -- run examples/tour.py
-cargo run --release -p mathcraft-cli -- check examples/tour.py
-cargo run --release -p mathcraft-cli -- export examples/tour.py -o tour.html   # run it and save as HTML or Markdown
-```
-
-In the app: **Shift+Enter** runs a cell and moves on, **⌘/Ctrl+Enter** runs without moving, **⌘⇧+Enter** runs all,
-**⌘.** interrupts, **⌘S** saves, **F1** lists every function.
+Right-click a result to copy it as text, LaTeX, Python, NumPy or Rust. Right-click a plot to reset the view or save it as
+SVG or PNG; drag to pan and scroll to zoom.
 
 ## The language
 
 Python syntax, with maths-friendly meaning:
 
 ```python
-f = sin(x) * exp(-x / 5)         # x is not defined, so it is a symbol
-diff(f, x)                       # exp(-x/5)*cos(x) - exp(-x/5)*sin(x)/5
 1/3 + 1/6                        # 1/2, exact
-solve(x**2 - 5*x + 6, x)         # [2, 3]
 solve(x**2 > 4, x)               # (-oo, -2) ∪ (2, oo)
-integrate(sin(x)**2, (x, 0, pi)) # pi/2
 A = [[1, 2], [3, 4]]
-det(A), inv(A), A @ A
+det(A), inv(A), A @ A            # matrices; @ is the matrix product
+a = slider(1, 5, 2)              # drag it, and everything that uses `a` re-runs
 plot([sin(x), cos(x)], (x, 0, 10))
 ```
 
-Use `**` for powers (`^` is XOR in Python and gives a helpful error). Declare symbols explicitly with
-`x, y = symbols('x y')`, or turn on *Strict* in Settings to require it. Add assumptions with
-`x = symbols('x', positive=True)` (also `integer`, `negative`, `nonzero`, ...) so `sqrt(x**2)` simplifies to `x`.
+Use `**` for powers (`^` also works and is rewritten to `**`). Names you never define are symbols; declare
+them with `x, y = symbols('x y')`, or turn on *Strict* in Settings to require it. Add assumptions with
+`x = symbols('x', positive=True)` (also `integer`, `negative`, `nonzero`, ...) so that `sqrt(x**2)` simplifies to `x`.
 
-## Notebook rules (inspired by marimo)
+## How notebooks work (inspired by marimo)
 
-- A name can be defined in **one cell only**; no two cells may depend on each other in a cycle. Offending cells don't
-  run and say why (`MC002` duplicate definition, `MC003` cycle, `MC001` syntax error).
-- Running a cell re-runs the cells that use what it defines (or marks them stale in *lazy* mode).
-- Names starting with `_` are private to a cell.
+- A name can be defined in **one cell only**, and two cells may not depend on each other in a cycle. A cell that breaks this
+  does not run and says why (`MC002` duplicate definition, `MC003` cycle, `MC001` syntax error).
+- Running a cell re-runs the cells that use what it defines (or marks them stale in lazy mode).
+- Names starting with `_` are private to a cell. A top-level `for` loop's variable becomes a global name, so use `_i`.
 - Files are plain scripts with `# %%` markers, so they diff well in git and also run from the command line.
   Outputs are not stored in the file.
-
-## Limitations
-
-- No classes, imports, dicts or sets in the language yet (a clear message names the line).
-- `solve` handles polynomials up to degree 4 in closed form (`nroots` for any degree), simple log/exp/trig equations,
-  linear and small polynomial systems, and inequalities in one real unknown (not trigonometric ones).
-- `dsolve` covers first order linear, separable, Bernoulli and homogeneous equations and linear equations with constant
-  coefficients; no systems, Euler equations or forcing terms above second order.
-- `integrate` has no special functions; an integral with no closed form stays as `integrate(...)`.
-- Outputs are not saved in the file; no cell-level undo; no interactive sliders yet.
-- The interpreter is a tree walker, about 3x slower than CPython on plain scalar loops. Algebra is the strength.
+- If the folder you open is a git repository, the sidebar marks changed notebooks, and View, Changes shows what changed
+  since the last commit.
 
 ## Also included
 
-- Scattering amplitudes: Dirac traces and Lorentz-index contraction (`gamma_trace`, `slash`, `contract`, ...). `examples/amplitudes.py`
-  derives the e⁺e⁻ → μ⁺μ⁻ cross-section 4πα²/(3s). Four dimensions only, no `γ5` yet.
-- `mathcraft-cli mcp` runs an MCP server so AI tools can evaluate expressions and check notebooks.
-- Optional Vim keys (Settings), a Text view of the whole file, a command palette (⌘/Ctrl+P), tabs and a folder sidebar.
-- Right-click a result to copy it as text, LaTeX, Python, NumPy or Rust.
+- **Scattering amplitudes:** Dirac traces and Lorentz-index contraction (`gamma_trace`, `slash`, `contract`, ...).
+  `examples/amplitudes.py` derives the e⁺e⁻ → μ⁺μ⁻ cross-section 4πα²/(3s). Four dimensions only, no `γ5` yet.
+- **Numerics:** `nsolve`, `nroots`, adaptive quadrature, minimisation, fast matrices, CSV import and export.
+- **Plots:** curves, scatter, bar charts and histograms, with pan and zoom.
+- **Command line:** `mathcraft-cli eval 'integrate(sin(x)**2, (x, 0, pi))'`, `run`, `check`, and
+  `export notebook.py -o notebook.html` (also Markdown).
+- **For AI tools:** `mathcraft-cli mcp` runs an MCP server so an AI assistant can evaluate expressions and check notebooks.
+- **Editing:** optional Vim keys (Settings), a Text view of the whole file, tabs, a folder sidebar, light and dark themes.
+
+## Phones and the browser
+
+There is no phone app yet. The engine also builds to WebAssembly, and a small page runs it in any browser, including a
+phone's: cells with a Run button, output as text. It is not hosted anywhere yet; to try it, unzip
+`mathcraft-web-<version>.zip` from the Releases page, serve the folder with any static server
+(`python3 -m http.server`) and open `index.html`. Plots and typeset maths are not in the web page yet.
+`mathcraft.js` is the whole interface: `const mc = await load("mathcraft_wasm.wasm"); mc.run("integrate(x**2, x)")` gives
+`{ stdout, value, latex, error }`. It has no fast matrix library and no threads, so large polynomial gcds are slower than on
+the desktop.
+
+## What does not work yet
+
+- **The language:** no classes, imports, dicts, sets or `try` (a clear message names the line). The interpreter walks a
+  tree, about 3x slower than CPython on plain scalar loops; algebra is the strength.
+- **Solving:** polynomials up to degree 4 in closed form (`nroots` for any degree), simple log, exp and trig equations,
+  linear and small polynomial systems, and inequalities in one real unknown (not trigonometric ones). `nsolve` for the rest.
+- **Differential equations:** first order linear, separable, Bernoulli and homogeneous, and linear equations with constant
+  coefficients. No systems, Euler equations or partial equations.
+- **Integrals:** an integral with no closed form (such as `exp(x**2)`) stays as `integrate(...)`. There is no `+ C`.
+- **Not there:** Laplace and Fourier transforms, 3D and contour plots, SVD, assigning to one matrix element.
+- **Files:** outputs are not stored in the notebook file.
 
 ## Develop
 
 Rules for contributors: `AGENTS.md`.
 
 ```sh
+cargo run --release -p mathcraft                         # the app (optionally: -- examples/tour.py)
 cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && cargo deny check
 ```
 
