@@ -2,7 +2,7 @@
 //! font's glyph outlines (read with `skrifa`, filled here by sub-scanline coverage). No rendering library; the
 //! picture mirrors the SVG export (`plot_export::svg`) and is written with the `png` encoder.
 
-use crate::plot_export::{View, ticks, x_marks};
+use crate::plot_export::{Look, View, ticks, x_marks};
 use mathcraft_eval::{PlotSpec, SeriesKind};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
@@ -274,7 +274,7 @@ fn add_span(cover: &mut [f32], a: f32, b: f32) {
 }
 
 /// The picture as PNG bytes, `scale` times the SVG's 720 by 420 points (2 gives a sharp 1440 by 840).
-pub fn png(p: &PlotSpec, view: View, colors: &Colors, tick_label: &dyn Fn(f64) -> String, font: &[u8], scale: f32) -> Result<Vec<u8>, String> {
+pub fn png(p: &PlotSpec, view: View, colors: &Colors, look: Look, tick_label: &dyn Fn(f64) -> String, font: &[u8], scale: f32) -> Result<Vec<u8>, String> {
     let face = Face::new(font).ok_or("the interface font could not be read")?;
     let (wpx, hpx) = ((W * scale) as usize, (H * scale) as usize);
     let mut cv = Canvas::new(wpx, hpx);
@@ -286,15 +286,22 @@ pub fn png(p: &PlotSpec, view: View, colors: &Colors, tick_label: &dyn Fn(f64) -
     let all = [0.0, 0.0, wpx as f32, hpx as f32];
     let frame = [LEFT * s, TOP * s, (LEFT + pw) * s, (TOP + ph) * s];
     let font_px = 11.0 * s;
-    for (t, label) in x_marks(p, x0, x1, tick_label) {
+    let (line_color, tick) = if look.grid { (colors.grid, 0.0) } else { (colors.text, 4.0 * s) };
+    for (t, label) in x_marks(p, x0, x1, look.density, tick_label) {
         let x = sx(t);
-        cv.line([x, frame[1]], [x, frame[3]], s, colors.grid, all);
-        face.text(&mut cv, &label, [x, (TOP + ph + 16.0) * s], font_px, Anchor::Middle, colors.text);
+        let from = if look.grid { frame[1] } else { frame[3] - tick };
+        cv.line([x, from], [x, frame[3]], s, line_color, all);
+        if look.axes {
+            face.text(&mut cv, &label, [x, (TOP + ph + 16.0) * s], font_px, Anchor::Middle, colors.text);
+        }
     }
-    for t in ticks(y0, y1) {
+    for t in ticks(y0, y1, look.density) {
         let y = sy(t);
-        cv.line([frame[0], y], [frame[2], y], s, colors.grid, all);
-        face.text(&mut cv, &tick_label(t), [(LEFT - 6.0) * s, y + 4.0 * s], font_px, Anchor::End, colors.text);
+        let to = if look.grid { frame[2] } else { frame[0] + tick };
+        cv.line([frame[0], y], [to, y], s, line_color, all);
+        if look.axes {
+            face.text(&mut cv, &tick_label(t), [(LEFT - 6.0) * s, y + 4.0 * s], font_px, Anchor::End, colors.text);
+        }
     }
     cv.rect_outline(frame[0], frame[1], frame[2], frame[3], s, colors.text);
     if !p.x_label.is_empty() {
@@ -345,6 +352,7 @@ pub fn png(p: &PlotSpec, view: View, colors: &Colors, tick_label: &dyn Fn(f64) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plot_export::Look;
     use mathcraft_eval::{PlotSeries, SeriesKind};
 
     fn spec() -> PlotSpec {
@@ -365,7 +373,8 @@ mod tests {
     #[test]
     fn draws_a_valid_png_with_lines_and_text() {
         let colors = Colors { series: &[[200, 0, 0], [0, 0, 200]], text: [0, 0, 0], grid: [220, 220, 220] };
-        let bytes = png(&spec(), [0.0, 2.0, -0.1, 1.1], &colors, &|v| format!("{v}"), crate::fonts::INTER, 1.0).unwrap_or_else(|e| panic!("{e}"));
+        let bytes =
+            png(&spec(), [0.0, 2.0, -0.1, 1.1], &colors, Look::default(), &|v| format!("{v}"), crate::fonts::INTER, 1.0).unwrap_or_else(|e| panic!("{e}"));
         let (w, h, px) = decode(&bytes);
         assert_eq!((w, h), (720, 420));
         let at = |x: usize, y: usize| px.get((y * 720 + x) * 3..(y * 720 + x) * 3 + 3).map(<[u8]>::to_vec).unwrap_or_default();
@@ -388,7 +397,7 @@ mod tests {
             x_ticks: vec![(0.0, "a".into()), (1.0, "b".into())],
         };
         let view = crate::plot_export::data_view(&bars);
-        let bytes = png(&bars, view, &colors, &|v| format!("{v}"), crate::fonts::INTER, 1.0).unwrap_or_else(|e| panic!("{e}"));
+        let bytes = png(&bars, view, &colors, Look::default(), &|v| format!("{v}"), crate::fonts::INTER, 1.0).unwrap_or_else(|e| panic!("{e}"));
         let (_, _, px) = decode(&bytes);
         let red = px.chunks(3).filter(|c| c.first().is_some_and(|r| *r > 180) && c.get(1).is_some_and(|g| *g < 60)).count();
         // two bars, about 0.8 of a unit wide, 1 and 2 tall: a few thousand solid pixels
@@ -398,7 +407,8 @@ mod tests {
             x_label: String::new(),
             x_ticks: vec![],
         };
-        let bytes = png(&dots, crate::plot_export::data_view(&dots), &colors, &|v| format!("{v}"), crate::fonts::INTER, 1.0).unwrap_or_else(|e| panic!("{e}"));
+        let bytes = png(&dots, crate::plot_export::data_view(&dots), &colors, Look::default(), &|v| format!("{v}"), crate::fonts::INTER, 1.0)
+            .unwrap_or_else(|e| panic!("{e}"));
         let red = decode(&bytes).2.chunks(3).filter(|c| c.first().is_some_and(|r| *r > 180) && c.get(1).is_some_and(|g| *g < 60)).count();
         // the middle dot is whole (about pi * 3^2 pixels); the two at the frame's edge are half cut
         assert!((28..400).contains(&red), "{red}");
@@ -407,7 +417,8 @@ mod tests {
     #[test]
     fn scale_makes_a_bigger_picture() {
         let colors = Colors { series: &[[0, 0, 0]], text: [0, 0, 0], grid: [200, 200, 200] };
-        let bytes = png(&spec(), [0.0, 2.0, 0.0, 1.0], &colors, &|v| format!("{v}"), crate::fonts::INTER, 2.0).unwrap_or_else(|e| panic!("{e}"));
+        let bytes =
+            png(&spec(), [0.0, 2.0, 0.0, 1.0], &colors, Look::default(), &|v| format!("{v}"), crate::fonts::INTER, 2.0).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!((decode(&bytes).0, decode(&bytes).1), (1440, 840));
     }
 
@@ -422,7 +433,7 @@ mod tests {
             series: vec![PlotSeries::line("sin(x)", vec![curve(f64::sin)]), PlotSeries::line("cos(x)/2", vec![curve(|x| x.cos() / 2.0)])],
         };
         let colors = Colors { series: &[[31, 111, 235], [230, 120, 20]], text: [0x33, 0x33, 0x33], grid: [0xe4, 0xe4, 0xe8] };
-        let bytes = png(&p, [0.0, 10.0, -1.2, 1.2], &colors, &|v| format!("{v}"), crate::fonts::INTER, 2.0).unwrap_or_default();
+        let bytes = png(&p, [0.0, 10.0, -1.2, 1.2], &colors, Look::default(), &|v| format!("{v}"), crate::fonts::INTER, 2.0).unwrap_or_default();
         let _ = std::fs::write(std::path::Path::new(&dir).join("plot.png"), bytes);
     }
 }
