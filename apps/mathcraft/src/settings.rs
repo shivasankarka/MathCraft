@@ -7,7 +7,7 @@ use egui::{Color32, ThemePreference};
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub vim: bool,
     /// Draw powers as superscripts in notebook cells.
@@ -15,11 +15,13 @@ pub struct Settings {
     pub appearance: ThemePreference,
     /// A preset name (`purple`) or a `#rrggbb` colour; `None` keeps the theme's own accent.
     pub accent: Option<String>,
+    /// Interface scale (Cmd/Ctrl + and - change it); 1.0 is the default size.
+    pub zoom: f32,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { vim: false, pretty_powers: true, appearance: ThemePreference::System, accent: None }
+        Settings { vim: false, pretty_powers: true, appearance: ThemePreference::System, accent: None, zoom: 1.0 }
     }
 }
 
@@ -32,6 +34,9 @@ pub const ACCENTS: [(&str, [u8; 3], [u8; 3]); 6] = [
     ("green", [80, 200, 130], [20, 130, 72]),
     ("graphite", [170, 176, 190], [84, 90, 104]),
 ];
+
+/// The smallest and largest interface scale that is kept.
+pub const ZOOM_RANGE: (f32, f32) = (0.5, 3.0);
 
 impl Settings {
     /// Read settings from JSON text; anything missing or invalid keeps its default.
@@ -50,6 +55,9 @@ impl Settings {
             _ => ThemePreference::System,
         };
         s.accent = m.get("accent").and_then(Value::as_str).filter(|a| accent_colors(a).is_some()).map(str::to_owned);
+        if let Some(z) = m.get("zoom").and_then(Value::as_f64).filter(|z| z.is_finite()) {
+            s.zoom = (z as f32).clamp(ZOOM_RANGE.0, ZOOM_RANGE.1);
+        }
         s
     }
 
@@ -65,6 +73,9 @@ impl Settings {
         m.insert("appearance".into(), json!(appearance));
         if let Some(a) = &self.accent {
             m.insert("accent".into(), json!(a));
+        }
+        if (self.zoom - 1.0).abs() > 0.005 {
+            m.insert("zoom".into(), json!((self.zoom * 100.0).round() / 100.0));
         }
         serde_json::to_string_pretty(&Value::Object(m)).unwrap_or_default() + "\n"
     }
@@ -135,8 +146,10 @@ mod tests {
 
     #[test]
     fn round_trips_and_ignores_junk() {
-        let s = Settings { vim: true, pretty_powers: false, appearance: ThemePreference::Dark, accent: Some("purple".into()) };
+        let s = Settings { vim: true, pretty_powers: false, appearance: ThemePreference::Dark, accent: Some("purple".into()), zoom: 1.25 };
         assert_eq!(Settings::parse(&s.to_json()), s);
+        assert_eq!(Settings::parse(r#"{"zoom": 9}"#).zoom, ZOOM_RANGE.1);
+        assert_eq!(Settings::parse(r#"{"zoom": "big"}"#).zoom, 1.0);
         assert_eq!(Settings::parse("not json"), Settings::default());
         assert_eq!(Settings::parse(r##"{"vim": 3, "appearance": "sepia", "accent": "#12"}"##), Settings::default());
         assert_eq!(Settings::parse(r##"{"accent": "#ff8800"}"##).accent.as_deref(), Some("#ff8800"));
