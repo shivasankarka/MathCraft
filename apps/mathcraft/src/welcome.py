@@ -67,7 +67,8 @@ plot(f, (x, 0, 20))
 #
 # **Results**
 # - Right-click a result to copy it as text, LaTeX, Python, NumPy or Rust.
-# - Right-click a plot to copy its points as CSV or save it as SVG or PNG; drag to pan, Ctrl+scroll or pinch to zoom,
+# - Right-click a plot to show or hide the grid and axes, space the tick marks wider or closer, copy its points as CSV or
+#   save it as SVG or PNG; drag to pan, Ctrl+scroll or pinch to zoom,
 #   right-drag a box to zoom into it, double-click to reset.
 # - Text cells understand Markdown: `# headings`, `**bold**`, `*italic*`, `` `code` ``, lists, quotes, and maths.
 #   Write `$x**2 - 2$` for inline maths and `$$ integrate(1/(x**2+1), x) $$` on its own line for displayed maths:
