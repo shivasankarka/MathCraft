@@ -2592,6 +2592,18 @@ struct PlotOptions {
     marks: Marks,
 }
 
+impl PlotOptions {
+    /// The same choices for a saved picture.
+    fn look(self) -> plot_export::Look {
+        let density = match self.marks {
+            Marks::Auto => 1.0,
+            Marks::Wide => 0.5,
+            Marks::Tight => 2.0,
+        };
+        plot_export::Look { grid: self.grid, axes: self.axes, density }
+    }
+}
+
 impl Default for PlotOptions {
     fn default() -> Self {
         PlotOptions { grid: false, axes: true, marks: Marks::Auto }
@@ -2719,11 +2731,11 @@ fn plot_ui(ui: &mut egui::Ui, theme: &Theme, id: CellId, p: &mathcraft_eval::Plo
             }
             if menu_row(ui, theme, "Save as SVG…", None).clicked() {
                 ui.close();
-                actions.push(Action::Status(save_svg(p, view)));
+                actions.push(Action::Status(save_svg(p, view, options.look())));
             }
             if menu_row(ui, theme, "Save as PNG…", None).clicked() {
                 ui.close();
-                actions.push(Action::Status(save_png(p, view)));
+                actions.push(Action::Status(save_png(p, view, options.look())));
             }
         });
     });
@@ -2748,27 +2760,27 @@ fn coordinate_text(x: f64, y: f64, b: &egui_plot::PlotBounds) -> String {
 }
 
 /// Ask where to save, write the picture, and say what happened.
-fn save_svg(p: &mathcraft_eval::PlotSpec, view: [f64; 4]) -> String {
+fn save_svg(p: &mathcraft_eval::PlotSpec, view: [f64; 4], look: plot_export::Look) -> String {
     let Some(path) = rfd::FileDialog::new().add_filter("SVG picture", &["svg"]).set_file_name("plot.svg").save_file() else { return "Save cancelled".into() };
     let sane = view.iter().all(|v| v.is_finite()) && view[1] > view[0] && view[3] > view[2];
     let view = if sane { view } else { plot_export::data_view(p) };
     let hex = |c: Color32| format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b());
     let series: Vec<String> = Theme::light().plot.iter().map(|c| hex(*c)).collect();
     let colors = plot_export::SvgColors { series: &series, text: "#333333", grid: "#e4e4e8" };
-    match std::fs::write(&path, plot_export::svg(p, view, &colors, &tick_label)) {
+    match std::fs::write(&path, plot_export::svg(p, view, &colors, look, &tick_label)) {
         Ok(()) => format!("Saved {}", file_name(&path)),
         Err(e) => format!("Could not save the plot: {e}"),
     }
 }
 
 /// Ask for a file and write the plot over `view` as a PNG picture (twice the SVG's size, so it stays sharp).
-fn save_png(p: &mathcraft_eval::PlotSpec, view: [f64; 4]) -> String {
+fn save_png(p: &mathcraft_eval::PlotSpec, view: [f64; 4], look: plot_export::Look) -> String {
     let Some(path) = rfd::FileDialog::new().add_filter("PNG picture", &["png"]).set_file_name("plot.png").save_file() else { return "Save cancelled".into() };
     let sane = view.iter().all(|v| v.is_finite()) && view[1] > view[0] && view[3] > view[2];
     let view = if sane { view } else { plot_export::data_view(p) };
     let series: Vec<plot_png::Rgb> = Theme::light().plot.iter().map(|c| [c.r(), c.g(), c.b()]).collect();
     let colors = plot_png::Colors { series: &series, text: [0x33, 0x33, 0x33], grid: [0xe4, 0xe4, 0xe8] };
-    match plot_png::png(p, view, &colors, &tick_label, fonts::INTER, 2.0).and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())) {
+    match plot_png::png(p, view, &colors, look, &tick_label, fonts::INTER, 2.0).and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())) {
         Ok(()) => format!("Saved {}", file_name(&path)),
         Err(e) => format!("Could not save the plot: {e}"),
     }
