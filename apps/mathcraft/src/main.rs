@@ -253,6 +253,7 @@ impl App {
         self.pretty = s.pretty_powers;
         self.ctx.set_theme(s.appearance);
         self.accent = s.accent.clone();
+        self.ctx.set_zoom_factor(s.zoom);
         self.config = dir;
         self.rebuild_themes();
         self.saved = self.current_settings();
@@ -267,7 +268,13 @@ impl App {
     }
 
     fn current_settings(&self) -> settings::Settings {
-        settings::Settings { vim: self.vim, pretty_powers: self.pretty, appearance: self.ctx.options(|o| o.theme_preference), accent: self.accent.clone() }
+        settings::Settings {
+            vim: self.vim,
+            pretty_powers: self.pretty,
+            appearance: self.ctx.options(|o| o.theme_preference),
+            accent: self.accent.clone(),
+            zoom: self.ctx.zoom_factor(),
+        }
     }
 
     /// Save the settings when one changed since the last save.
