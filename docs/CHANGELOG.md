@@ -4,6 +4,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- New `erfi(x)`, and `integrate(exp(x**2), x)` is `sqrt(pi)*erfi(x)/2` (any `exp(a*x**2 + b*x + c)` with a positive `a`).
 - `solve` handles trigonometric inequalities: `solve(sin(x) > 1/2, x)` is `(2*n*pi + pi/6, 2*n*pi + 5*pi/6)` for any integer `n`; it works for `cos`, `tan`, multiples and shifts of the angle (`cos(3*x - 1) > 1/2`) and polynomials in trig functions, and keeps poles open. Inequalities that mix `x` with `sin(x)` still give a message.
 - `simplify` contracts double angles (`2*sin(x)*cos(x)` is `sin(2*x)`; `cos(x)**2 - sin(x)**2`, `1 - 2*sin(x)**2` and `2*cos(x)**2 - 1` are `cos(2*x)`) and takes squares out of roots (`sqrt(8*x**2 + 8)` is `2*sqrt(2*x**2 + 2)`). `solve` does the same for roots with other symbols, so a circle solved for y gives `sqrt(1 - x**2)` instead of `sqrt(-4*x**2 + 4)/2`. New `trigsimp(expr)`, the same as `simplify`.
 - Fixed wrong definite integrals across a pole: `integrate(1/x**2, (x, -1, 1))` answered `-2` and `integrate(tan(x), (x, 0, pi))` answered `-I*pi`. They now stop with "the integral diverges", as do `1/x` on (0, 1) and `x` on (0, oo). A pole inside the interval splits it, so convergent cases such as `1/sqrt(x)` on (0, 1) and `log(x)` on (0, 1) stay exact, and `1/(x-2)` on (0, 1) is `-log(2)`. Numeric fallback no longer returns `nan` when the integrand blows up.
