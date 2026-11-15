@@ -4,6 +4,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- Fixed wrong definite integrals across a pole: `integrate(1/x**2, (x, -1, 1))` answered `-2` and `integrate(tan(x), (x, 0, pi))` answered `-I*pi`. They now stop with "the integral diverges", as do `1/x` on (0, 1) and `x` on (0, oo). A pole inside the interval splits it, so convergent cases such as `1/sqrt(x)` on (0, 1) and `log(x)` on (0, 1) stay exact, and `1/(x-2)` on (0, 1) is `-log(2)`. Numeric fallback no longer returns `nan` when the integrand blows up.
 - Plots: right-click to show or hide the grid and the axes and to space the tick marks (automatic, far apart, close together). The choice is per plot and lasts until you close the app. Saved SVG and PNG pictures follow it, so they match what you see; without the grid they now carry short tick marks instead of grid lines.
 - README rewritten for newcomers: who it is for, a two-minute install table, a first-five-minutes guide, and an honest list of what does not work yet.
 - The interface size you set with Cmd or Ctrl and + / - (0 resets) is remembered between runs.
