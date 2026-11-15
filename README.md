@@ -13,7 +13,7 @@ integrate(sin(x)**2, (x, 0, pi))  # pi/2
 plot(f, (x, 0, 20))               # a plot, right under the cell
 ```
 
-**Status: v0.3.0, early but usable.** It works, but it is young: expect rough edges, and read [What does not work yet](#what-does-not-work-yet).
+**Status: v0.4.0, early but usable.** It works, but it is young: expect rough edges, and read [What does not work yet](#what-does-not-work-yet).
 It is built and tested mainly on macOS (Apple silicon); the Windows and Linux builds come from CI and have had little
 hands-on use.
 
