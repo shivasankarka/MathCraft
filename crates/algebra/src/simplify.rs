@@ -12,7 +12,7 @@ pub fn simplify(e: &Expr) -> MathResult<Expr> {
     if e.size() > MAX_SIZE {
         return Ok(e.clone());
     }
-    let inner = pull_squares(&e.map_children(simplify)?)?;
+    let inner = gamma_ratio(&pull_squares(&e.map_children(simplify)?)?)?;
     let expanded = expand(&inner)?;
     let mut candidates = vec![inner.clone(), expanded.clone(), trig(&inner)?, trig(&expanded)?, factor(&inner)?, factor(&expanded)?, reduce_trig(&expanded)?];
     if has_complex_exp(&expanded) {
@@ -385,4 +385,55 @@ mod more_tests {
         assert_eq!(show(s.div(&c)), "tan(x)");
         assert_eq!(show(Expr::pow(&Expr::pow(&x(), &Expr::int(2)), &Expr::half())), "abs(x)");
     }
+}
+
+/// `Gamma(n + 2)/Gamma(n + 1)` is `n + 1`: a Gamma factor over another whose argument differs by a small integer becomes
+/// the product of the arguments in between (up to four repeats of each factor).
+pub fn gamma_ratio(e: &Expr) -> MathResult<Expr> {
+    let e = e.map_children(gamma_ratio)?;
+    let Kind::Mul(factors) = e.kind() else { return Ok(e) };
+    let mut top: Vec<Expr> = Vec::new();
+    let mut bottom: Vec<Expr> = Vec::new();
+    let mut rest: Vec<Expr> = Vec::new();
+    for t in factors {
+        let (g, power) = match t.kind() {
+            Kind::Pow(g, p) => (g.clone(), p.as_i64()),
+            _ => (t.clone(), Some(1)),
+        };
+        match (g.kind(), power) {
+            (Kind::Call(name, args), Some(p)) if &**name == "Gamma" && args.len() == 1 && (1..=4).contains(&p.abs()) => {
+                let arg = args.first().cloned().unwrap_or_else(Expr::zero);
+                for _ in 0..p.abs() {
+                    if p > 0 { top.push(arg.clone()) } else { bottom.push(arg.clone()) }
+                }
+            }
+            _ => rest.push(t.clone()),
+        }
+    }
+    let mut changed = false;
+    let mut i = 0;
+    while i < top.len() {
+        let hit = bottom.iter().enumerate().find_map(|(j, b)| {
+            let d = expand(&Expr::add(vec![top.get(i)?.clone(), b.neg()])).ok()?.as_i64()?;
+            (d.abs() <= 20).then_some((j, d))
+        });
+        let Some((j, d)) = hit else {
+            i += 1;
+            continue;
+        };
+        let (a, b) = (top.remove(i), bottom.remove(j));
+        changed = true;
+        // Gamma(b + d)/Gamma(b) = b (b + 1) ... (b + d - 1); for d < 0 the reciprocal of (a)...(a - d - 1)
+        if d >= 0 {
+            rest.extend((0..d).map(|m| Expr::add(vec![b.clone(), Expr::int(m)])));
+        } else {
+            rest.extend((0..-d).map(|m| Expr::pow(&Expr::add(vec![a.clone(), Expr::int(m)]), &Expr::int(-1))));
+        }
+    }
+    if !changed {
+        return Ok(e);
+    }
+    rest.extend(top.into_iter().map(|a| Expr::call("Gamma", vec![a])));
+    rest.extend(bottom.into_iter().map(|a| Expr::pow(&Expr::call("Gamma", vec![a]), &Expr::int(-1))));
+    Ok(Expr::mul(rest))
 }
