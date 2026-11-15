@@ -186,6 +186,12 @@ solve(exp(2*x) - 3*exp(x) + 2, x), solve(log(x) + log(x - 1) - log(6), x), solve
 # %%
 solve(2*sin(x) + 1, x), solve(cos(2*x) == cos(x), x)
 
+# %% [markdown]
+# Inequalities give intervals. For trigonometric ones the answer repeats, so it carries an integer `n`.
+
+# %%
+solve(x**2 - 5*x + 6 > 0, x), solve(sin(x) > 1/2, x)
+
 # %%
 solve([x + y == 3, x - y == 1], [x, y])
 
@@ -224,6 +230,10 @@ diff(x**x * sin(x), x, 2)
 
 # %%
 integrate(x**2 * exp(x), x), integrate(sin(x)**2, (x, 0, pi))
+
+# %%
+# Roots of quadratics (trigonometric substitution), half-angle integrals, and exp(x**2) through erfi
+integrate(x**2 / sqrt(1 - x**2), x), integrate(1 / (2 + cos(x)), x), integrate(exp(x**2), x)
 
 # %%
 integrate(1 / (x**2 - 1), x), integrate((x + 3) / (x**2 + x + 1), x)
@@ -407,9 +417,9 @@ contract(gamma_trace(gamma(mu), gamma(nu)) * metric(mu, nu))
 # Things you may try that fail today, each with a clear message:
 #
 # - **Solving**: polynomials of degree 5 and up that do not factor (use `nroots`), equations like `cos(x) == x`
-#   (use `nsolve`), most nonlinear systems that are not polynomial, inequalities with `sin`, `cos` or `tan`.
-# - **Integrals** of `exp(x**2)` and some other special functions come back as `integrate(...)` unevaluated; there is
-#   no `+ C`, and `1/x` integrates to `log(x)`, not `log|x|`.
+#   (use `nsolve`), most nonlinear systems that are not polynomial, and inequalities that mix `x` with `sin(x)` (as in `sin(x) + x > 0`).
+# - **Integrals** with no elementary form or special function (such as `sin(x**2)/x`) come back as `integrate(...)`
+#   unevaluated; there is no `+ C`, and `1/x` integrates to `log(x)`, not `log|x|`.
 # - **Differential equations**: second-order equations with variable coefficients, systems, and partial equations.
 # - **Transforms**: Laplace and Fourier transforms.
 # - **Matrices**: SVD, assigning to one element (`A[0, 0] = 5`), and `*` between a matrix and a vector (use `@`).
