@@ -935,3 +935,14 @@ fn trigonometric_substitution_integrals() {
     assert_eq!(ev("integrate(x**2/sqrt(x**2+9), x)"), "x*sqrt(x**2 + 9)/2 - 9*asinh(x/3)/2");
     assert_eq!(ev("integrate(x**3/sqrt(x**2+1), x)"), "x**2*sqrt(x**2 + 1)/3 - 2*sqrt(x**2 + 1)/3");
 }
+
+#[test]
+fn half_angle_integrals() {
+    assert_eq!(ev("integrate(1/(2+cos(x)), x)"), "2*sqrt(3)*atan(sqrt(3)*tan(x/2)/3)/3");
+    assert_eq!(ev("integrate(1/(2+cos(x)), (x, 0, pi/2))"), "pi*sqrt(3)/9");
+    // across the jump of tan(x/2) the answer must still be the full integral, 2*pi/sqrt(3)
+    for src in ["integrate(1/(2+cos(x)), (x, 0, 2*pi))", "integrate(1/(2+cos(x)), (x, -pi, pi))"] {
+        let v: f64 = ev(src).parse().unwrap();
+        assert!((v - 3.627_598_728_468_436).abs() < 1e-9, "{src} gave {v}");
+    }
+}
