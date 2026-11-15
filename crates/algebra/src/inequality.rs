@@ -39,7 +39,7 @@ pub fn solve_inequality(rel: &Expr, x: &Expr) -> MathResult<Expr> {
         return Err(MathError::unsupported("an inequality can have only the unknown as a symbol; give the other symbols values"));
     }
     if has_periodic(&f) {
-        return Err(MathError::unsupported("inequalities with sin, cos or tan are not supported yet (their solutions repeat forever)"));
+        return periodic_inequality(&f, x, strict, upward);
     }
     let at = |v: f64| eval_f64(&f, &|s| (s == xname).then_some(v)).ok().filter(|r| r.is_finite());
     if !f.contains(x) {
@@ -102,6 +102,140 @@ pub fn solve_inequality(rel: &Expr, x: &Expr) -> MathResult<Expr> {
     })
 }
 
+/// `f` repeats every `2*pi` in the angle `t = a*x + b` (all its trig arguments are multiples of one linear angle).
+/// Solve on one turn of `t`, then write the answer for every turn with an integer `n`: `(pi/6 + 2*pi*n, 5*pi/6 + 2*pi*n)`.
+fn periodic_inequality(f: &Expr, x: &Expr, strict: bool, upward: bool) -> MathResult<Expr> {
+    let unsupported =
+        || MathError::unsupported("this inequality mixes trigonometric functions of x with other terms in x, so its solutions do not simply repeat");
+    let angle = first_trig_argument(f).ok_or_else(unsupported)?;
+    let (a, b) = crate::poly::linear_in(&angle, x)?.ok_or_else(unsupported)?;
+    let a_val = value(&a).ok_or_else(unsupported)?;
+    let t = Expr::sym("t");
+    let g = crate::expand::expand(&crate::util::subs(f, &[(x.clone(), Expr::add(vec![t.clone(), b.neg()]).div(&a))])?)?;
+    if g.contains(x) || g.free_symbols().iter().any(|s| &**s != "t") {
+        return Err(unsupported());
+    }
+    // a pole such as tan(pi/2) evaluates to a huge finite number, so values that large count as undefined
+    let at = |v: f64| eval_f64(&g, &|s| (s == "t").then_some(v)).ok().filter(|r| r.is_finite() && r.abs() < 1e12);
+    // every term must repeat with the turn: compare at a few points
+    for v in [0.37, 1.91, 4.2] {
+        match (at(v), at(v + std::f64::consts::TAU)) {
+            (Some(p), Some(q)) if (p - q).abs() <= 1e-8 * p.abs().max(1.0) => {}
+            (None, None) => {}
+            _ => return Err(unsupported()),
+        }
+    }
+    let holds = |v: f64| {
+        let zero = v.abs() < 1e-9;
+        if zero { !strict } else { (v > 0.0) == upward }
+    };
+    let two_pi = Expr::mul(vec![Expr::int(2), Expr::pi()]);
+    // candidate special angles in [0, 2*pi): zeros of g and of its poles, with the reflections and half turns that `solve` leaves out
+    let mut sources = vec![g.clone()];
+    crate::calculus::trig_denominators(&g, &t, &mut sources);
+    let (_, den) = crate::rational::together(&g)?;
+    if den.contains(&t) {
+        sources.push(den);
+    }
+    let mut points: Vec<(f64, Expr)> = Vec::new();
+    let mut zeros: Vec<f64> = Vec::new();
+    for (si, src) in sources.iter().enumerate() {
+        let Ok(roots) = solve(src, &t) else { continue };
+        for r in roots.into_iter().filter(|r| !r.contains(&Expr::imag())) {
+            for sign in [1, -1] {
+                for half in 0..2 {
+                    let cand = Expr::add(vec![Expr::mul(vec![r.clone(), Expr::int(sign)]), Expr::mul(vec![Expr::int(half), Expr::pi()])]);
+                    let Some(v) = value(&cand) else { continue };
+                    let turns = (v / std::f64::consts::TAU).floor();
+                    let wrapped = v - turns * std::f64::consts::TAU;
+                    let exact = crate::expand::expand(&Expr::add(vec![cand, Expr::mul(vec![two_pi.clone(), Expr::int(-(turns as i64))])]))?;
+                    let w = value(&exact).unwrap_or(wrapped);
+                    let hit = eval_f64(src, &|s| (s == "t").then_some(w)).ok().is_some_and(|z| z.abs() < 1e-9);
+                    if hit && wrapped < std::f64::consts::TAU - 1e-9 {
+                        if si == 0 {
+                            zeros.push(wrapped);
+                        }
+                        if !points.iter().any(|(p, _)| close(*p, wrapped)) {
+                            points.push((wrapped, exact));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    points.sort_by(|p, q| p.0.total_cmp(&q.0));
+    let n = points.len();
+    let is_zero = |v: f64| zeros.iter().any(|z| close(*z, v));
+    // pieces around the circle: open arc before points[0] is the last one, wrapped
+    let mut open = Vec::with_capacity(n);
+    let mut at_point = Vec::with_capacity(n);
+    for k in 0..n {
+        let (Some(here), next) = (points.get(k), points.get((k + 1) % n.max(1))) else { continue };
+        let upper = next.map_or(here.0 + 1.0, |q| if k + 1 < n { q.0 } else { q.0 + std::f64::consts::TAU });
+        open.push(at((here.0 + upper) / 2.0).is_some_and(holds));
+        at_point.push(match at(here.0) {
+            Some(_) if is_zero(here.0) => !strict,
+            Some(v) => holds(v),
+            None => false,
+        });
+    }
+    let nothing = || Expr::call("EmptySet", vec![]);
+    let everything = || interval(&minus_infinity(), &Expr::infinity(), false, false);
+    if n == 0 {
+        return Ok(if at(0.5).is_some_and(holds) { everything() } else { nothing() });
+    }
+    // walk the circle (2n pieces: point k, then the arc after it) from a piece that fails, so runs do not wrap
+    let pieces: Vec<bool> = (0..n).flat_map(|k| [at_point.get(k).copied().unwrap_or(false), open.get(k).copied().unwrap_or(false)]).collect();
+    let Some(start) = pieces.iter().position(|ok| !ok) else { return Ok(everything()) };
+    let m = pieces.len();
+    let period = two_pi.div(&Expr::call("abs", vec![a.clone()]));
+    let to_x = |angle: &Expr| -> MathResult<Expr> { crate::expand::expand(&Expr::add(vec![angle.clone(), b.neg()]).div(&a)) };
+    let shift = Expr::mul(vec![period, Expr::sym("n")]);
+    // the angle of the kk-th special point counted around the circle again and again
+    let angle = |kk: usize, base: usize| {
+        let turns = i64::try_from(kk / n).unwrap_or(0) - i64::try_from(base).unwrap_or(0);
+        points.get(kk % n).map(|p| Expr::add(vec![p.1.clone(), Expr::mul(vec![two_pi.clone(), Expr::int(turns)])]))
+    };
+    let mut parts = Vec::new();
+    let mut q = start + 1;
+    while q < start + m {
+        if !pieces.get(q % m).copied().unwrap_or(false) {
+            q += 1;
+            continue;
+        }
+        let first = q;
+        while q + 1 < start + m && pieces.get((q + 1) % m).copied().unwrap_or(false) {
+            q += 1;
+        }
+        let last = q;
+        q += 1;
+        // piece 2k is point k, piece 2k + 1 the open arc from point k to point k + 1
+        let base = first / 2 / n;
+        let (lo, closed_lo) = (angle(first / 2, base), first % 2 == 0);
+        let (hi, closed_hi) = if last % 2 == 0 { (angle(last / 2, base), true) } else { (angle(last / 2 + 1, base), false) };
+        let (Some(lo), Some(hi)) = (lo, hi) else { continue };
+        let (xl, xh) = (to_x(&lo)?, to_x(&hi)?);
+        let (xl, xh, cl, ch) = if a_val > 0.0 { (xl, xh, closed_lo, closed_hi) } else { (xh, xl, closed_hi, closed_lo) };
+        parts.push(interval(&Expr::add(vec![xl, shift.clone()]), &Expr::add(vec![xh, shift.clone()]), cl, ch));
+    }
+    Ok(match parts.len() {
+        0 => nothing(),
+        1 => parts.remove(0),
+        _ => Expr::call("Union", parts),
+    })
+}
+
+/// The argument of the first trigonometric call in `e`, in reading order.
+fn first_trig_argument(e: &Expr) -> Option<Expr> {
+    if let Kind::Call(name, args) = e.kind()
+        && PERIODIC.contains(&&**name)
+        && let [u] = args.as_slice()
+    {
+        return Some(u.clone());
+    }
+    e.children().iter().find_map(first_trig_argument)
+}
+
 fn minus_infinity() -> Expr {
     Expr::infinity().neg()
 }
@@ -151,5 +285,34 @@ fn collect_edges(e: &Expr, x: &Expr, out: &mut Vec<Expr>) {
     }
     for c in e.children() {
         collect_edges(&c, x, out);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn x() -> Expr {
+        Expr::sym("x")
+    }
+    fn rel(op: &str, f: Expr, rhs: Expr) -> String {
+        solve_inequality(&Expr::call(op, vec![f, rhs]), &x()).unwrap().to_string()
+    }
+
+    #[test]
+    fn trigonometric_inequalities_repeat_with_an_integer() {
+        let sin = Expr::call("sin", vec![x()]);
+        let half = Expr::rational(1, 2).unwrap();
+        assert_eq!(rel("Gt", sin.clone(), half.clone()), "(2*n*pi + pi/6, 2*n*pi + 5*pi/6)");
+        assert_eq!(rel("Ge", sin.clone(), half), "[2*n*pi + pi/6, 2*n*pi + 5*pi/6]");
+        assert_eq!(rel("Gt", sin.clone(), Expr::int(2)), "∅");
+        let double = Expr::call("sin", vec![Expr::mul(vec![Expr::int(2), x()])]);
+        assert_eq!(rel("Gt", double, Expr::zero()), "(n*pi, n*pi + pi/2)");
+        // tan has poles, which stay open
+        let tan = Expr::call("tan", vec![x()]);
+        assert!(rel("Gt", tan, Expr::one()).contains("2*n*pi + pi/2)"));
+        // a plain x next to sin(x) does not repeat
+        let mixed = Expr::add(vec![sin, x()]);
+        assert!(solve_inequality(&Expr::call("Gt", vec![mixed, Expr::zero()]), &x()).is_err());
     }
 }
