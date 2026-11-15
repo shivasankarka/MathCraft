@@ -12,7 +12,7 @@ pub fn simplify(e: &Expr) -> MathResult<Expr> {
     if e.size() > MAX_SIZE {
         return Ok(e.clone());
     }
-    let inner = e.map_children(simplify)?;
+    let inner = pull_squares(&e.map_children(simplify)?)?;
     let expanded = expand(&inner)?;
     let mut candidates = vec![inner.clone(), expanded.clone(), trig(&inner)?, trig(&expanded)?, factor(&inner)?, factor(&expanded)?, reduce_trig(&expanded)?];
     if has_complex_exp(&expanded) {
@@ -20,6 +20,9 @@ pub fn simplify(e: &Expr) -> MathResult<Expr> {
         let t = expand(&crate::complex::rewrite_trig(&expanded)?)?;
         candidates.push(t.clone());
         candidates.push(reduce_trig(&t)?);
+    }
+    for base in [&inner, &expanded] {
+        candidates.push(double_angle(base)?);
     }
     let multiple = crate::trig::expand_trig(&expanded)?;
     if multiple != expanded {
@@ -214,6 +217,111 @@ fn pythagorean(terms: &[Expr]) -> Expr {
     Expr::add(out)
 }
 
+/// `sqrt(4 - 4*x**2)` is `2*sqrt(1 - x**2)`: take the largest square out of the integer content under a square root.
+pub fn pull_squares(e: &Expr) -> MathResult<Expr> {
+    guard(e)?;
+    let e = e.map_children(pull_squares)?;
+    if let Kind::Pow(b, k) = e.kind()
+        && let Kind::Add(terms) = b.kind()
+        && (*k == Expr::half() || *k == Expr::half().neg())
+    {
+        let mut g = 0u64;
+        for t in terms {
+            let Some(n) = t.split_coeff().0.as_i64() else { return Ok(e) };
+            let (mut a, mut c) = (g, n.unsigned_abs());
+            while c != 0 {
+                (a, c) = (c, a % c);
+            }
+            g = a;
+        }
+        let side = (2..).take_while(|s: &u64| s.saturating_mul(*s) <= g).filter(|s| g.is_multiple_of(s * s)).last();
+        if let Some(s) = side
+            && let Ok(si) = i64::try_from(s)
+            && let Some(inv) = Expr::rational(1, si * si)
+        {
+            let rest = expand(&Expr::mul(vec![inv, b.clone()]))?;
+            let root = Expr::pow(&rest, k);
+            return Ok(if *k == Expr::half() {
+                Expr::mul(vec![Expr::int(si), root])
+            } else {
+                Expr::mul(vec![Expr::rational(1, si).unwrap_or_else(Expr::one), root])
+            });
+        }
+    }
+    Ok(e)
+}
+
+/// Contract `2*sin(u)*cos(u)` to `sin(2*u)`, and `cos(u)**2 - sin(u)**2`, `1 - 2*sin(u)**2`, `2*cos(u)**2 - 1` to `cos(2*u)`.
+fn double_angle(e: &Expr) -> MathResult<Expr> {
+    guard(e)?;
+    let e = e.map_children(double_angle)?;
+    match e.kind() {
+        Kind::Mul(fs) => {
+            let mut out: Vec<Expr> = fs.clone();
+            for f in fs {
+                if let Kind::Call(n, a) = f.kind()
+                    && &**n == "sin"
+                    && let [u] = a.as_slice()
+                    && let Some(c) = out.iter().position(|o| *o == Expr::call("cos", vec![u.clone()]))
+                    && let Some(sn) = out.iter().position(|o| o == f)
+                {
+                    let (hi, lo) = (c.max(sn), c.min(sn));
+                    out.remove(hi);
+                    out.remove(lo);
+                    out.push(Expr::mul(vec![Expr::half(), Expr::call("sin", vec![Expr::mul(vec![Expr::int(2), u.clone()])])]));
+                    break;
+                }
+            }
+            Ok(Expr::mul(out))
+        }
+        Kind::Add(terms) => Ok(cos_double(terms)),
+        _ => Ok(e),
+    }
+}
+
+fn cos_double(terms: &[Expr]) -> Expr {
+    let info: Vec<Term> = terms.iter().map(classify).collect();
+    let mut used = vec![false; info.len()];
+    let mut extra: Vec<Expr> = Vec::new();
+    for i in 0..info.len() {
+        for j in (i + 1)..info.len() {
+            if used.get(i) == Some(&true) || used.get(j) == Some(&true) {
+                continue;
+            }
+            let (Some(a), Some(b)) = (info.get(i), info.get(j)) else { continue };
+            let two = Num::int(2);
+            let combined = match (&a.trig, &b.trig) {
+                // c*R*cos(u)^2 - c*R*sin(u)^2
+                (Some((sa, ua)), Some((sb, ub))) if sa != sb && ua == ub && a.rest == b.rest && a.coeff == b.coeff.neg() => {
+                    let c = if *sa { &b.coeff } else { &a.coeff };
+                    Some((c.clone(), a.rest.clone(), ua.clone()))
+                }
+                (None, Some((is_sin, u))) | (Some((is_sin, u)), None) => {
+                    let (plain, t) = if a.trig.is_none() { (a, b) } else { (b, a) };
+                    if plain.rest == t.rest && t.coeff == plain.coeff.mul(&two).neg() {
+                        let c = if *is_sin { plain.coeff.clone() } else { plain.coeff.neg() };
+                        Some((c, plain.rest.clone(), u.clone()))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some((c, rest, u)) = combined {
+                for k in [i, j] {
+                    if let Some(slot) = used.get_mut(k) {
+                        *slot = true;
+                    }
+                }
+                extra.push(Expr::mul(vec![Expr::num(c), rest, Expr::call("cos", vec![Expr::mul(vec![Expr::int(2), u])])]));
+            }
+        }
+    }
+    let mut out: Vec<Expr> = terms.iter().zip(used.iter()).filter(|(_, u)| !**u).map(|(t, _)| t.clone()).collect();
+    out.extend(extra);
+    Expr::add(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +365,18 @@ mod more_tests {
         let p = |c: &[i64]| crate::poly::from_poly(&c.iter().map(|v| Expr::int(*v)).collect::<Vec<_>>(), &x());
         assert_eq!(show(p(&[-1, 0, 1]).div(&p(&[-1, 1]))), "x + 1");
         assert_eq!(show(p(&[-1, 0, 1]).div(&p(&[1, 2, 1]))), "(x - 1)/(x + 1)");
+    }
+
+    #[test]
+    fn double_angles_and_square_content() {
+        let (s, c) = (Expr::call("sin", vec![x()]), Expr::call("cos", vec![x()]));
+        assert_eq!(show(Expr::mul(vec![Expr::int(2), s.clone(), c.clone()])), "sin(2*x)");
+        let (s2, c2) = (Expr::pow(&s, &Expr::int(2)), Expr::pow(&c, &Expr::int(2)));
+        assert_eq!(show(Expr::add(vec![c2.clone(), s2.clone().neg()])), "cos(2*x)");
+        assert_eq!(show(Expr::add(vec![Expr::one(), Expr::mul(vec![Expr::int(-2), s2])])), "cos(2*x)");
+        assert_eq!(show(Expr::add(vec![Expr::mul(vec![Expr::int(2), c2]), Expr::int(-1)])), "cos(2*x)");
+        let u = Expr::add(vec![Expr::mul(vec![Expr::int(-4), Expr::pow(&x(), &Expr::int(2))]), Expr::int(4)]);
+        assert_eq!(show(Expr::pow(&u, &Expr::half()).div(&Expr::int(2))), "sqrt(-x**2 + 1)");
     }
 
     #[test]

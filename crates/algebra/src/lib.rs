@@ -47,7 +47,7 @@ pub use ode::{apply_conditions, dsolve};
 pub use pattern::{Bindings, find_all, match_expr, replace};
 pub use poly::{factor, from_poly, linear_in, solve_polynomial, to_poly};
 pub use rational::{apart, cancel, together};
-pub use simplify::simplify;
+pub use simplify::{pull_squares, simplify};
 pub use solve::{nroots, solve};
 pub use sums::summation;
 pub use system::solve_system;
