@@ -789,7 +789,7 @@ fn poles_between(e: &Expr, x: &Expr, lo: f64, hi: f64) -> Vec<(f64, Expr)> {
     out
 }
 
-fn trig_denominators(e: &Expr, x: &Expr, out: &mut Vec<Expr>) {
+pub(crate) fn trig_denominators(e: &Expr, x: &Expr, out: &mut Vec<Expr>) {
     if let Kind::Call(name, args) = e.kind()
         && let [g] = args.as_slice()
         && g.contains(x)
