@@ -812,7 +812,8 @@ fn inequalities() {
     for (src, want) in cases {
         assert_eq!(ev(src), want, "{src}");
     }
-    assert!(ev("solve(sin(x) > 0, x)").starts_with("ERROR"));
+    assert_eq!(ev("solve(sin(x) > 0, x)"), "(2*n*pi, 2*n*pi + pi)");
+    assert!(ev("solve(sin(x) + x > 0, x)").starts_with("ERROR"));
     assert!(ev("if x < 3:\n    pass").starts_with("ERROR"));
 }
 
