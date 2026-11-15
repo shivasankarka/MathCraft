@@ -5,7 +5,7 @@ use crate::poly::{linear_in, to_poly};
 use crate::rational::together_deep;
 use crate::util::{guard, has_singularity, require_symbol, sign_of, split_fraction, subs};
 use mathcraft_core::numeric::eval_f64;
-use mathcraft_core::{Expr, Kind, MathError, MathResult};
+use mathcraft_core::{Expr, Kind, MathError, MathResult, Num};
 
 // ---- differentiation ---------------------------------------------------------------------------------------------
 
@@ -342,6 +342,12 @@ fn families(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
     if let Some(r) = gaussian(e, x)? {
         return Ok(Some(r));
     }
+    if let Some(r) = trig_substitution(e, x, depth, false)? {
+        return Ok(Some(r));
+    }
+    if let Some(r) = trig_substitution(e, x, depth, true)? {
+        return Ok(Some(r));
+    }
     if let Kind::Call(name, args) = e.kind()
         && name.as_ref() == "abs"
         && let [u] = args.as_slice()
@@ -508,6 +514,124 @@ fn quadratic_root(e: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
     }
     // ∫ sqrt(q) = v*sqrt(q)/2 + D/2 * ∫ 1/sqrt(q)
     Ok(Some(Expr::add(vec![Expr::mul(vec![v, sqrt(q), Expr::half()]), Expr::mul(vec![d, Expr::half(), inv])])))
+}
+
+/// `n` when `k` is `n/2` for an odd `n`.
+fn half_odd(k: &Expr) -> Option<i64> {
+    let n = k.as_num()?;
+    let twice = n.mul(&Num::int(2));
+    (twice.is_integer() && !n.is_integer()).then(|| twice.as_i64()).flatten()
+}
+
+/// The base of the first half-integer power of a non-constant expression, as in `(1 - x**2)**(-1/2)`.
+fn root_base(e: &Expr, x: &Expr) -> Option<Expr> {
+    match e.kind() {
+        Kind::Pow(b, k) if b.contains(x) && half_odd(k).is_some() => Some(b.clone()),
+        _ => e.children().iter().find_map(|c| root_base(c, x)),
+    }
+}
+
+/// Replace `x` and the powers of `sqrt(q)` by their expressions in the substitution angle.
+fn rewrite_for_angle(e: &Expr, x: &Expr, q: &Expr, root: &Expr, x_of_t: &Expr) -> MathResult<Expr> {
+    guard(e)?;
+    if e == x {
+        return Ok(x_of_t.clone());
+    }
+    if let Kind::Pow(b, k) = e.kind()
+        && b == q
+        && let Some(n) = half_odd(k)
+    {
+        return Ok(Expr::pow(root, &Expr::int(n)));
+    }
+    e.map_children(|c| rewrite_for_angle(c, x, q, root, x_of_t))
+}
+
+/// Trigonometric substitution for odd powers of `sqrt(q)` with a quadratic `q = a*(x + h)**2 + d` and any other factors in `x`:
+/// `d - |a| v**2` uses `v = A*sin(t)`, `d + a v**2` uses `v = A*tan(t)`. The angle integral is done by `int` and turned back into `x`.
+fn trig_substitution(e: &Expr, x: &Expr, depth: u32, hyperbolic: bool) -> MathResult<Option<Expr>> {
+    let Some(q) = root_base(e, x) else { return Ok(None) };
+    let Some((a, h, d)) = complete_square(&q, x)? else { return Ok(None) };
+    let (Some(sa), Some(sd)) = (sign_of(&a), sign_of(&d)) else { return Ok(None) };
+    if sd != 1 || (hyperbolic && sa != 1) {
+        return Ok(None);
+    }
+    let t = Expr::sym("_theta");
+    if hyperbolic {
+        return hyperbolic_substitution(e, x, depth, (&q, &a, &h, &d), &t);
+    }
+    let (sin, cos) = (Expr::call("sin", vec![t.clone()]), Expr::call("cos", vec![t.clone()]));
+    let sqrt = |u: &Expr| Expr::pow(u, &Expr::half());
+    let amp = sqrt(&d.div(&if sa == -1 { a.neg() } else { a.clone() }));
+    let sec = Expr::pow(&cos, &Expr::int(-1));
+    // (v as a function of t, sqrt(q) as a function of t, dv/dt)
+    let (v_t, root_t, dv) = if sa == -1 {
+        (Expr::mul(vec![amp.clone(), sin.clone()]), Expr::mul(vec![sqrt(&d), cos.clone()]), Expr::mul(vec![amp.clone(), cos.clone()]))
+    } else {
+        (
+            Expr::mul(vec![amp.clone(), sin.clone(), sec.clone()]),
+            Expr::mul(vec![sqrt(&d), sec.clone()]),
+            Expr::mul(vec![amp.clone(), Expr::pow(&cos, &Expr::int(-2))]),
+        )
+    };
+    let x_t = Expr::add(vec![v_t, h.neg()]);
+    let integrand = expand(&Expr::mul(vec![rewrite_for_angle(e, x, &q, &root_t, &x_t)?, dv]))?;
+    let Some(anti) = int(&integrand, &t, depth + 1)? else { return Ok(None) };
+    if anti.contains(x) {
+        return Ok(None);
+    }
+    let anti = crate::trig::expand_trig(&anti)?;
+    let v = Expr::add(vec![x.clone(), h]);
+    let ratio = v.div(&amp);
+    let root_q = sqrt(&q);
+    let (sin_x, cos_x, angle) = if sa == -1 {
+        (ratio.clone(), root_q.div(&sqrt(&d)), Expr::call("asin", vec![ratio.clone()]))
+    } else {
+        let cos_x = sqrt(&d).div(&root_q);
+        (Expr::mul(vec![ratio.clone(), cos_x.clone()]), cos_x, Expr::call("atan", vec![ratio.clone()]))
+    };
+    let tan_x = sin_x.div(&cos_x);
+    let back = subs(&anti, &[(sin, sin_x), (cos, cos_x), (Expr::call("tan", vec![t.clone()]), tan_x), (t, angle)])?;
+    Ok(Some(back))
+}
+
+/// `d + a*v**2` with `v = x + h`: substitute `v = A*sinh(t)`, so `sqrt(q)` is `sqrt(d)*cosh(t)`; the exponentials of the result turn back into `x`.
+fn hyperbolic_substitution(e: &Expr, x: &Expr, depth: u32, (q, a, h, d): (&Expr, &Expr, &Expr, &Expr), t: &Expr) -> MathResult<Option<Expr>> {
+    let sqrt = |u: &Expr| Expr::pow(u, &Expr::half());
+    let amp = sqrt(&d.div(a));
+    let (sinh, cosh) = (Expr::call("sinh", vec![t.clone()]), Expr::call("cosh", vec![t.clone()]));
+    let x_t = Expr::add(vec![Expr::mul(vec![amp.clone(), sinh]), h.neg()]);
+    let root_t = Expr::mul(vec![sqrt(d), cosh.clone()]);
+    let integrand = expand(&Expr::mul(vec![rewrite_for_angle(e, x, q, &root_t, &x_t)?, Expr::mul(vec![amp.clone(), cosh])]))?;
+    let Some(anti) = int(&integrand, t, depth + 1)? else { return Ok(None) };
+    let w = Expr::add(vec![x.clone(), h.clone()]).div(&amp);
+    let r = sqrt(q).div(&sqrt(d));
+    fn back(e: &Expr, t: &Expr, w: &Expr, r: &Expr) -> MathResult<Expr> {
+        guard(e)?;
+        if e == t {
+            return Ok(Expr::call("asinh", vec![w.clone()]));
+        }
+        match e.kind() {
+            Kind::Pow(b, k) if b.as_sym() == Some(mathcraft_core::expr::SYM_E) => {
+                let (c, rest) = k.split_coeff();
+                if &rest == t
+                    && let Some(n) = c.as_i64()
+                {
+                    // e**t is w + r and e**(-t) is r - w, because r**2 - w**2 is 1
+                    let base = if n >= 0 { Expr::add(vec![w.clone(), r.clone()]) } else { Expr::add(vec![r.clone(), w.neg()]) };
+                    return Ok(Expr::pow(&base, &Expr::int(n.abs())));
+                }
+            }
+            Kind::Call(name, args) if args.as_slice() == std::slice::from_ref(t) => match &**name {
+                "sinh" => return Ok(w.clone()),
+                "cosh" => return Ok(r.clone()),
+                _ => {}
+            },
+            _ => {}
+        }
+        e.map_children(|c| back(c, t, w, r))
+    }
+    let out = back(&anti, t, &w, &r)?;
+    (!out.contains(t)).then(|| crate::simplify::simplify(&out)).transpose()
 }
 
 /// `exp(-a*(x + h)**2 + D)` with a positive `a`: a multiple of `erf`; with a negative one (`exp(x**2)`), of `erfi`.
