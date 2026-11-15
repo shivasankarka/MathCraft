@@ -5,8 +5,8 @@ use crate::number::Num;
 use dashu::integer::IBig;
 
 const UNARY: &[&str] = &[
-    "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "erf", "Gamma", "LambertW", "Si", "Ci", "Ei", "erfc",
-    "log", "abs",
+    "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "erf", "erfi", "Gamma", "LambertW", "Si", "Ci", "Ei",
+    "erfc", "log", "abs",
 ];
 
 pub fn is_builtin_function(name: &str) -> bool {
@@ -32,7 +32,7 @@ enum Parity {
 
 fn parity(name: &str) -> Parity {
     match name {
-        "sin" | "tan" | "asin" | "atan" | "sinh" | "tanh" | "asinh" | "atanh" | "erf" | "Si" => Parity::Odd,
+        "sin" | "tan" | "asin" | "atan" | "sinh" | "tanh" | "asinh" | "atanh" | "erf" | "erfi" | "Si" => Parity::Odd,
         "cos" | "cosh" | "abs" => Parity::Even,
         _ => Parity::Neither,
     }
@@ -54,6 +54,7 @@ pub fn f64_unary(name: &str, v: f64) -> Option<f64> {
         "acosh" => v.acosh(),
         "atanh" => v.atanh(),
         "erf" => erf(v),
+        "erfi" => erfi(v),
         "Gamma" => gamma_fn(v),
         "LambertW" => lambert_w(v),
         "Si" => sine_integral(v),
@@ -90,6 +91,20 @@ fn erf(x: f64) -> f64 {
         1.0 - (-a * a).exp() / std::f64::consts::PI.sqrt() / tail
     };
     r.copysign(x)
+}
+
+/// The imaginary error function, `2/sqrt(pi) * sum x**(2n + 1) / (n! * (2n + 1))`; infinite once `exp(x**2)` overflows.
+fn erfi(x: f64) -> f64 {
+    if x.abs() > 26.0 {
+        return f64::INFINITY.copysign(x);
+    }
+    let (mut term, mut sum, mut n) = (x, x, 0.0_f64);
+    while term.abs() > 1e-17 * sum.abs() && n < 500.0 {
+        n += 1.0;
+        term *= x * x / n;
+        sum += term / (2.0 * n + 1.0);
+    }
+    2.0 / std::f64::consts::PI.sqrt() * sum
 }
 
 /// `E ** (I*r*pi)` as `cos(r*pi) + I*sin(r*pi)` when both have closed forms (multiples of pi/6 and pi/4).
@@ -464,7 +479,7 @@ fn exact_value(name: &str, n: &Num) -> Option<Expr> {
     let zero = n.is_zero();
     let one = n.is_one();
     match name {
-        "sin" | "tan" | "asin" | "atan" | "sinh" | "tanh" | "asinh" | "atanh" | "erf" | "Si" if zero => Some(Expr::zero()),
+        "sin" | "tan" | "asin" | "atan" | "sinh" | "tanh" | "asinh" | "atanh" | "erf" | "erfi" | "Si" if zero => Some(Expr::zero()),
         "cos" | "cosh" if zero => Some(Expr::one()),
         "acos" | "acosh" | "log" if one => Some(Expr::zero()),
         "atan" if one => Some(Expr::mul(vec![Expr::rational(1, 4)?, Expr::pi()])),
