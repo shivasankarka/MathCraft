@@ -127,7 +127,7 @@ the desktop.
 - **The language:** no classes, imports, dicts, sets or `try` (a clear message names the line). The interpreter walks a
   tree, about 3x slower than CPython on plain scalar loops; algebra is the strength.
 - **Solving:** polynomials up to degree 4 in closed form (`nroots` for any degree), simple log, exp and trig equations,
-  linear and small polynomial systems, and inequalities in one real unknown (not trigonometric ones). `nsolve` for the rest.
+  linear and small polynomial systems, and inequalities in one real unknown (trigonometric ones give one family with an integer `n`, as long as `x` only appears inside the trig functions). `nsolve` for the rest.
 - **Differential equations:** first order linear, separable, Bernoulli and homogeneous, and linear equations with constant
   coefficients. No systems, Euler equations or partial equations.
 - **Integrals:** an integral with no closed form (such as `exp(x**2)`) stays as `integrate(...)`. There is no `+ C`.
