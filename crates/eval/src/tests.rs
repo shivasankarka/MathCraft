@@ -918,3 +918,11 @@ fn csv_files_round_trip_inside_the_allowed_folder() {
     crate::set_file_root(None);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn imaginary_error_function() {
+    assert_eq!(ev("integrate(exp(x**2), x)"), "sqrt(pi)*erfi(x)/2");
+    assert_eq!(ev("diff(erfi(x), x)"), "2*exp(x**2)/sqrt(pi)");
+    assert_eq!(ev("erfi(-x)"), "-erfi(x)");
+    assert!(ev("N(erfi(1))").starts_with("1.65042575879"));
+}
