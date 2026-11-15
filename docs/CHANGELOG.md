@@ -2,7 +2,7 @@
 
 User-facing changes per version. Planning notes and status live in `refs/` (not tracked).
 
-## Unreleased
+## 0.4.0 (2026-11-15)
 
 - Sums recognise the classic power series: `summation(x**k/factorial(k), (k, 0, oo))` is `exp(x)`, with a polynomial factor in `k` (`k**2*x**k/factorial(k)` is `x**2*exp(x) + x*exp(x)`), and likewise `sin`, `cos`, `sinh`, `cosh` (`x**(2*k+1)/factorial(2*k+1)` and friends), `-log(1 - x)` for `x**k/k`, and `atan`/`atanh` for `x**(2*k+1)/(2*k+1)`. So `summation((-1)**k/k, (k, 1, oo))` is `-log(2)`, `summation((-1)**k/(2*k+1), (k, 0, oo))` is `pi/4`, and `summation(1/(k*(k+1)*2**k), (k, 1, oo))` is `1 - log(2)`. A symbolic ratio is taken to converge; a numeric one outside the radius is refused. Fractions that telescope also sum to a symbolic end: `summation(1/(k*(k+1)), (k, 1, n))` is `1 - 1/(n + 1)`.
 - New `product(f, (k, a, b))`: numeric bounds multiply out, and with a symbolic end the factors may be constants, powers with an exponent linear in `k`, or linear in `k` (through the Gamma function): `product(k, (k, 1, n))` is `Gamma(n + 1)`, `product(1 - 1/k**2, (k, 2, n))` is `(n + 1)/(2*n)`. `simplify` reduces a Gamma over another whose arguments differ by an integer (`Gamma(n + 3)/Gamma(n)` is `n*(n + 1)*(n + 2)`). `factorial(n)` of a symbol is `Gamma(n + 1)` instead of an error.
