@@ -2,6 +2,7 @@
 
 use crate::expand::expand;
 use crate::poly::{linear_in, to_poly};
+use crate::rational::together_deep;
 use crate::util::{guard, has_singularity, require_symbol, sign_of, split_fraction, subs};
 use mathcraft_core::numeric::eval_f64;
 use mathcraft_core::{Expr, Kind, MathError, MathResult};
@@ -754,27 +755,114 @@ fn collect_inner(e: &Expr, x: &Expr, out: &mut Vec<Expr>) {
     }
 }
 
-/// Definite integral over `[a, b]`: exact via an antiderivative when possible, otherwise numeric for numeric limits.
-pub fn integrate_definite(e: &Expr, x: &Expr, a: &Expr, b: &Expr) -> MathResult<Expr> {
-    require_symbol(x)?;
-    if let Some(f) = int(e, x, 0)? {
-        // An endpoint where the antiderivative is not defined (oo, or a pole) is replaced by a one-sided limit.
-        let end = |at: &Expr, side: crate::limits::Side| -> Option<Expr> {
-            let direct = subs(&f, &[(x.clone(), at.clone())]).ok()?;
-            if !has_singularity(&direct) {
-                return Some(direct);
+/// What the antiderivative does at one end of a piece of the interval.
+enum End {
+    Value(Expr),
+    Infinite,
+    Unknown,
+}
+
+/// Real points in `[lo, hi]` where the integrand may blow up: zeros of its denominator, and of the cosine or sine
+/// under `tan`, `sec`, `cot` and `csc`. Trigonometric zeros are the principal ones (one period), so a long interval can miss some.
+fn poles_between(e: &Expr, x: &Expr, lo: f64, hi: f64) -> Vec<(f64, Expr)> {
+    let mut dens = Vec::new();
+    if let Ok((_, den)) = together_deep(e)
+        && den.contains(x)
+    {
+        dens.push(den);
+    }
+    trig_denominators(e, x, &mut dens);
+    let none = |_: &str| None;
+    let mut out: Vec<(f64, Expr)> = Vec::new();
+    for d in dens {
+        let Ok(roots) = crate::solve::solve(&d, x) else { continue };
+        for r in roots {
+            if let Ok(v) = eval_f64(&r, &none)
+                && (lo..=hi).contains(&v)
+                && !out.iter().any(|(w, _)| (w - v).abs() < 1e-12)
+            {
+                out.push((v, r));
             }
-            crate::limits::limit_side(&f, x, at, side).ok().filter(|v| !has_singularity(v))
-        };
-        if let (Some(hi), Some(lo)) = (end(b, crate::limits::Side::Left), end(a, crate::limits::Side::Right)) {
-            return Ok(Expr::add(vec![hi, lo.neg()]));
         }
     }
+    out.sort_by(|p, q| p.0.total_cmp(&q.0));
+    out
+}
+
+fn trig_denominators(e: &Expr, x: &Expr, out: &mut Vec<Expr>) {
+    if let Kind::Call(name, args) = e.kind()
+        && let [g] = args.as_slice()
+        && g.contains(x)
+    {
+        let below = match &**name {
+            "tan" | "sec" => Some("cos"),
+            "cot" | "csc" => Some("sin"),
+            _ => None,
+        };
+        if let Some(b) = below {
+            out.push(Expr::call(b, vec![g.clone()]));
+        }
+    }
+    for c in e.children() {
+        trig_denominators(&c, x, out);
+    }
+}
+
+/// Definite integral over `[a, b]`: exact via an antiderivative when possible, otherwise numeric for numeric limits.
+/// A pole inside the interval splits it, and an infinite one-sided limit of the antiderivative means the integral diverges.
+pub fn integrate_definite(e: &Expr, x: &Expr, a: &Expr, b: &Expr) -> MathResult<Expr> {
+    require_symbol(x)?;
     let none = |_: &str| None;
+    if let Some(f) = int(e, x, 0)? {
+        // An endpoint where the antiderivative is not defined (oo, or a pole) is replaced by a one-sided limit.
+        let end = |at: &Expr, side: crate::limits::Side| -> End {
+            match subs(&f, &[(x.clone(), at.clone())]) {
+                Ok(direct) if !has_singularity(&direct) => return End::Value(direct),
+                _ => {}
+            }
+            match crate::limits::limit_side(&f, x, at, side) {
+                Ok(v) if has_singularity(&v) => End::Infinite,
+                Ok(v) => End::Value(v),
+                Err(_) => End::Unknown,
+            }
+        };
+        let mut points = vec![a.clone()];
+        if let (Ok(lo), Ok(hi)) = (eval_f64(a, &none), eval_f64(b, &none)) {
+            let inside = poles_between(e, x, lo.min(hi), lo.max(hi)).into_iter().filter(|(v, _)| *v > lo.min(hi) && *v < lo.max(hi));
+            let mut inside: Vec<(f64, Expr)> = inside.collect();
+            if lo > hi {
+                inside.reverse();
+            }
+            points.extend(inside.into_iter().map(|(_, r)| r));
+        }
+        points.push(b.clone());
+        let mut parts = Vec::new();
+        let mut known = true;
+        for w in points.windows(2) {
+            if let [p, q] = w {
+                match (end(q, crate::limits::Side::Left), end(p, crate::limits::Side::Right)) {
+                    (End::Value(hi), End::Value(lo)) => parts.push(Expr::add(vec![hi, lo.neg()])),
+                    (End::Infinite, _) | (_, End::Infinite) => {
+                        return Err(MathError::domain("the integral diverges (the antiderivative is infinite at a pole or an infinite limit)"));
+                    }
+                    _ => known = false,
+                }
+            }
+        }
+        if known {
+            // log(x - 2) stands in for log|x - 2|, so the pieces can differ by cancelling multiples of i*pi.
+            let total = Expr::add(parts);
+            return if total.contains(&Expr::imag()) { expand(&total) } else { Ok(total) };
+        }
+    }
     match (eval_f64(a, &none), eval_f64(b, &none)) {
         (Ok(lo), Ok(hi)) => {
             let f = |t: f64| eval_f64(e, &|n| (x.as_sym() == Some(n)).then_some(t));
-            Ok(Expr::float(adaptive_simpson(&f, lo, hi)?))
+            let v = adaptive_simpson(&f, lo, hi)?;
+            if !v.is_finite() {
+                return Err(MathError::domain("no closed form found, and numeric integration failed (the integrand blows up inside the interval)"));
+            }
+            Ok(Expr::float(v))
         }
         _ => Err(MathError::unsupported("no closed form found, and numeric integration needs numeric limits")),
     }
@@ -952,6 +1040,20 @@ mod tests {
         let gauss = integrate_definite(&f("exp", p(&x(), 2).neg()), &x(), &i(0), &i(1)).unwrap();
         // exact now: sqrt(pi)*erf(1)/2
         assert!((eval_f64(&gauss, &|_| None).unwrap() - 0.746_824_132_812_427).abs() < 1e-8);
+    }
+
+    #[test]
+    fn definite_integrals_across_poles() {
+        let diverges = |e: Expr, a: i64, b: i64| integrate_definite(&e, &x(), &i(a), &i(b)).unwrap_err().to_string().contains("diverges");
+        assert!(diverges(p(&x(), -2), -1, 1));
+        assert!(diverges(p(&x(), -2), 0, 1));
+        assert!(diverges(p(&x(), -1), -1, 1));
+        assert!(diverges(f("tan", x()), 0, 3));
+        // convergent improper integrals and an offset pole outside the interval stay exact
+        let root = integrate_definite(&Expr::pow(&x(), &Expr::rational(-1, 2).unwrap()), &x(), &i(0), &i(1)).unwrap();
+        assert_eq!(root, i(2));
+        let off = integrate_definite(&p(&Expr::add(vec![x(), i(-2)]), -1), &x(), &i(0), &i(1)).unwrap();
+        assert_eq!(off.to_string(), "-log(2)");
     }
 
     #[test]
