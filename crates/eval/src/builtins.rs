@@ -79,7 +79,16 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("ceil", "ceil(x)", "smallest integer not below x"),
     ("factorial", "factorial(n)", "n! as an exact integer"),
     ("binomial", "binomial(n, k)", "number of ways to choose k of n"),
-    ("summation", "summation(f, (k, a, b))", "the sum of f for k from a to b: numeric bounds, polynomials in k, geometric series (b = oo assumes |ratio| < 1)"),
+    (
+        "summation",
+        "summation(f, (k, a, b))",
+        "the sum of f for k from a to b: numeric bounds, polynomials in k, geometric and power series (exp, sin, log, atan, ...), telescoping fractions",
+    ),
+    (
+        "product",
+        "product(f, (k, a, b))",
+        "the product of f for k from a to b: numeric bounds, or factors that are constants, powers and linear in k (through Gamma)",
+    ),
     ("isprime", "isprime(n)", "is n a prime number"),
     ("nextprime", "nextprime(n)", "the smallest prime greater than n"),
     ("totient", "totient(n)", "Euler's totient: how many of 1..n are coprime to n"),
@@ -652,6 +661,12 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
         }
         "factorial" => {
             a.limits(name, 1, 1)?;
+            if let Value::Expr(e) = a.get(0)?
+                && e.as_i64().is_none()
+                && !e.free_symbols().is_empty()
+            {
+                return Ok(Value::from_expr(Expr::call("Gamma", vec![Expr::add(vec![e.clone(), Expr::one()])])));
+            }
             let n = a.int(0)?;
             if !(0..=20_000).contains(&n) {
                 return err("factorial() needs an integer from 0 to 20000");
@@ -677,14 +692,16 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             }
             Ok(Value::Expr(Expr::big(acc)))
         }
-        "summation" => {
+        "summation" | "product" => {
             a.limits(name, 2, 2)?;
             let f = a.expr(0)?;
-            let (Value::Tuple(range) | Value::List(range)) = a.get(1)? else { return err("summation(f, (k, a, b)) sums f over k = a..b") };
+            let (Value::Tuple(range) | Value::List(range)) = a.get(1)? else { return err(format!("{name}(f, (k, a, b)) runs k from a to b")) };
             let [k, lo, hi] = range.as_slice() else { return err("the range is written (k, a, b)") };
-            match alg::summation(&f, &as_symbol(k)?, &lo.to_expr()?, &hi.to_expr()?)? {
+            let (k, lo, hi) = (as_symbol(k)?, lo.to_expr()?, hi.to_expr()?);
+            let result = if name == "product" { alg::product(&f, &k, &lo, &hi)? } else { alg::summation(&f, &k, &lo, &hi)? };
+            match result {
                 Some(s) => Ok(Value::from_expr(s)),
-                None => err("no closed form found for this sum"),
+                None => err(format!("no closed form found for this {name}")),
             }
         }
         "isprime" | "nextprime" | "totient" | "factorint" => {
