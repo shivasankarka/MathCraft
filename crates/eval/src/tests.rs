@@ -926,3 +926,12 @@ fn imaginary_error_function() {
     assert_eq!(ev("erfi(-x)"), "-erfi(x)");
     assert!(ev("N(erfi(1))").starts_with("1.65042575879"));
 }
+
+#[test]
+fn trigonometric_substitution_integrals() {
+    assert_eq!(ev("integrate(x**2/sqrt(1-x**2), x)"), "-x*sqrt(-x**2 + 1)/2 + asin(x)/2");
+    assert_eq!(ev("integrate(1/(x**2*sqrt(x**2+4)), x)"), "-sqrt(x**2 + 4)/(4*x)");
+    assert_eq!(ev("integrate(1/(x**2+1)**(3/2), x)"), "x/sqrt(x**2 + 1)");
+    assert_eq!(ev("integrate(x**2/sqrt(x**2+9), x)"), "x*sqrt(x**2 + 9)/2 - 9*asinh(x/3)/2");
+    assert_eq!(ev("integrate(x**3/sqrt(x**2+1), x)"), "x**2*sqrt(x**2 + 1)/3 - 2*sqrt(x**2 + 1)/3");
+}
