@@ -946,3 +946,33 @@ fn half_angle_integrals() {
         assert!((v - 3.627_598_728_468_436).abs() < 1e-9, "{src} gave {v}");
     }
 }
+
+#[test]
+fn classic_power_series() {
+    assert_eq!(ev("summation(x**k/factorial(k), (k, 0, oo))"), "exp(x)");
+    assert_eq!(ev("summation(1/factorial(k), (k, 2, oo))"), "E - 2");
+    assert_eq!(ev("summation(k**2*x**k/factorial(k), (k, 0, oo))"), "x**2*exp(x) + x*exp(x)");
+    assert_eq!(ev("summation((-1)**k*x**(2*k+1)/factorial(2*k+1), (k, 0, oo))"), "sin(x)");
+    assert_eq!(ev("summation(x**(2*k)/factorial(2*k), (k, 0, oo))"), "cosh(x)");
+    assert_eq!(ev("summation((-1)**k/k, (k, 1, oo))"), "-log(2)");
+    assert_eq!(ev("summation(1/(k*2**k), (k, 1, oo))"), "log(2)");
+    assert_eq!(ev("summation(x**k/k, (k, 1, oo))"), "-log(-x + 1)");
+    assert_eq!(ev("summation((-1)**k/(2*k+1), (k, 0, oo))"), "pi/4");
+    assert_eq!(ev("summation(x**(2*k+1)/(2*k+1), (k, 0, oo))"), "atanh(x)");
+    assert_eq!(ev("summation(1/(k*(k+1)), (k, 1, n))"), "1 - 1/(n + 1)");
+    assert_eq!(ev("summation(2**k/factorial(k), (k, 0, oo))"), "exp(2)");
+    // the harmonic series has no closed form
+    assert!(ev("summation(1/k, (k, 1, oo))").contains("no closed form"));
+}
+
+#[test]
+fn products() {
+    assert_eq!(ev("product(k, (k, 1, 5))"), "120");
+    assert_eq!(ev("product(k, (k, 1, n))"), "Gamma(n + 1)");
+    assert_eq!(ev("product(2, (k, 1, n))"), "2**n");
+    assert_eq!(ev("product(1 + 1/k, (k, 1, n))"), "n + 1");
+    assert_eq!(ev("product(1 - 1/k**2, (k, 2, n))"), "(n + 1)/(2*n)");
+    assert_eq!(ev("product(x + k, (k, 0, 2))"), "x*(x + 1)*(x + 2)");
+    assert_eq!(ev("simplify(Gamma(n + 3)/Gamma(n))"), "n*(n + 1)*(n + 2)");
+    assert_eq!(ev("factorial(n)"), "Gamma(n + 1)");
+}
