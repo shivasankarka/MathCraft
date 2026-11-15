@@ -144,6 +144,7 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("together", "together(expr)", "combine a sum of fractions into one fraction (nothing is cancelled)"),
     ("cancel", "cancel(expr)", "cancel common factors of a fraction (any number of symbols)"),
     ("factor", "factor(poly[, extension=sqrt(2)])", "factor a polynomial with integer coefficients into irreducibles (any number of variables)"),
+    ("trigsimp", "trigsimp(expr)", "same as simplify; it includes the sin^2+cos^2=1 and double-angle rules"),
     ("simplify", "simplify(expr)", "try expanding, factoring and sin^2+cos^2=1; keep the smallest form"),
     ("N", "N(expr)", "numeric approximation; symbols are kept"),
     ("subs", "subs(expr, old, new) | subs(expr, [x == 1, y == 2])", "substitute values or expressions"),
@@ -220,6 +221,7 @@ const METHODS: &[&str] = &[
     "together",
     "factor",
     "simplify",
+    "trigsimp",
     "refine",
     "replace",
     "findall",
@@ -940,12 +942,12 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             let out = broadcast(a.get(0)?, &mut |e| Ok(alg::factor_over(e, &ext)?))?;
             check_depth(it, out)
         }
-        "expand" | "simplify" | "factor" | "cancel" | "together" | "refine" => {
+        "expand" | "simplify" | "trigsimp" | "factor" | "cancel" | "together" | "refine" => {
             a.limits(name, 1, 1)?;
             let out = broadcast(a.get(0)?, &mut |e| {
                 Ok(match name {
                     "expand" => alg::expand(e)?,
-                    "simplify" => alg::simplify_with(e, &it.assumptions(&[e]))?,
+                    "simplify" | "trigsimp" => alg::simplify_with(e, &it.assumptions(&[e]))?,
                     "refine" => alg::refine(e, &it.assumptions(&[e]))?,
                     "cancel" => alg::cancel(e)?,
                     "together" => {
@@ -1402,7 +1404,9 @@ fn solve(it: &Interp<'_>, a: &Args) -> R<Value> {
             };
             let asm = it.assumptions(&[&f]);
             let roots = alg::solve(&f, &x)?;
-            roots.into_iter().filter(|r| alg::admissible(r, &x, &asm)).map(|r| it.checked(r)).collect::<R<Vec<_>>>().map(Value::list)
+            // roots that depend on other symbols (solving for y in a circle) read better with the squares taken out of roots
+            let tidy = |r: Expr| if r.free_symbols().is_empty() { r } else { alg::pull_squares(&r).unwrap_or(r) };
+            roots.into_iter().filter(|r| alg::admissible(r, &x, &asm)).map(|r| it.checked(tidy(r))).collect::<R<Vec<_>>>().map(Value::list)
         }
     }
 }
