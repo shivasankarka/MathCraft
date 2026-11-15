@@ -99,6 +99,7 @@ fn derivative_of(name: &str, u: &Expr) -> Option<Expr> {
         "acosh" => Expr::pow(&Expr::add(vec![Expr::pow(u, &two), Expr::int(-1)]), &Expr::rational(-1, 2)?),
         "atanh" => Expr::pow(&one_minus_u2(), &Expr::int(-1)),
         "erf" => Expr::mul(vec![Expr::int(2), Expr::pow(&Expr::pi(), &Expr::rational(-1, 2)?), Expr::pow(&Expr::e(), &Expr::pow(u, &two).neg())]),
+        "erfi" => Expr::mul(vec![Expr::int(2), Expr::pow(&Expr::pi(), &Expr::rational(-1, 2)?), Expr::pow(&Expr::e(), &Expr::pow(u, &two))]),
         "LambertW" => c("LambertW").div(&Expr::mul(vec![u.clone(), Expr::add(vec![one.clone(), c("LambertW")])])),
         "Si" => c("sin").div(u),
         "Ci" => c("cos").div(u),
@@ -509,20 +510,22 @@ fn quadratic_root(e: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
     Ok(Some(Expr::add(vec![Expr::mul(vec![v, sqrt(q), Expr::half()]), Expr::mul(vec![d, Expr::half(), inv])])))
 }
 
-/// `exp(-a*(x + h)**2 + D)` with a positive rational `a`: a multiple of `erf`.
+/// `exp(-a*(x + h)**2 + D)` with a positive `a`: a multiple of `erf`; with a negative one (`exp(x**2)`), of `erfi`.
 fn gaussian(e: &Expr, x: &Expr) -> MathResult<Option<Expr>> {
     let Kind::Pow(b, k) = e.kind() else { return Ok(None) };
     if b.as_sym() != Some(mathcraft_core::expr::SYM_E) {
         return Ok(None);
     }
     let Some((a, h, d)) = complete_square(k, x)? else { return Ok(None) };
-    if sign_of(&a) != Some(-1) {
-        return Ok(None);
-    }
-    let r = Expr::pow(&a.neg(), &Expr::half());
+    let (name, curve) = match sign_of(&a) {
+        Some(-1) => ("erf", a.neg()),
+        Some(1) => ("erfi", a),
+        _ => return Ok(None),
+    };
+    let r = Expr::pow(&curve, &Expr::half());
     let v = Expr::add(vec![x.clone(), h]);
     let scale = Expr::mul(vec![Expr::pow(&Expr::e(), &d), Expr::pow(&Expr::pi(), &Expr::half()), Expr::half()]).div(&r);
-    Ok(Some(Expr::mul(vec![scale, Expr::call("erf", vec![Expr::mul(vec![r, v])])])))
+    Ok(Some(Expr::mul(vec![scale, Expr::call(name, vec![Expr::mul(vec![r, v])])])))
 }
 
 /// `(is_sin, u)` when `e` is `sin(u)` or `cos(u)`.
