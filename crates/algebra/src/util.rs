@@ -37,6 +37,15 @@ pub fn has_singularity(e: &Expr) -> bool {
         Kind::Num(n) => !n.to_f64().is_finite(),
         Kind::Sym(s) => &**s == mathcraft_core::expr::SYM_OO,
         Kind::Call(name, args) if &**name == "log" && args.iter().any(Expr::is_zero) => true,
+        // tan at an odd multiple of pi/2 stays unevaluated, but it is a pole
+        Kind::Call(name, args)
+            if &**name == "tan"
+                && let [a] = args.as_slice()
+                && let Ok(v) = mathcraft_core::numeric::eval_f64(a, &|_| None)
+                && v.cos().abs() < 1e-12 =>
+        {
+            true
+        }
         _ => e.children().iter().any(has_singularity),
     }
 }
