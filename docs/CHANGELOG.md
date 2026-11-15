@@ -4,6 +4,8 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 
 ## Unreleased
 
+- Rational functions of `sin` and `cos` integrate through the half-angle substitution: `integrate(1/(2 + cos(x)), x)` is `2*sqrt(3)*atan(sqrt(3)*tan(x/2)/3)/3`. Its `tan(x/2)` jumps at odd multiples of `pi`, so a definite integral splits there; where the exact limits are out of reach it gives a number (`integrate(1/(2 + cos(x)), (x, 0, 2*pi))` is `3.62759...`). The numeric integrator now starts from 32 panels, because a single one could look converged by coincidence (`(-pi, pi)` gave `3.49` instead of `3.63`). `tan` at an odd multiple of `pi/2` counts as a pole.
+- The tutorial notebook and the README no longer list trigonometric inequalities and `exp(x**2)` as missing.
 - More integrals: odd powers of `sqrt(a - x**2)` and `sqrt(a + x**2)` times a rational factor, by trigonometric (and, where that gets stuck, hyperbolic) substitution. `integrate(x**2/sqrt(1 - x**2), x)` is `asin(x)/2 - x*sqrt(1 - x**2)/2`, `1/(x**2*sqrt(x**2 + 4))` is `-sqrt(x**2 + 4)/(4*x)`, and `x**2/sqrt(x**2 + 9)` is `x*sqrt(x**2 + 9)/2 - 9*asinh(x/3)/2`.
 - New `erfi(x)`, and `integrate(exp(x**2), x)` is `sqrt(pi)*erfi(x)/2` (any `exp(a*x**2 + b*x + c)` with a positive `a`).
 - `solve` handles trigonometric inequalities: `solve(sin(x) > 1/2, x)` is `(2*n*pi + pi/6, 2*n*pi + 5*pi/6)` for any integer `n`; it works for `cos`, `tan`, multiples and shifts of the angle (`cos(3*x - 1) > 1/2`) and polynomials in trig functions, and keeps poles open. Inequalities that mix `x` with `sin(x)` still give a message.

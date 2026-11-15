@@ -130,7 +130,7 @@ the desktop.
   linear and small polynomial systems, and inequalities in one real unknown (trigonometric ones give one family with an integer `n`, as long as `x` only appears inside the trig functions). `nsolve` for the rest.
 - **Differential equations:** first order linear, separable, Bernoulli and homogeneous, and linear equations with constant
   coefficients. No systems, Euler equations or partial equations.
-- **Integrals:** an integral with no closed form (such as `exp(x**2)`) stays as `integrate(...)`. There is no `+ C`.
+- **Integrals:** an integral with no known form (such as `sin(x**2)/x`) stays as `integrate(...)`. There is no `+ C`.
 - **Not there:** Laplace and Fourier transforms, 3D and contour plots, SVD, assigning to one matrix element.
 - **Files:** outputs are not stored in the notebook file.
 
