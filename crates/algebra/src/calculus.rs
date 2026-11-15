@@ -188,7 +188,47 @@ fn int(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
             return Ok(Some(r));
         }
     }
-    if depth < MAX_INT_DEPTH { u_substitution(e, x, depth) } else { Ok(None) }
+    if depth >= MAX_INT_DEPTH {
+        return Ok(None);
+    }
+    match u_substitution(e, x, depth)? {
+        Some(r) => Ok(Some(r)),
+        None => half_angle(e, x, depth),
+    }
+}
+
+/// A rational function of `sin(u)` and `cos(u)` for one linear `u`: the substitution `w = tan(u/2)` turns it into a rational function of `w`.
+/// The result has `tan(u/2)` inside, so it jumps wherever `u` is an odd multiple of `pi`.
+fn half_angle(e: &Expr, x: &Expr, depth: u32) -> MathResult<Option<Expr>> {
+    // inside a trigonometric substitution the hyperbolic route gives the neater answer
+    if x.as_sym() == Some("_theta") {
+        return Ok(None);
+    }
+    let Some(u) = first_sin_cos_argument(e) else { return Ok(None) };
+    let Some((a, _)) = linear_in(&u, x)? else { return Ok(None) };
+    let w = Expr::sym("_w");
+    let denom = Expr::add(vec![Expr::one(), Expr::pow(&w, &Expr::int(2))]);
+    let sin_w = Expr::mul(vec![Expr::int(2), w.clone()]).div(&denom);
+    let cos_w = Expr::add(vec![Expr::one(), Expr::pow(&w, &Expr::int(2)).neg()]).div(&denom);
+    let rules = [(Expr::call("sin", vec![u.clone()]), sin_w), (Expr::call("cos", vec![u.clone()]), cos_w)];
+    let rewritten = subs(e, &rules)?;
+    if rewritten.contains(x) {
+        return Ok(None);
+    }
+    let integrand = crate::rational::cancel(&Expr::mul(vec![rewritten, Expr::int(2).div(&Expr::mul(vec![a, denom]))]))?;
+    let Some(anti) = int(&integrand, &w, depth + 1)? else { return Ok(None) };
+    let back = subs(&anti, &[(w.clone(), Expr::call("tan", vec![Expr::mul(vec![Expr::half(), u])]))])?;
+    Ok((!back.contains(&w)).then_some(back))
+}
+
+fn first_sin_cos_argument(e: &Expr) -> Option<Expr> {
+    if let Kind::Call(name, args) = e.kind()
+        && matches!(&**name, "sin" | "cos")
+        && let [u] = args.as_slice()
+    {
+        return Some(u.clone());
+    }
+    e.children().iter().find_map(first_sin_cos_argument)
 }
 
 /// `sin(a)*cos(b)`, `cos(a)*cos(b)` and `sin(a)*sin(b)` with different linear arguments, as sums of single sines and cosines.
@@ -916,6 +956,45 @@ fn poles_between(e: &Expr, x: &Expr, lo: f64, hi: f64) -> Vec<(f64, Expr)> {
     out
 }
 
+/// Points strictly inside `(lo, hi)` where the argument of a `tan` in `f` (linear in `x`) is an odd multiple of `pi/2`.
+fn tan_jumps(f: &Expr, x: &Expr, lo: f64, hi: f64) -> MathResult<Vec<(f64, Expr)>> {
+    fn args(e: &Expr, out: &mut Vec<Expr>) {
+        if let Kind::Call(name, a) = e.kind()
+            && &**name == "tan"
+            && let [g] = a.as_slice()
+        {
+            out.push(g.clone());
+        }
+        e.children().iter().for_each(|c| args(c, out));
+    }
+    let mut gs = Vec::new();
+    args(f, &mut gs);
+    let none = |_: &str| None;
+    let mut out: Vec<(f64, Expr)> = Vec::new();
+    for g in gs {
+        let Some((a, b)) = linear_in(&g, x)? else { continue };
+        let (Ok(av), Ok(bv)) = (eval_f64(&a, &none), eval_f64(&b, &none)) else { continue };
+        // k from the interval ends: av*x + bv = pi/2 + k*pi
+        let ks = [(av * lo + bv - std::f64::consts::FRAC_PI_2) / std::f64::consts::PI, (av * hi + bv - std::f64::consts::FRAC_PI_2) / std::f64::consts::PI];
+        let (k0, k1) = (ks[0].min(ks[1]).floor() as i64, ks[0].max(ks[1]).ceil() as i64);
+        if k1 - k0 > 64 {
+            continue;
+        }
+        for k in k0..=k1 {
+            let angle = Expr::add(vec![Expr::mul(vec![Expr::half(), Expr::pi()]), Expr::mul(vec![Expr::int(k), Expr::pi()])]);
+            let at = expand(&Expr::add(vec![angle, b.neg()]).div(&a))?;
+            if let Ok(v) = eval_f64(&at, &none)
+                && v > lo
+                && v < hi
+                && !out.iter().any(|(w, _)| (w - v).abs() < 1e-12)
+            {
+                out.push((v, at));
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub(crate) fn trig_denominators(e: &Expr, x: &Expr, out: &mut Vec<Expr>) {
     if let Kind::Call(name, args) = e.kind()
         && let [g] = args.as_slice()
@@ -955,8 +1034,12 @@ pub fn integrate_definite(e: &Expr, x: &Expr, a: &Expr, b: &Expr) -> MathResult<
         };
         let mut points = vec![a.clone()];
         if let (Ok(lo), Ok(hi)) = (eval_f64(a, &none), eval_f64(b, &none)) {
-            let inside = poles_between(e, x, lo.min(hi), lo.max(hi)).into_iter().filter(|(v, _)| *v > lo.min(hi) && *v < lo.max(hi));
-            let mut inside: Vec<(f64, Expr)> = inside.collect();
+            let (low, high) = (lo.min(hi), lo.max(hi));
+            let mut inside: Vec<(f64, Expr)> = poles_between(e, x, low, high).into_iter().filter(|(v, _)| *v > low && *v < high).collect();
+            // tan in the antiderivative (from the half-angle substitution) jumps where its argument passes pi/2 + k*pi
+            inside.extend(tan_jumps(&f, x, low, high)?);
+            inside.sort_by(|p, q| p.0.total_cmp(&q.0));
+            inside.dedup_by(|p, q| (p.0 - q.0).abs() < 1e-12);
             if lo > hi {
                 inside.reverse();
             }
@@ -1024,7 +1107,16 @@ fn adaptive_simpson(f: &dyn Fn(f64) -> MathResult<f64>, a: f64, b: f64) -> MathR
         }
         Ok(rec(f, &left, tol / 2.0, depth - 1)? + rec(f, &right, tol / 2.0, depth - 1)?)
     }
-    rec(f, &Panel::new(f, a, b)?, 1e-10, 40)
+    // start from several panels: a single one can look converged by coincidence, as on a symmetric interval
+    const PANELS: u32 = 32;
+    let step = (b - a) / f64::from(PANELS);
+    let mut total = 0.0;
+    for k in 0..PANELS {
+        let lo = a + step * f64::from(k);
+        let hi = if k + 1 == PANELS { b } else { lo + step };
+        total += rec(f, &Panel::new(f, lo, hi)?, 1e-10 / f64::from(PANELS), 40)?;
+    }
+    Ok(total)
 }
 
 // ---- series and limits -------------------------------------------------------------------------------------------
