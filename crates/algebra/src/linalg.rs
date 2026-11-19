@@ -108,6 +108,57 @@ fn rref(m: &mut Matrix, ncols: usize) -> MathResult<Vec<usize>> {
     Ok(pivots)
 }
 
+/// The reduced row echelon form and its pivot columns.
+pub fn rref_form(m: &Matrix) -> MathResult<(Matrix, Vec<usize>)> {
+    let mut work = m.clone();
+    let cols = work.first().map_or(0, Vec::len);
+    let pivots = rref(&mut work, cols)?;
+    Ok((work, pivots))
+}
+
+/// The compact singular value decomposition `A = U * diag(sigma) * V^T` with the non-zero singular values in
+/// descending order (`U` is `m x r`, `V` is `n x r`, both with orthonormal columns). Exact: the singular values are
+/// square roots of the eigenvalues of `A^T A`, so it needs those in closed form.
+pub fn svd(a: &Matrix) -> MathResult<(Matrix, Vec<Expr>, Matrix)> {
+    let n = a.first().map_or(0, Vec::len);
+    let gram = matmul(&transpose(a), a)?;
+    let mut distinct: Vec<(Expr, f64)> = Vec::new();
+    for l in eigenvalues(&gram)? {
+        if is_zero_expr(&l)? || distinct.iter().any(|(d, _)| *d == l) {
+            continue;
+        }
+        let value = mathcraft_core::numeric::eval_f64(&l, &|_| None).map_err(|_| MathError::unsupported("svd needs numeric matrix entries"))?;
+        distinct.push((l, value));
+    }
+    distinct.sort_by(|x, y| y.1.total_cmp(&x.1));
+    let (mut sigma, mut v_cols, mut u_cols) = (Vec::new(), Vec::new(), Vec::new());
+    for (lambda, _) in distinct {
+        let shifted: Matrix = (0..n).map(|i| (0..n).map(|j| if i == j { cell(&gram, i, j).sub(&lambda) } else { cell(&gram, i, j) }).collect()).collect();
+        let s = crate::simplify::simplify(&Expr::pow(&lambda, &Expr::half()))?;
+        let mut basis: Vec<Vec<Expr>> = Vec::new();
+        for v in nullspace(&shifted)? {
+            let mut w = v;
+            for e in &basis {
+                let dot = expand(&Expr::add(w.iter().zip(e).map(|(p, q)| Expr::mul(vec![p.clone(), q.clone()])).collect()))?;
+                w = w.iter().zip(e).map(|(p, q)| expand(&p.sub(&Expr::mul(vec![dot.clone(), q.clone()])))).collect::<MathResult<_>>()?;
+            }
+            let norm2 = expand(&Expr::add(w.iter().map(|p| Expr::mul(vec![p.clone(), p.clone()])).collect()))?;
+            let norm = crate::simplify::simplify(&Expr::pow(&norm2, &Expr::half()))?;
+            basis.push(w.iter().map(|p| crate::simplify::simplify(&p.div(&norm))).collect::<MathResult<_>>()?);
+        }
+        for v in basis {
+            let av: Vec<Expr> = a
+                .iter()
+                .map(|row| expand(&Expr::add(row.iter().zip(&v).map(|(p, q)| Expr::mul(vec![p.clone(), q.clone()])).collect())))
+                .collect::<MathResult<_>>()?;
+            u_cols.push(av.iter().map(|p| crate::simplify::simplify(&p.div(&s))).collect::<MathResult<Vec<_>>>()?);
+            v_cols.push(v);
+            sigma.push(s.clone());
+        }
+    }
+    Ok((transpose(&u_cols), sigma, transpose(&v_cols)))
+}
+
 /// A basis of the null space: vectors `v` with `m * v == 0`.
 pub fn nullspace(m: &Matrix) -> MathResult<Vec<Vec<Expr>>> {
     let cols = m.first().map_or(0, Vec::len);
