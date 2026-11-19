@@ -10,7 +10,7 @@ use crate::expand::expand;
 use crate::poly::{factor, linear_in, to_poly};
 use crate::rational::{apart, cancel, together_deep};
 use crate::simplify::simplify;
-use crate::util::{guard, require_symbol, sign_of, split_fraction};
+use crate::util::{guard, require_symbol, sign_of, split_fraction, subs};
 use mathcraft_core::{Expr, Kind, MathResult};
 
 /// The highest power of an irreducible quadratic that `inverse_laplace` inverts.
@@ -28,16 +28,53 @@ pub fn laplace(f: &Expr, t: &Expr, s: &Expr) -> MathResult<Option<Expr>> {
     };
     let mut total = Vec::with_capacity(terms.len());
     for term in &terms {
-        let piece = match transform_term(term, t, s)? {
+        let piece = match step_term(term, t, s)? {
             Some(p) => p,
-            None => match exponential_pieces(term, t, s)? {
+            None => match transform_term(term, t, s)? {
                 Some(p) => p,
-                None => return Ok(None),
+                None => match exponential_pieces(term, t, s)? {
+                    Some(p) => p,
+                    None => return Ok(None),
+                },
             },
         };
         total.push(piece);
     }
     Ok(Some(simplify(&Expr::add(total))?))
+}
+
+/// A term with a `Heaviside(t - c)` or `DiracDelta(t - c)` factor (`c >= 0`, a symbolic `c` is taken to be): the second
+/// shift rule `L[H(t - c) h(t - c)] = exp(-c s) L[h]` and the sifting property `L[delta(t - c) g] = g(c) exp(-c s)`.
+fn step_term(term: &Expr, t: &Expr, s: &Expr) -> MathResult<Option<Expr>> {
+    let factors = match term.kind() {
+        Kind::Mul(v) => v.clone(),
+        _ => vec![term.clone()],
+    };
+    let Some(pos) =
+        factors.iter().position(|f| matches!(f.kind(), Kind::Call(n, a) if matches!(&**n, "Heaviside" | "DiracDelta") && a.iter().any(|u| u.contains(t))))
+    else {
+        return Ok(None);
+    };
+    let Some(Kind::Call(name, args)) = factors.get(pos).map(Expr::kind) else { return Ok(None) };
+    let [u] = args.as_slice() else { return Ok(None) };
+    let Some((k, m)) = linear_in(u, t)? else { return Ok(None) };
+    if sign_of(&k) != Some(1) {
+        return Ok(None);
+    }
+    let c = expand(&m.neg().div(&k))?;
+    let rest = Expr::mul(factors.iter().enumerate().filter(|(i, _)| *i != pos).map(|(_, f)| f.clone()).collect());
+    let delay = Expr::pow(&Expr::e(), &Expr::mul(vec![c.clone(), s.clone()]).neg());
+    if sign_of(&c) == Some(-1) {
+        // the step is already on for t > 0, and the delta is outside the range
+        return if &**name == "Heaviside" { Ok(laplace(&rest, t, s)?) } else { Ok(Some(Expr::zero())) };
+    }
+    if &**name == "DiracDelta" {
+        let value = expand(&subs(&rest, &[(t.clone(), c)])?)?;
+        return Ok(Some(Expr::mul(vec![value, Expr::pow(&k, &Expr::int(-1)), delay])));
+    }
+    let shifted = expand(&subs(&rest, &[(t.clone(), Expr::add(vec![t.clone(), c]))])?)?;
+    let Some(inner) = laplace(&shifted, t, s)? else { return Ok(None) };
+    Ok(Some(Expr::mul(vec![delay, inner])))
 }
 
 /// A term with several trig factors or powers of them, through `sin(x) = (e**(I x) - e**(-I x))/(2 I)`.
@@ -138,10 +175,73 @@ fn transform_term(term: &Expr, t: &Expr, s: &Expr) -> MathResult<Option<Expr>> {
 }
 
 /// The inverse Laplace transform of `f(s)` as a function of `t` (for `t > 0`), or `None` when no rule applies.
+/// A factor `exp(-c*s)` delays the result: `Heaviside(t - c)` times the inverse, shifted by `c`.
 pub fn inverse_laplace(f: &Expr, s: &Expr, t: &Expr) -> MathResult<Option<Expr>> {
     require_symbol(s)?;
     require_symbol(t)?;
     guard(f)?;
+    // group the terms by their delay
+    let expanded = expand(f)?;
+    let terms = match expanded.kind() {
+        Kind::Add(v) => v.clone(),
+        _ => vec![expanded.clone()],
+    };
+    let mut groups: Vec<(Expr, Vec<Expr>)> = Vec::new();
+    for term in &terms {
+        let (delay, rest) = split_delay(term, s)?;
+        match groups.iter_mut().find(|(d, _)| *d == delay) {
+            Some((_, v)) => v.push(rest),
+            None => groups.push((delay, vec![rest])),
+        }
+    }
+    let mut total = Vec::new();
+    for (delay, rests) in groups {
+        let Some(base) = inverse_rational(&Expr::add(rests), s, t)? else { return Ok(None) };
+        if delay.is_zero() {
+            total.push(base);
+            continue;
+        }
+        let shifted = expand(&subs(&base, &[(t.clone(), Expr::add(vec![t.clone(), delay.neg()]))])?)?;
+        let step = Expr::call("Heaviside", vec![Expr::add(vec![t.clone(), delay.neg()])]);
+        let parts = match shifted.kind() {
+            Kind::Add(v) => v.clone(),
+            _ => vec![shifted.clone()],
+        };
+        for p in parts {
+            total.push(if contains_call(&p, "DiracDelta") { p } else { Expr::mul(vec![p, step.clone()]) });
+        }
+    }
+    Ok(Some(expand(&Expr::add(total))?))
+}
+
+fn contains_call(e: &Expr, name: &str) -> bool {
+    matches!(e.kind(), Kind::Call(n, _) if &**n == name) || e.children().iter().any(|c| contains_call(c, name))
+}
+
+/// `(c, rest)` for a term `exp(-c*s) * rest` (`c` zero when there is no such factor).
+fn split_delay(term: &Expr, s: &Expr) -> MathResult<(Expr, Expr)> {
+    let factors = match term.kind() {
+        Kind::Mul(v) => v.clone(),
+        _ => vec![term.clone()],
+    };
+    let (mut delay, mut rest) = (Vec::new(), Vec::new());
+    for f in factors {
+        if let Kind::Pow(b, u) = f.kind()
+            && *b == Expr::e()
+            && u.contains(s)
+            && let Some((k, m)) = linear_in(u, s)?
+            && m.is_zero()
+            && sign_of(&k) != Some(1)
+        {
+            delay.push(k.neg());
+            continue;
+        }
+        rest.push(f);
+    }
+    Ok((expand(&Expr::add(delay))?, Expr::mul(rest)))
+}
+
+fn inverse_rational(f: &Expr, s: &Expr, t: &Expr) -> MathResult<Option<Expr>> {
     let (n, d) = together_deep(f)?;
     let parted = apart(&cancel(&n.div(&d))?, s)?;
     let terms = match parted.kind() {
@@ -161,7 +261,7 @@ pub fn inverse_laplace(f: &Expr, s: &Expr, t: &Expr) -> MathResult<Option<Expr>>
 /// `c / B**m` (with `B` linear, or quadratic over `m <= 8`) or `c * s**p`.
 fn inverse_term(term: &Expr, s: &Expr, t: &Expr) -> MathResult<Option<Expr>> {
     if !term.contains(s) {
-        return Ok(None); // a constant would be a Dirac delta
+        return Ok(Some(Expr::mul(vec![term.clone(), Expr::call("DiracDelta", vec![t.clone()])])));
     }
     // c * s**p with p a negative non-integer: t**(-p - 1)/Gamma(-p).
     let factors = match term.kind() {
