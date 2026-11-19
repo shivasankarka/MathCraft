@@ -437,6 +437,31 @@ impl Array {
         Ok(Value::list(linalg::nullspace(&m)?.iter().map(|v| Array::vector_value(v)).collect::<R<Vec<_>>>()?))
     }
 
+    /// `(reduced row echelon form, [pivot columns])`.
+    pub fn rref(&self) -> R<Value> {
+        let m = self.symbolic("rref", false)?;
+        let (r, pivots) = linalg::rref_form(&m)?;
+        let rows = r.len();
+        let cols = r.first().map_or(0, Vec::len);
+        let flat: Vec<Expr> = r.into_iter().flatten().collect();
+        let matrix = Value::Array(std::sync::Arc::new(Array::from_exprs(DType::Exact, rows, Some(cols), &flat)?));
+        let pivots = Value::list(pivots.into_iter().map(|p| Value::int(i64::try_from(p).unwrap_or(0))).collect());
+        Ok(Value::Tuple(std::sync::Arc::new(vec![matrix, pivots])))
+    }
+
+    /// `(U, [sigma], V)` with `A = U diag(sigma) V^T`, exactly (compact: only the non-zero singular values).
+    pub fn svd(&self) -> R<Value> {
+        let m = self.symbolic("svd", false)?;
+        let (u, sigma, v) = linalg::svd(&m)?;
+        let to_array = |m: linalg::Matrix| -> R<Value> {
+            let rows = m.len();
+            let cols = m.first().map_or(0, Vec::len);
+            let flat: Vec<Expr> = m.into_iter().flatten().collect();
+            Ok(Value::Array(std::sync::Arc::new(Array::from_exprs(DType::Exact, rows, Some(cols), &flat)?)))
+        };
+        Ok(Value::Tuple(std::sync::Arc::new(vec![to_array(u)?, Value::list(sigma.into_iter().map(Value::from_expr).collect()), to_array(v)?])))
+    }
+
     /// `det(A - x*I)`.
     pub fn charpoly(&self, x: &Expr) -> R<Value> {
         let m = self.symbolic("charpoly", true)?;
