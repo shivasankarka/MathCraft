@@ -325,6 +325,11 @@ fn call(tx: &Tx, name: &str, args: &[Expr], st: St) -> Option<Layout> {
             let under = Tx::hcat(vec![expr(tx, x, st.script())?, operator(tx, "\u{2192}", st.script()), expr(tx, a, st.script())?]);
             Some(tx.limit(&under, &operand(tx, f, st)?, st.size))
         }
+        ("polylog", [order, z]) => {
+            let li = tx.text("Li", st.size, Role::Function, false);
+            let index = expr(tx, order, st.script())?;
+            Some(Tx::hcat(vec![tx.sub(&li, &index, st.size), arguments(tx, std::slice::from_ref(z), st)?]))
+        }
         ("factorial", [a]) => {
             let inner = expr(tx, a, st)?;
             let inner = if is_atomic(a) { inner } else { tx.delimited(Delim::Paren, &inner, st.size) };
