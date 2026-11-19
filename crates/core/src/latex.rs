@@ -104,6 +104,10 @@ fn call(name: &str, args: &[Expr]) -> (String, u8) {
         ("Integral", [f, x, lo, hi]) => (format!("\\int_{{{}}}^{{{}}} {}\\,d{}", latex(lo), latex(hi), latex(f), latex(x)), MUL),
         ("Sum", [f, k, lo, hi]) => (format!("\\sum_{{{}={}}}^{{{}}} {}", latex(k), latex(lo), latex(hi), paren(emit(f), MUL)), MUL),
         ("Limit", [f, x, a]) => (format!("\\lim_{{{} \\to {}}} {}", latex(x), latex(a), paren(emit(f), MUL)), MUL),
+        ("Heaviside", [a]) => (format!("\\theta\\left({}\\right)", latex(a)), ATOM),
+        ("DiracDelta", [a]) => (format!("\\delta\\left({}\\right)", latex(a)), ATOM),
+        ("zeta", [a]) => (format!("\\zeta\\left({}\\right)", latex(a)), ATOM),
+        ("polylog", [s, z]) => (format!("\\mathrm{{Li}}_{{{}}}\\left({}\\right)", latex(s), latex(z)), ATOM),
         (n, [a]) if NAMED.iter().any(|(k, _)| *k == n) => {
             let cmd = NAMED.iter().find(|(k, _)| *k == n).map_or(n, |(_, c)| *c);
             (format!("\\{cmd}\\left({}\\right)", latex(a)), ATOM)
@@ -213,6 +217,10 @@ mod tests {
         assert_eq!(latex(&Expr::pow(&Expr::call("sin", vec![x()]), &Expr::int(2))), "\\sin^{2}\\left(x\\right)");
         assert_eq!(latex(&Expr::pow(&Expr::add(vec![x(), Expr::int(1)]), &Expr::int(2))), "\\left(x + 1\\right)^{2}");
         assert_eq!(latex(&Expr::call("asin", vec![x()])), "\\arcsin\\left(x\\right)");
+        assert_eq!(latex(&Expr::call("Heaviside", vec![x()])), "\\theta\\left(x\\right)");
+        assert_eq!(latex(&Expr::call("DiracDelta", vec![x()])), "\\delta\\left(x\\right)");
+        assert_eq!(latex(&Expr::call("zeta", vec![Expr::int(3)])), "\\zeta\\left(3\\right)");
+        assert_eq!(latex(&Expr::call("polylog", vec![Expr::int(2), x()])), "\\mathrm{Li}_{2}\\left(x\\right)");
         assert_eq!(latex(&Expr::call("foo", vec![x(), Expr::int(2)])), "\\operatorname{foo}\\left(x,\\,2\\right)");
     }
 
