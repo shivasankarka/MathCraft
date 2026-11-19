@@ -203,6 +203,30 @@ fn markdown_tables_and_links_render() {
     assert!(app.cur.nb.cells().iter().any(|c| c.source == text));
 }
 
+/// Cmd+F opens the window, which lists matches; the palette jumps to where a name is defined.
+#[test]
+fn find_window_and_go_to_definition() {
+    let ctx = egui::Context::default();
+    let mut app = App::with_context(ctx.clone(), None);
+    app.replace_notebook(Notebook::from_text("# %%\nalpha = 1\n\n# %%\nbeta = alpha + 1\n"), None);
+    app.open_find();
+    if let Some(f) = app.find.as_mut() {
+        f.query.find = "alpha".into();
+    }
+    for _ in 0..3 {
+        frame(&ctx, &mut app);
+    }
+    assert!(app.find.is_some(), "the window stays open");
+    let hits = find::hits(&app.cur.nb, &app.find.as_ref().map(|f| f.query.clone()).unwrap_or_default());
+    assert_eq!(hits.len(), 2);
+
+    let defs: Vec<_> = app.commands(&ctx).into_iter().filter(|i| i.group == "Definition").map(|i| (i.title, i.detail)).collect();
+    assert_eq!(defs, vec![("alpha".to_owned(), "cell 1".to_owned()), ("beta".to_owned(), "cell 2".to_owned())]);
+    let target = app.cur.nb.cells().get(1).map(|c| c.id);
+    app.run_command(Cmd::GoTo(target.unwrap_or_default()), &ctx);
+    assert_eq!(app.cur.focus, target);
+}
+
 #[test]
 fn editing_and_running_through_actions_updates_dependents() {
     let ctx = egui::Context::default();
