@@ -205,6 +205,8 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("norm", "norm(v)", "Euclidean length of a vector"),
     ("eigenvals", "eigenvals(matrix)", "eigenvalues of an exact matrix, repeated by multiplicity"),
     ("eigenvects", "eigenvects(matrix)", "[(eigenvalue, multiplicity, [eigenvectors])] of an exact matrix"),
+    ("rref", "rref(matrix)", "(reduced row echelon form, [pivot columns]) of an exact matrix"),
+    ("svd", "svd(matrix)", "(U, [singular values], V) with matrix == U * diag(s) * V^T, exactly (only the non-zero singular values)"),
     ("nullspace", "nullspace(matrix)", "a basis of the vectors v with matrix @ v == 0"),
     ("charpoly", "charpoly(matrix, x)", "det(matrix - x*I), the characteristic polynomial"),
     ("det", "det(matrix)", "determinant"),
@@ -1259,6 +1261,11 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
                 "transpose" => Ok(Value::Array(Arc::new(arr.transpose()))),
                 _ => Ok(Value::int(i64::try_from(arr.rank()?).unwrap_or(0))),
             }
+        }
+        "rref" | "svd" if matches!(a.pos.first(), Some(Value::Array(_))) => {
+            a.limits(name, 1, 1)?;
+            let Value::Array(arr) = a.get(0)? else { return err("expected a matrix") };
+            if name == "rref" { arr.rref() } else { arr.svd() }
         }
         "eigenvals" | "eigenvects" | "nullspace" | "charpoly" if matches!(a.pos.first(), Some(Value::Array(_))) => {
             let Value::Array(arr) = a.get(0)? else { return err("expected a matrix") };
