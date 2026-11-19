@@ -106,27 +106,27 @@ fn polynomial_times_geometric(f: &Expr, k: &Expr, a: i64) -> MathResult<Option<E
     Ok(Some(expand(&Expr::mul(vec![shift, Expr::add(total)]))?))
 }
 
-/// `pi**(2n)` times a rational: the values of the zeta function at the even integers up to 12.
-fn zeta_even(p: i64) -> Option<Expr> {
-    let (num, den) = match p {
-        2 => (1, 6),
-        4 => (1, 90),
-        6 => (1, 945),
-        8 => (1, 9450),
-        10 => (1, 93555),
-        12 => (691, 638_512_875),
-        _ => return None,
-    };
-    Some(Expr::mul(vec![Expr::rational(num, den)?, Expr::pow(&Expr::pi(), &Expr::int(p))]))
-}
-
 /// `1 + 1/2**p + ... + 1/n**p`.
 fn harmonic(n: i64, p: i64) -> Expr {
     Expr::add((1..=n).map(|j| Expr::pow(&Expr::int(j), &Expr::int(-p))).collect())
 }
 
+/// A term `coef/(slope*k + icept)**p` with an integer `p >= 2` of a partial-fraction expansion.
+fn higher_pole(t: &Expr, k: &Expr) -> MathResult<Option<(Expr, Expr, Expr, i64)>> {
+    let factors: Vec<Expr> = match t.kind() {
+        Kind::Mul(fs) => fs.clone(),
+        _ => vec![t.clone()],
+    };
+    let (with, without): (Vec<Expr>, Vec<Expr>) = factors.into_iter().partition(|g| g.contains(k));
+    let [one] = with.as_slice() else { return Ok(None) };
+    let Kind::Pow(base, e) = one.kind() else { return Ok(None) };
+    let Some(p) = e.as_i64().filter(|e| *e <= -2) else { return Ok(None) };
+    let Some((slope, icept)) = crate::poly::linear_in(base, k)? else { return Ok(None) };
+    Ok(Some((Expr::mul(without), slope, icept, -p)))
+}
+
 /// `sum(f, k = a..oo)` for a rational `f` whose partial fractions are `c/(k + m)**p` with integer `m`: the `p = 1` terms
-/// telescope (their coefficients must add up to zero) and the others give `zeta(p)` (even `p` only) minus a finite sum.
+/// telescope (their coefficients must add up to zero) and the others give `zeta(p)` minus a finite sum.
 fn rational_tail(f: &Expr, k: &Expr, a: i64) -> MathResult<Option<Expr>> {
     let parts = crate::rational::apart(f, k)?;
     let terms: Vec<Expr> = match parts.kind() {
@@ -156,7 +156,7 @@ fn rational_tail(f: &Expr, k: &Expr, a: i64) -> MathResult<Option<Expr>> {
             linear_sum.push(c.clone());
             total.push(Expr::mul(vec![c, harmonic(a + m - 1, 1).neg()]));
         } else {
-            let Some(z) = zeta_even(p) else { return Ok(None) };
+            let z = Expr::call("zeta", vec![Expr::int(p)]);
             total.push(Expr::mul(vec![c, Expr::add(vec![z, harmonic(a + m - 1, p).neg()])]));
         }
     }
@@ -345,6 +345,17 @@ fn power_series(f: &Expr, k: &Expr, a: i64) -> MathResult<Option<Expr>> {
     };
     let (mut polynomial, mut total) = (Vec::new(), Vec::new());
     for t in &terms {
+        if let Some((coef, slope, icept, power)) = higher_pole(t, k)? {
+            // sum z**k/(k + m)**p = z**-m * (polylog(p, z) - sum_{j=1}^{a+m-1} z**j/j**p)
+            let Some(m) = icept.div(&slope).as_i64() else { return Ok(None) };
+            if a + m < 1 || !converges(&z, false) || z.is_one() {
+                return Ok(None);
+            }
+            let head = (1..a + m).map(|j| Expr::pow(&z, &Expr::int(j)).div(&Expr::pow(&Expr::int(j), &Expr::int(power)))).collect::<Vec<_>>();
+            let body = Expr::add(vec![Expr::call("polylog", vec![Expr::int(power), z.clone()]), Expr::add(head).neg()]);
+            total.push(Expr::mul(vec![coef.div(&Expr::pow(&slope, &Expr::int(power))), Expr::pow(&z, &Expr::int(-m)), body]));
+            continue;
+        }
         let Some((coef, slope, icept)) = simple_pole(t, k)? else {
             polynomial.push(t.clone());
             continue;
@@ -468,6 +479,38 @@ fn recip(e: &Expr) -> Expr {
     Expr::pow(e, &Expr::int(-1))
 }
 
+/// `prod(f for k in a..oo)`: `1 + c/k**2` through `sinh(pi w)/(pi w)` (`sin` for a negative `c = -w**2`), and any
+/// other factor ratio through the limit of the finite closed form (a telescoping product such as `1 - 1/k**2`).
+fn infinite_product(f: &Expr, k: &Expr, a: &Expr) -> MathResult<Option<Expr>> {
+    let Some(start) = a.as_i64().filter(|a| *a >= 1) else { return Ok(None) };
+    let (n, d) = crate::rational::together(f)?;
+    if let (Some(np), Some(dp)) = (to_poly(&n, k)?, to_poly(&d, k)?)
+        && let ([c, mid, p], [z0, z1, d0]) = (np.as_slice(), dp.as_slice())
+        && mid.is_zero()
+        && z0.is_zero()
+        && z1.is_zero()
+        && is_zero_expr(&Expr::add(vec![p.clone(), d0.neg()]))?
+        && !p.is_zero()
+    {
+        // (p k**2 + c)/(p k**2) = 1 + (c/p)/k**2
+        let ct = c.div(p);
+        let (w, trig) = series_root(&ct);
+        let pw = Expr::mul(vec![Expr::pi(), w.clone()]);
+        let func = Expr::call(if trig { "sin" } else { "sinh" }, vec![pw.clone()]);
+        let full = func.div(&pw);
+        let head = (1..start).map(|j| Expr::add(vec![Expr::one(), ct.div(&Expr::int(j * j))])).collect::<Vec<_>>();
+        // a zero factor in the skipped head (`1 - 1/k**2` from k = 2) makes this a 0/0: the limit below handles it
+        let degenerate = head.iter().any(|h| h.is_zero());
+        if !degenerate {
+            return Ok(Some(expand(&full.div(&Expr::mul(head)))?));
+        }
+    }
+    let n_sym = Expr::sym("_n");
+    let Some(finite) = product(f, k, a, &n_sym)? else { return Ok(None) };
+    let Ok(v) = crate::limits::limit(&finite, &n_sym, &Expr::infinity()) else { return Ok(None) };
+    Ok((!crate::util::has_singularity(&v) && v != Expr::infinity() && v != Expr::infinity().neg()).then_some(v))
+}
+
 /// `prod(f for k in a..=b)`, or `None` when no closed form is known. Numeric bounds multiply directly; otherwise `f` is
 /// factored and each factor is a constant, a power with exponent linear in `k`, or a power of a linear factor
 /// `(s*k + t)`, whose product is a ratio of Gamma functions.
@@ -487,7 +530,7 @@ pub fn product(f: &Expr, k: &Expr, a: &Expr, b: &Expr) -> MathResult<Option<Expr
         }
     }
     if *b == Expr::infinity() {
-        return Ok(None);
+        return infinite_product(f, k, a);
     }
     let count = Expr::add(vec![b.clone(), a.neg(), Expr::one()]);
     let factored = crate::poly::factor(f)?;
