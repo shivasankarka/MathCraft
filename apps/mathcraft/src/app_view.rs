@@ -208,6 +208,7 @@ impl App {
         self.help_window(ctx, &theme);
         self.symbols_window(ctx, &theme);
         self.changes_window(ctx, &theme);
+        self.find_window(ctx, &theme);
         if self.palette.open {
             let items = self.commands(ctx);
             let mut state = std::mem::take(&mut self.palette);
