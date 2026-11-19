@@ -250,6 +250,64 @@ fn find_in_line(c: &[char], i: usize, kind: char, target: char, count: usize) ->
     Some((landed, forward))
 }
 
+/// The bracket that pairs with the first one at or after `cur` on its line (`%`).
+fn match_bracket(c: &[char], cur: usize) -> Option<usize> {
+    let i = (cur..line_end(c, cur)).find(|i| matches!(at(c, *i), Some('(' | ')' | '[' | ']' | '{' | '}')))?;
+    let (open, close, forward) = match at(c, i)? {
+        '(' => ('(', ')', true),
+        ')' => ('(', ')', false),
+        '[' => ('[', ']', true),
+        ']' => ('[', ']', false),
+        '{' => ('{', '}', true),
+        _ => ('{', '}', false),
+    };
+    let mut depth = 0usize;
+    let mut step = |j: usize| -> Option<usize> {
+        let ch = at(c, j)?;
+        let (same, other) = if forward { (open, close) } else { (close, open) };
+        if ch == same {
+            depth += 1;
+        } else if ch == other {
+            if depth == 0 {
+                return Some(j);
+            }
+            depth -= 1;
+        }
+        None
+    };
+    if forward { (i + 1..c.len()).find_map(&mut step) } else { (0..i).rev().find_map(&mut step) }
+}
+
+/// Whether line number `n` is empty (paragraphs are separated by empty lines).
+fn blank_line(c: &[char], n: usize) -> bool {
+    let s = start_of_line_number(c, n);
+    line_end(c, s) == s
+}
+
+/// The start of the line `count` paragraphs on (`}`) or back (`{`): an empty line, or the end of the text.
+fn paragraph(c: &[char], cur: usize, forward: bool, count: usize) -> usize {
+    let total = line_count(c);
+    let mut line = line_number(c, cur);
+    for _ in 0..count {
+        if forward {
+            while line < total && blank_line(c, line) {
+                line += 1;
+            }
+            while line < total && !blank_line(c, line) {
+                line += 1;
+            }
+        } else {
+            while line > 0 && blank_line(c, line) {
+                line -= 1;
+            }
+            while line > 0 && !blank_line(c, line) {
+                line -= 1;
+            }
+        }
+    }
+    if line >= total { c.len() } else { start_of_line_number(c, line) }
+}
+
 fn text_of(c: &[char], a: usize, b: usize) -> String {
     c.iter().skip(a).take(b.saturating_sub(a)).collect()
 }
@@ -678,6 +736,8 @@ impl Vim {
                 let to = first_nonblank(&st.chars, start_of_line_number(&st.chars, line.min(line_count(&st.chars) - 1)));
                 Some(Motion { to, inclusive: false, linewise: true })
             }
+            '%' => match_bracket(&st.chars, st.cur).map(|to| Motion { to, inclusive: true, linewise: false }),
+            '}' | '{' => Some(Motion { to: paragraph(&st.chars, st.cur, c == '}', n), inclusive: false, linewise: false }),
             'n' | 'N' => search_from(&st.chars, st.cur, &self.search, c == 'n').map(|to| Motion { to, inclusive: false, linewise: false }),
             _ => None,
         };
@@ -1170,6 +1230,31 @@ mod tests {
         assert_eq!(text("x = [1, 2]", 6, "yi[$p"), "x = [1, 2]1, 2");
         assert_eq!(text("a (b c) d", 4, "vi(d"), "a () d");
         assert_eq!(text("no pair here", 3, "di("), "no pair here");
+    }
+
+    #[test]
+    fn percent_jumps_between_brackets() {
+        let cursor = |t: &str, cur: usize, keys: &str| run(t, cur, keys).1;
+        assert_eq!(cursor("f(a, (b))", 1, "%"), 8);
+        assert_eq!(cursor("f(a, (b))", 8, "%"), 1);
+        assert_eq!(cursor("x = [1, 2]", 0, "%"), 9, "finds the first bracket on the line");
+        assert_eq!(cursor("no brackets", 2, "%"), 2);
+        assert_eq!(cursor("f(a, b", 1, "%"), 1, "no partner");
+        assert_eq!(text("f(a, b) + 1", 1, "d%"), "f + 1");
+        assert_eq!(text("a {b} c", 2, "v%d"), "a  c");
+    }
+
+    #[test]
+    fn braces_move_by_paragraph() {
+        let t = "one\ntwo\n\nthree\nfour\n\nfive";
+        let cursor = |cur: usize, keys: &str| run(t, cur, keys).1;
+        assert_eq!(cursor(0, "}"), 8, "to the empty line");
+        assert_eq!(cursor(0, "2}"), 20);
+        assert_eq!(cursor(0, "3}"), t.chars().count() - 1, "past the last paragraph: the last character");
+        assert_eq!(cursor(12, "{"), 8);
+        assert_eq!(cursor(23, "{"), 20);
+        assert_eq!(cursor(23, "2{"), 8);
+        assert_eq!(text(t, 0, "d}"), "\nthree\nfour\n\nfive");
     }
 
     #[test]
