@@ -189,6 +189,20 @@ fn bundled_examples_open_and_run() {
     assert_eq!(labels.len(), examples::EXAMPLES.len());
 }
 
+/// Text cells with a table, links, struck text and inline math draw without trouble.
+#[test]
+fn markdown_tables_and_links_render() {
+    let ctx = egui::Context::default();
+    let mut app = App::with_context(ctx.clone(), None);
+    let text =
+        "# Notes\n\n| f | F |\n|---|---|\n| $x^2$ | **big** |\n| plain | [site](https://example.org) |\n\nSee ~~old~~ [docs](https://example.org) and $y$.";
+    app.cur.nb.add_cell(None, CellKind::Markdown, text);
+    for _ in 0..3 {
+        frame(&ctx, &mut app);
+    }
+    assert!(app.cur.nb.cells().iter().any(|c| c.source == text));
+}
+
 #[test]
 fn editing_and_running_through_actions_updates_dependents() {
     let ctx = egui::Context::default();
