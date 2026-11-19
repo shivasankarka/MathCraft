@@ -113,6 +113,13 @@ impl App {
         self.status = "New notebook".into();
     }
 
+    /// Open a bundled example as an untitled notebook and run it.
+    pub(crate) fn open_example(&mut self, index: usize) {
+        let Some((name, _, text)) = examples::EXAMPLES.get(index) else { return };
+        self.open_in_tab(Notebook::from_text(text), None);
+        self.status = format!("Opened the example \"{name}\"");
+    }
+
     pub(crate) fn open_file(&mut self) {
         let Some(p) = rfd::FileDialog::new().add_filter("MathCraft notebook or script", &["py", "txt"]).pick_file() else { return };
         self.open_path(p);
