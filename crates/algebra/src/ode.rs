@@ -5,7 +5,7 @@
 //! classified on those, and the solution is returned as `y(x) == ...` with arbitrary constants `C1`, `C2`, ...
 
 use crate::calculus::{diff, integrate};
-use crate::complex::parts;
+use crate::complex::{parts, rewrite_exp, rewrite_trig};
 use crate::expand::expand;
 use crate::poly::{factor, to_poly};
 use crate::simplify::simplify;
@@ -308,7 +308,21 @@ fn constant_coefficients(a: &[Expr], g: &Expr, x: &Expr) -> MathResult<Vec<Expr>
     if !is_zero_expr(g)? {
         parts_sum.push(particular(a, g, &basis, x)?);
     }
-    Ok(vec![simplify(&expand(&Expr::add(parts_sum))?)?])
+    let solution = simplify(&expand(&Expr::add(parts_sum))?)?;
+    Ok(vec![linearize_trig(&solution)])
+}
+
+/// Products and powers of sines and cosines as a sum of single sines and cosines: `sin(t)*cos(2*t)` becomes
+/// `sin(3*t)/2 - sin(t)/2`. Goes through complex exponentials; the original is kept when anything is left over.
+fn linearize_trig(e: &Expr) -> Expr {
+    if !crate::laplace::has_trig(e) {
+        return e.clone();
+    }
+    let linear = rewrite_exp(e).and_then(|x| expand(&x)).and_then(|x| rewrite_trig(&x)).and_then(|x| expand(&x));
+    match linear {
+        Ok(l) if !l.contains(&Expr::imag()) => l,
+        _ => e.clone(),
+    }
 }
 
 /// The functions `x^j e^(a x)`, and `x^j e^(a x) cos(b x)`, `... sin(b x)` for a conjugate pair `a ± b I`.
