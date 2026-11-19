@@ -5,8 +5,29 @@ use crate::number::Num;
 use dashu::integer::IBig;
 
 const UNARY: &[&str] = &[
-    "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "erf", "erfi", "Gamma", "LambertW", "Si", "Ci", "Ei",
-    "erfc", "log", "abs",
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "sinh",
+    "cosh",
+    "tanh",
+    "asinh",
+    "acosh",
+    "atanh",
+    "erf",
+    "erfi",
+    "Gamma",
+    "LambertW",
+    "Si",
+    "Ci",
+    "Ei",
+    "erfc",
+    "log",
+    "abs",
+    "Heaviside",
 ];
 
 pub fn is_builtin_function(name: &str) -> bool {
@@ -18,9 +39,27 @@ pub(crate) fn apply(name: &str, args: Vec<Expr>) -> Expr {
         ("sqrt", [x]) => Expr::pow(x, &Expr::half()),
         ("erfc", [x]) => Expr::add(vec![Expr::one(), unary("erf", x).neg()]),
         ("exp", [x]) => Expr::pow(&Expr::e(), x),
+        ("DiracDelta", [x]) => dirac_delta(x),
         (_, [x]) if UNARY.contains(&name) => unary(name, x),
         _ => Expr::raw_call(name, args),
     }
+}
+
+/// `DiracDelta(x)`: zero away from the origin, even, and otherwise left as a call.
+fn dirac_delta(x: &Expr) -> Expr {
+    if let Some(n) = x.as_num() {
+        if n.is_exact() && !n.is_zero() {
+            return Expr::zero();
+        }
+        if !n.is_exact() && n.to_f64() != 0.0 {
+            return Expr::zero();
+        }
+    }
+    let (c, rest) = x.split_coeff();
+    if c.is_negative() && !rest.is_one() {
+        return dirac_delta(&Expr::mul(vec![Expr::num(c.neg()), rest]));
+    }
+    Expr::raw_call("DiracDelta", vec![x.clone()])
 }
 
 #[derive(PartialEq)]
@@ -63,6 +102,15 @@ pub fn f64_unary(name: &str, v: f64) -> Option<f64> {
         "erfc" => 1.0 - erf(v),
         "log" => v.ln(),
         "abs" => v.abs(),
+        "Heaviside" => {
+            if v == 0.0 {
+                0.5
+            } else if v > 0.0 {
+                1.0
+            } else {
+                0.0
+            }
+        }
         _ => return None,
     };
     (!r.is_nan()).then_some(r)
@@ -499,6 +547,13 @@ fn exact_value(name: &str, n: &Num) -> Option<Expr> {
             Some(Expr::mul(vec![Expr::rational(s, 6)?, Expr::pi()]))
         }
         "Gamma" => gamma_exact(n),
+        "Heaviside" => Some(if zero {
+            Expr::half()
+        } else if n.is_negative() {
+            Expr::zero()
+        } else {
+            Expr::one()
+        }),
         "LambertW" if zero => Some(Expr::zero()),
         "abs" => Some(Expr::num(if n.is_negative() { n.neg() } else { n.clone() })),
         // log of a negative number: log(|n|) + I*pi
