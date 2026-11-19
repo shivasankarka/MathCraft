@@ -941,10 +941,8 @@ fn half_angle_integrals() {
     assert_eq!(ev("integrate(1/(2+cos(x)), x)"), "2*sqrt(3)*atan(sqrt(3)*tan(x/2)/3)/3");
     assert_eq!(ev("integrate(1/(2+cos(x)), (x, 0, pi/2))"), "pi*sqrt(3)/9");
     // across the jump of tan(x/2) the answer must still be the full integral, 2*pi/sqrt(3)
-    for src in ["integrate(1/(2+cos(x)), (x, 0, 2*pi))", "integrate(1/(2+cos(x)), (x, -pi, pi))"] {
-        let v: f64 = ev(src).parse().unwrap();
-        assert!((v - 3.627_598_728_468_436).abs() < 1e-9, "{src} gave {v}");
-    }
+    assert_eq!(ev("integrate(1/(2+cos(x)), (x, 0, 2*pi))"), "2*pi*sqrt(3)/3");
+    assert_eq!(ev("integrate(1/(2+cos(x)), (x, -pi, pi))"), "2*pi*sqrt(3)/3");
 }
 
 #[test]
@@ -1034,4 +1032,21 @@ fn rref_and_svd() {
     // irrational eigenvalues: the null space of A - lambda*I needs radicals to cancel
     assert_eq!(ev("len(eigenvects(matrix([[10, 14], [14, 20]]))[0][2])"), "1");
     assert_eq!(ev("N(svd(matrix([[1, 2], [3, 4]]))[1][0])"), "5.464985704219043");
+}
+
+#[test]
+fn exact_full_period_and_abs_integrals() {
+    assert_eq!(ev("integrate(1/(2 + cos(x)), (x, 0, 2*pi))"), "2*pi*sqrt(3)/3");
+    assert_eq!(ev("integrate(1/(5 + 3*cos(x)), (x, 0, 2*pi))"), "pi/2");
+    assert_eq!(ev("integrate(1/(3 + cos(x)), (x, -pi, pi))"), "pi*sqrt(2)/2");
+    assert_eq!(ev("integrate(1/(2 + cos(x)), (x, 0, pi))"), "pi*sqrt(3)/3");
+    assert_eq!(ev("limit(atan(tan(x/2)/sqrt(3)), x, pi, '-')"), "pi/2");
+    assert_eq!(ev("limit(-3*atan(tan(x/2)), x, pi, '+')"), "3*pi/2");
+    assert_eq!(ev("integrate(1/sqrt(abs(x)), (x, -1, 1))"), "4");
+    assert_eq!(ev("integrate(1/sqrt(abs(x)), (x, 1, -1))"), "-4");
+    assert_eq!(ev("integrate(sqrt(abs(x)), (x, -1, 2))"), "4*sqrt(2)/3 + 2/3");
+    assert_eq!(ev("integrate(exp(-abs(x)), (x, -oo, oo))"), "2");
+    assert!(ev("integrate(1/abs(x), (x, -1, 1))").contains("diverges"));
+    assert_eq!(ev("solve(tan(x) > 1, x)"), "(n*pi + pi/4, n*pi + pi/2)");
+    assert_eq!(ev("solve(sin(x)**2 > 1/2, x)"), "(n*pi + pi/4, n*pi + 3*pi/4)");
 }
