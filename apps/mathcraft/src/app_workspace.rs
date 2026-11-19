@@ -100,4 +100,28 @@ impl App {
             Err(e) => self.status = format!("Could not save: {e}"),
         }
     }
+
+    /// Write the notebook, with its results, as one HTML page.
+    pub(crate) fn export_html(&mut self) {
+        let name = self
+            .cur
+            .path
+            .as_ref()
+            .map(|p| p.with_extension("html"))
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "notebook.html".into());
+        let mut dialog = rfd::FileDialog::new().add_filter("HTML page", &["html"]).set_file_name(&name);
+        if let Some(dir) = self.cur.path.as_ref().and_then(|p| p.parent()) {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(path) = dialog.save_file() else {
+            self.status = "Export cancelled".into();
+            return;
+        };
+        let title = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Notebook".into());
+        self.status = match std::fs::write(&path, export_html::notebook_html(&self.cur.nb, &title)) {
+            Ok(()) => format!("Exported {}", file_name(&path)),
+            Err(e) => format!("Could not export: {e}"),
+        };
+    }
 }
