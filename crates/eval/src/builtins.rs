@@ -176,6 +176,8 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("maximize", "maximize(f, (x, a, b))", "[x, f(x)] at the highest point of f on [a, b]"),
     ("nsolve", "nsolve(eq, x, guess)", "numeric root near a starting guess (Newton's method)"),
     ("apart", "apart(f, x)", "partial fractions of a rational function"),
+    ("laplace", "laplace(f, t, s=s)", "Laplace transform of sums of t**n, exp, sin, cos, sinh and cosh terms"),
+    ("inverse_laplace", "inverse_laplace(F, s, t=t)", "inverse Laplace transform of a rational function of s"),
     ("series", "series(f, x, x0=0, n=6)", "Taylor polynomial up to order n"),
     (
         "solve",
@@ -240,6 +242,8 @@ const METHODS: &[&str] = &[
     "integrate",
     "limit",
     "apart",
+    "laplace",
+    "inverse_laplace",
     "nroots",
     "nintegrate",
     "fzero",
@@ -1172,6 +1176,21 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
                 None => only_symbol(&e, "apart")?,
             };
             it.checked(alg::apart(&e, &x)?)
+        }
+        "laplace" | "inverse_laplace" => {
+            a.limits(name, 2, 3)?;
+            let e = a.expr(0)?;
+            let to = if name == "laplace" { "s" } else { "t" };
+            let x = as_symbol(a.pos.get(1).ok_or_else(|| EvalError::new(format!("{name}: name the variable")))?)?;
+            let y = match a.pos.get(2) {
+                Some(v) => as_symbol(v)?,
+                None => Expr::sym(to),
+            };
+            let found = if name == "laplace" { alg::laplace(&e, &x, &y)? } else { alg::inverse_laplace(&e, &x, &y)? };
+            match found {
+                Some(r) => it.checked(r),
+                None => err(format!("no closed form found for this {name}")),
+            }
         }
         "series" => {
             if a.pos.len() < 2 || a.pos.len() > 4 {
