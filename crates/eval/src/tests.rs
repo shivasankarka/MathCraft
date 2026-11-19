@@ -1024,3 +1024,14 @@ fn laplace_dsolve() {
     );
     assert!(ev("y = symbols('y'); dsolve(diff(y(t), t, 2) + 4*y(t) == t*cos(2*t), y(t))").starts_with("y(t) =="));
 }
+
+#[test]
+fn rref_and_svd() {
+    assert_eq!(ev("rref(matrix([[1, 2, 3], [4, 5, 6], [7, 8, 9]]))"), "(matrix([[1, 0, -1], [0, 1, 2], [0, 0, 0]]), [0, 1])");
+    assert_eq!(ev("svd(matrix([[3, 0], [0, 4]]))"), "(matrix([[0, 1], [1, 0]]), [4, 3], matrix([[0, 1], [1, 0]]))");
+    assert_eq!(ev("svd(matrix([[1, 1], [1, 1]]))"), "(matrix([[sqrt(2)/2], [sqrt(2)/2]]), [2], matrix([[sqrt(2)/2], [sqrt(2)/2]]))");
+    assert_eq!(ev("svd(matrix([[2, 0], [0, 2], [0, 0]]))"), "(matrix([[1, 0], [0, 1], [0, 0]]), [2, 2], matrix([[1, 0], [0, 1]]))");
+    // irrational eigenvalues: the null space of A - lambda*I needs radicals to cancel
+    assert_eq!(ev("len(eigenvects(matrix([[10, 14], [14, 20]]))[0][2])"), "1");
+    assert_eq!(ev("N(svd(matrix([[1, 2], [3, 4]]))[1][0])"), "5.464985704219043");
+}
