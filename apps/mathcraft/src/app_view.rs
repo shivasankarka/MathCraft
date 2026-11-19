@@ -162,7 +162,8 @@ impl App {
             });
         } else {
             egui::CentralPanel::default().frame(egui::Frame::new().fill(theme.bg)).show(root, |ui| {
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                // one scroll position per tab, so switching tabs does not carry the offset over
+                egui::ScrollArea::vertical().id_salt(("notebook-scroll", self.cur.id)).auto_shrink([false, false]).show(ui, |ui| {
                     let side = ((ui.available_width() - COLUMN) / 2.0).max(16.0);
                     ui.add_space(14.0);
                     ui.horizontal_top(|ui| {
