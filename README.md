@@ -112,7 +112,8 @@ them with `x, y = symbols('x y')`, or turn on *Strict* in Settings to require it
 - **Command line:** `mathcraft-cli eval 'integrate(sin(x)**2, (x, 0, pi))'`, `run`, `check`, and
   `export notebook.py -o notebook.html` (also Markdown).
 - **For AI tools:** `mathcraft-cli mcp` runs an MCP server so an AI assistant can evaluate expressions and check notebooks.
-- **Editing:** optional Vim keys (Settings), a Text view of the whole file, tabs, a folder sidebar, light and dark themes.
+- **Editing:** optional Vim keys (Settings), a Text view of the whole file, tabs, a folder sidebar, find and replace across cells (Cmd+F), light and dark themes.
+- **Sharing:** File > Export as HTML writes the notebook with its results, typeset maths and plots as one page; File > Open example opens the bundled notebooks.
 
 ## Phones and the browser
 
