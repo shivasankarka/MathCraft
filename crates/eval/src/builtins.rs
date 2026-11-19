@@ -108,6 +108,8 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("acosh", "acosh(x)", "inverse hyperbolic cosine"),
     ("atanh", "atanh(x)", "inverse hyperbolic tangent"),
     ("erf", "erf(x)", "error function, 2/sqrt(pi) times the integral of exp(-t**2) from 0 to x"),
+    ("Heaviside", "Heaviside(x)", "the unit step: 0 for x < 0, 1 for x > 0 (1/2 at 0); its derivative is DiracDelta"),
+    ("DiracDelta", "DiracDelta(x)", "the Dirac delta, zero except at the origin; laplace and fourier know it"),
     ("erfi", "erfi(x)", "imaginary error function, -I*erf(I*x); the integral of exp(x**2) is sqrt(pi)*erfi(x)/2"),
     ("LambertW", "LambertW(x)", "the Lambert W function, the inverse of w*exp(w) (principal branch)"),
     ("Si", "Si(x)", "the sine integral, the integral of sin(t)/t from 0 to x"),
@@ -789,7 +791,7 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             check_depth(it, out)
         }
         "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh" | "erf" | "erfi" | "Gamma" | "LambertW"
-        | "Si" | "Ci" | "Ei" | "erfc" | "exp" | "sqrt" => unary_math(name, &a, it),
+        | "Si" | "Ci" | "Ei" | "erfc" | "exp" | "sqrt" | "Heaviside" | "DiracDelta" => unary_math(name, &a, it),
         "sec" | "csc" | "cot" => {
             a.limits(name, 1, 1)?;
             let (num, den) = match name {
