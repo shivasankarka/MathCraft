@@ -12,6 +12,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - A definite integral with `abs(u)` for linear `u` is split where `u` changes sign: `integrate(1/sqrt(abs(x)), (x, -1, 1))` is `4` (it used to fail), `integrate(exp(-abs(x)), (x, -oo, oo))` is `2`.
 - Trigonometric inequalities use the smallest period: `solve(tan(x) > 1, x)` is `(n*pi + pi/4, n*pi + pi/2)` instead of two intervals per `2*pi`.
 - The tutorial notebook and the README cover the series sums, `product`, the transforms, `dsolve` systems, `rref` and `svd`, and their "does not work yet" lists are updated.
+- New `Heaviside(x)` (the unit step, 1/2 at 0, derivative `DiracDelta`) and `DiracDelta(x)`. `laplace` handles `Heaviside(t - c)` (the second shift rule) and `DiracDelta(t - c)` (sifting), and `inverse_laplace` turns a factor `exp(-c*s)` into a delay: `inverse_laplace(exp(-s)/(s**2 + 1), s)` is `Heaviside(t - 1)*sin(t - 1)`, a constant becomes `DiracDelta(t)`. So `dsolve` takes step and impulse forcing: `y' + 2*y == DiracDelta(t - 1)` with `ics=[0]` is `exp(-2*t + 2)*Heaviside(t - 1)`. `fourier` knows `DiracDelta(k*t + m)`.
 
 ## 0.4.0 (2026-11-15)
 
