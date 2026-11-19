@@ -98,7 +98,7 @@ fn exponential_pieces(term: &Expr, t: &Expr, s: &Expr) -> MathResult<Option<Expr
     Ok(Some(cancel(&Expr::add(total))?))
 }
 
-fn has_trig(e: &Expr) -> bool {
+pub(crate) fn has_trig(e: &Expr) -> bool {
     matches!(e.kind(), Kind::Call(n, _) if is_trig(n)) || e.children().iter().any(has_trig)
 }
 
