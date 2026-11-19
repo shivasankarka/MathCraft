@@ -5,6 +5,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 ## Unreleased
 
 - New `laplace(f, t, s=s)` and `inverse_laplace(F, s, t=t)`. The forward transform covers sums of `c*t**n*exp(a*t)*trig(w*t)` (`sin`, `cos`, `sinh`, `cosh`), powers `t**p` and products or powers of trig functions: `laplace(t**2*exp(-3*t), t)` is `2/(s + 3)**3`, `laplace(sin(t)**2, t)` is `2/(s**3 + 4*s)`. The inverse goes through partial fractions: linear factors to any power, irreducible quadratics up to the square (`inverse_laplace(1/(s**2 + 2*s + 5), s)` is `exp(-t)*sin(2*t)/2`), and `s**p` (`1/sqrt(s)` is `1/(sqrt(pi)*sqrt(t))`).
+- New `fourier(f, t, w=w)` and `inverse_fourier(F, w, t=t)` (convention `integral f(t) exp(-I*w*t) dt`): Gaussians `exp(a*t**2 + b*t + c)`, `exp(-a*abs(t))` and `1/(t**2 + a**2)`, with a polynomial factor in `t` and sums of these. `fourier(exp(-t**2), t)` is `sqrt(pi)*exp(-w**2/4)`, `fourier(1/(t**2 + 4), t)` is `pi*exp(-2*abs(w))/2`.
 
 ## 0.4.0 (2026-11-15)
 
