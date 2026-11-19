@@ -1050,3 +1050,24 @@ fn exact_full_period_and_abs_integrals() {
     assert_eq!(ev("solve(tan(x) > 1, x)"), "(n*pi + pi/4, n*pi + pi/2)");
     assert_eq!(ev("solve(sin(x)**2 > 1/2, x)"), "(n*pi + pi/4, n*pi + 3*pi/4)");
 }
+
+#[test]
+fn step_and_delta() {
+    assert_eq!(ev("Heaviside(2)"), "1");
+    assert_eq!(ev("Heaviside(-1)"), "0");
+    assert_eq!(ev("diff(Heaviside(t - 1), t)"), "DiracDelta(t - 1)");
+    assert_eq!(ev("DiracDelta(2)"), "0");
+    assert_eq!(ev("DiracDelta(-t)"), "DiracDelta(t)");
+    assert_eq!(ev("laplace(Heaviside(t - 2), t)"), "exp(-2*s)/s");
+    assert_eq!(ev("laplace((t - 1)*Heaviside(t - 1), t)"), "exp(-s)/s**2");
+    assert_eq!(ev("laplace(DiracDelta(t - 3), t)"), "exp(-3*s)");
+    assert_eq!(ev("inverse_laplace(exp(-s)/(s**2 + 1), s)"), "Heaviside(t - 1)*sin(t - 1)");
+    assert_eq!(ev("inverse_laplace((1 - exp(-s))/s, s)"), "-Heaviside(t - 1) + 1");
+    assert_eq!(ev("inverse_laplace(1 + 2*exp(-3*s), s)"), "DiracDelta(t) + 2*DiracDelta(t - 3)");
+    assert_eq!(ev("fourier(DiracDelta(t - 2), t)"), "exp(-2*I*w)");
+    assert_eq!(ev("y = symbols('y'); dsolve(diff(y(t), t) + 2*y(t) == DiracDelta(t - 1), y(t), ics=[0])"), "y(t) == exp(-2*t + 2)*Heaviside(t - 1)");
+    assert_eq!(
+        ev("y = symbols('y'); dsolve(diff(y(t), t, 2) + y(t) == Heaviside(t - 1), y(t), ics=[0, 0])"),
+        "y(t) == -Heaviside(t - 1)*cos(t - 1) + Heaviside(t - 1)"
+    );
+}
