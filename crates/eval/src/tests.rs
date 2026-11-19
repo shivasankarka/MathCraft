@@ -993,3 +993,13 @@ fn laplace_transforms() {
     assert_eq!(ev("inverse_laplace(1/(s - 1)**3, s)"), "t**2*exp(t)/2");
     assert_eq!(ev("inverse_laplace(1/(s**2 + a**2), s)"), "sin(a*t)/a");
 }
+
+#[test]
+fn fourier_transforms() {
+    assert_eq!(ev("fourier(exp(-t**2), t)"), "sqrt(pi)*exp(-w**2/4)");
+    assert_eq!(ev("fourier(exp(-2*abs(t)), t)"), "4/(w**2 + 4)");
+    assert_eq!(ev("fourier(1/(t**2 + 4), t)"), "pi*exp(-2*abs(w))/2");
+    assert_eq!(ev("fourier(t*exp(-t**2), t)"), "-I*sqrt(pi)*w*exp(-w**2/4)/2");
+    assert_eq!(ev("fourier(exp(-a*t**2), t)"), "exp(-w**2/(4*a))*sqrt(pi/a)");
+    assert_eq!(ev("inverse_fourier(1/(w**2 + 1), w)"), "exp(-abs(t))/2");
+}
