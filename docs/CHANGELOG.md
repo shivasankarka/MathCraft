@@ -2,6 +2,10 @@
 
 User-facing changes per version. Planning notes and status live in `refs/` (not tracked).
 
+## Unreleased
+
+- New `laplace(f, t, s=s)` and `inverse_laplace(F, s, t=t)`. The forward transform covers sums of `c*t**n*exp(a*t)*trig(w*t)` (`sin`, `cos`, `sinh`, `cosh`), powers `t**p` and products or powers of trig functions: `laplace(t**2*exp(-3*t), t)` is `2/(s + 3)**3`, `laplace(sin(t)**2, t)` is `2/(s**3 + 4*s)`. The inverse goes through partial fractions: linear factors to any power, irreducible quadratics up to the square (`inverse_laplace(1/(s**2 + 2*s + 5), s)` is `exp(-t)*sin(2*t)/2`), and `s**p` (`1/sqrt(s)` is `1/(sqrt(pi)*sqrt(t))`).
+
 ## 0.4.0 (2026-11-15)
 
 - Sums recognise the classic power series: `summation(x**k/factorial(k), (k, 0, oo))` is `exp(x)`, with a polynomial factor in `k` (`k**2*x**k/factorial(k)` is `x**2*exp(x) + x*exp(x)`), and likewise `sin`, `cos`, `sinh`, `cosh` (`x**(2*k+1)/factorial(2*k+1)` and friends), `-log(1 - x)` for `x**k/k`, and `atan`/`atanh` for `x**(2*k+1)/(2*k+1)`. So `summation((-1)**k/k, (k, 1, oo))` is `-log(2)`, `summation((-1)**k/(2*k+1), (k, 0, oo))` is `pi/4`, and `summation(1/(k*(k+1)*2**k), (k, 1, oo))` is `1 - log(2)`. A symbolic ratio is taken to converge; a numeric one outside the radius is refused. Fractions that telescope also sum to a symbolic end: `summation(1/(k*(k+1)), (k, 1, n))` is `1 - 1/(n + 1)`.
