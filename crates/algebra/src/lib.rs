@@ -9,6 +9,7 @@ mod calculus;
 mod complex;
 mod expand;
 mod extension;
+mod fourier;
 mod inequality;
 mod laplace;
 mod limits;
@@ -42,6 +43,7 @@ pub fn poly_lcm(a: &mathcraft_core::Expr, b: &mathcraft_core::Expr) -> mathcraft
     sparse::lcm(a, b)
 }
 
+pub use fourier::{fourier, inverse_fourier};
 pub use inequality::solve_inequality;
 pub use laplace::{inverse_laplace, laplace};
 pub use limits::{Side, limit, limit_side};
