@@ -46,6 +46,9 @@ impl App {
         for p in self.recent.iter().filter(|p| p.is_file()) {
             v.push(item("Recent", &file_name(p), p.parent().map(|d| d.display().to_string()).unwrap_or_default(), Cmd::File(p.clone())));
         }
+        for (i, (name, about, _)) in examples::EXAMPLES.iter().enumerate() {
+            v.push(item("Example", name, (*about).to_owned(), Cmd::Example(i)));
+        }
         if self.folder.is_some() {
             v.push(item("File", "New notebook in the folder", String::new(), Cmd::NewInFolder));
         }
@@ -113,6 +116,7 @@ impl App {
             Cmd::NewInFolder => self.new_in_folder(),
             Cmd::Tab(id) => self.select_tab(id),
             Cmd::File(p) => self.open_path(p),
+            Cmd::Example(i) => self.open_example(i),
             Cmd::Help(name) => {
                 self.help_filter = name;
                 self.show_help = true;
