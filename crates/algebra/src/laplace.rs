@@ -4,14 +4,17 @@
 //! `inverse_laplace` goes the other way for rational functions (partial fractions, quadratics up to the square)
 //! and for powers `s**p`.
 
-use crate::calculus::diff_n;
+use crate::calculus::{diff, diff_n};
 use crate::complex::rewrite_exp;
 use crate::expand::expand;
 use crate::poly::{factor, linear_in, to_poly};
-use crate::rational::{apart, cancel};
+use crate::rational::{apart, cancel, together_deep};
 use crate::simplify::simplify;
 use crate::util::{guard, require_symbol, sign_of, split_fraction};
 use mathcraft_core::{Expr, Kind, MathResult};
+
+/// The highest power of an irreducible quadratic that `inverse_laplace` inverts.
+const MAX_QUADRATIC_POWER: i64 = 8;
 
 /// The Laplace transform `integral_0^oo f(t) exp(-s t) dt`, or `None` when no rule applies.
 pub fn laplace(f: &Expr, t: &Expr, s: &Expr) -> MathResult<Option<Expr>> {
@@ -139,7 +142,8 @@ pub fn inverse_laplace(f: &Expr, s: &Expr, t: &Expr) -> MathResult<Option<Expr>>
     require_symbol(s)?;
     require_symbol(t)?;
     guard(f)?;
-    let parted = apart(f, s)?;
+    let (n, d) = together_deep(f)?;
+    let parted = apart(&cancel(&n.div(&d))?, s)?;
     let terms = match parted.kind() {
         Kind::Add(v) => v.clone(),
         _ => vec![parted.clone()],
@@ -154,7 +158,7 @@ pub fn inverse_laplace(f: &Expr, s: &Expr, t: &Expr) -> MathResult<Option<Expr>>
     Ok(Some(expand(&Expr::add(total))?))
 }
 
-/// `c / B**m` (with `B` linear, or quadratic over `m <= 2`) or `c * s**p`.
+/// `c / B**m` (with `B` linear, or quadratic over `m <= 8`) or `c * s**p`.
 fn inverse_term(term: &Expr, s: &Expr, t: &Expr) -> MathResult<Option<Expr>> {
     if !term.contains(s) {
         return Ok(None); // a constant would be a Dirac delta
@@ -230,7 +234,7 @@ fn inverse_term(term: &Expr, s: &Expr, t: &Expr) -> MathResult<Option<Expr>> {
             ]);
             Ok(Some(value))
         }
-        3 if m <= 2 => {
+        3 if m <= MAX_QUADRATIC_POWER => {
             let a = q0.neg().div(&Expr::mul(vec![Expr::int(2), p0.clone()]));
             let w2 = expand(&Expr::add(vec![r0.div(&p0), Expr::pow(&a, &Expr::int(2)).neg()]))?;
             let trig = match sign_of(&w2) {
@@ -252,26 +256,28 @@ fn inverse_term(term: &Expr, s: &Expr, t: &Expr) -> MathResult<Option<Expr>> {
             } else {
                 (Expr::call("cosh", vec![wt.clone()]), Expr::call("sinh", vec![wt.clone()]))
             };
-            // L^-1 of u/(u^2 +- w^2)^m and 1/(u^2 +- w^2)^m, before the shift.
-            let (f_u, f_one) = if m == 1 {
-                (c_fn, Expr::mul(vec![s_fn, Expr::pow(&w, &Expr::int(-1))]))
-            } else {
-                let half_w = Expr::pow(&Expr::mul(vec![Expr::int(2), w.clone()]), &Expr::int(-1));
-                let fu = Expr::mul(vec![t.clone(), s_fn.clone(), half_w]);
-                let cube = Expr::pow(&Expr::mul(vec![Expr::int(2), Expr::pow(&w, &Expr::int(3))]), &Expr::int(-1));
-                let fo = if trig {
-                    Expr::mul(vec![Expr::add(vec![s_fn, Expr::mul(vec![wt, c_fn]).neg()]), cube])
-                } else {
-                    Expr::mul(vec![Expr::add(vec![Expr::mul(vec![wt, c_fn]), s_fn.neg()]), cube])
-                };
-                (fu, fo)
-            };
+            // L^-1 of u/(u^2 +- w^2)^m and 1/(u^2 +- w^2)^m, before the shift, by the recurrence
+            // h_m = t g_(m-1)/(2 (m - 1)) and g_m = (g_(m-1) -+ h_m')/w^2.
+            let w2_inv = Expr::pow(&w2_pos(&w, trig), &Expr::int(-1));
+            let (mut f_u, mut f_one) = (c_fn, Expr::mul(vec![s_fn, Expr::pow(&w, &Expr::int(-1))]));
+            for j in 2..=m {
+                let h = Expr::mul(vec![t.clone(), f_one.clone(), Expr::rational(1, 2 * (j - 1)).unwrap_or_else(Expr::one)]);
+                let dh = diff(&h, t)?;
+                let g = if trig { Expr::add(vec![f_one, dh.neg()]) } else { Expr::add(vec![dh, f_one.neg()]) };
+                f_one = expand(&Expr::mul(vec![g, w2_inv.clone()]))?;
+                f_u = expand(&h)?;
+            }
             let inner = Expr::add(vec![Expr::mul(vec![u_coef, f_u]), Expr::mul(vec![one_coef, f_one])]);
             let shift = Expr::pow(&Expr::e(), &Expr::mul(vec![a, t.clone()]));
             Ok(Some(Expr::mul(vec![k, shift, inner])))
         }
         _ => Ok(None),
     }
+}
+
+/// `w**2` as it appears in `u**2 + w**2` (`trig`) or `u**2 - w**2`; the recurrence divides by it either way.
+fn w2_pos(w: &Expr, _trig: bool) -> Expr {
+    Expr::pow(w, &Expr::int(2))
 }
 
 fn factorial(n: i64) -> MathResult<i64> {
