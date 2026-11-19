@@ -57,6 +57,12 @@ plot(f, (x, 0, 20))
 # - Drag a cell by the grip in its toolbar, or a tab by its title, to reorder. **Cmd+Z** brings back a deleted or
 #   moved cell. **Cmd+Alt+Up/Down** jumps to the previous or next code cell.
 # - **Cmd+Shift+T** switches to Text view (the raw file); Notebook view is the default. **Cmd+B** shows the sidebar.
+# - **Cmd+F** finds and replaces across every cell (match case, whole word); click a line to jump to its cell. The
+#   palette also lists each name a cell defines, so you can jump to where `f` was defined.
+# - File > Open example opens the bundled notebooks (a tour, transforms and special functions, sliders, amplitudes).
+#   File > Export as HTML writes the notebook with its results, typeset maths and plots as one page.
+# - Text cells accept `**bold**`, `*italic*`, `~~struck~~`, `` `code` ``, `[links](https://example.org)`, `$maths$`,
+#   lists, quotes and `| tables |`.
 # - MathCraft remembers your tabs, folder and settings between sessions. Theme and accent colour are in the palette;
 #   `theme.json` can override any colour.
 #
