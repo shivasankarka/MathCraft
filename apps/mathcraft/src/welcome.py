@@ -289,6 +289,17 @@ inverse_laplace((3*s + 1) / ((s - 1) * (s**2 + 4)), s)
 # %%
 fourier(exp(-t**2), t), fourier(exp(-2*abs(t)), t), inverse_fourier(1 / (w**2 + 1), w)
 
+
+# %% [markdown]
+# Steps and impulses work too: `Heaviside(t - c)` delays a function, `DiracDelta(t - c)` is an impulse, and a factor
+# `exp(-c*s)` in the inverse gives a delay. `dsolve` uses them for forcing terms.
+
+# %%
+laplace((t - 1)*Heaviside(t - 1), t), inverse_laplace(exp(-s) / (s**2 + 1), s)
+
+# %%
+dsolve(diff(y(x), x) + 2*y(x) == DiracDelta(x - 1), y(x), ics=[0])
+
 # %% [markdown]
 # `Integral`, `Sum`, `Derivative` and `Limit` stay unevaluated and read as mathematics; `doit` evaluates them.
 
@@ -462,8 +473,8 @@ contract(gamma_trace(gamma(mu), gamma(nu)) * metric(mu, nu))
 #   unevaluated; there is no `+ C`, and `1/x` integrates to `log(x)`, not `log|x|`.
 # - **Differential equations**: second-order equations with variable coefficients, nonlinear systems, and partial
 #   equations.
-# - **Transforms**: Laplace of functions with a step or delta (there is no `Heaviside` yet), Fourier beyond Gaussians,
-#   exponentials and `1/(t**2 + a**2)`.
+# - **Transforms**: Fourier beyond Gaussians, exponentials, `1/(t**2 + a**2)` and `DiracDelta`; derivatives of the
+#   delta in Laplace transforms.
 # - **Sums and products**: infinite products, and sums that give polylogarithms (`x**k/k**2`).
 # - **Matrices**: assigning to one element (`A[0, 0] = 5`), and `*` between a matrix and a vector (use `@`).
 # - **Python**: classes, imports, dictionaries, sets, `try`, and generators.
