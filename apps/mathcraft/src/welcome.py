@@ -206,8 +206,8 @@ solve(x**2 > 4, x), solve(abs(x - 1) <= 2, x)
 
 # %% [markdown]
 # **Differential equations.** Declare the unknown function first, then use `dsolve` (first-order linear, separable,
-# Bernoulli and homogeneous equations, and linear equations with constant coefficients of any order). `ics` lists the
-# values y(0), y'(0), … (at `x0`, which is 0 unless you say otherwise).
+# Bernoulli and homogeneous equations, and linear equations with constant coefficients of any order, also systems of
+# them). `ics` lists the values y(0), y'(0), … (at `x0`, which is 0 unless you say otherwise).
 
 # %%
 y = symbols('y')
@@ -215,6 +215,15 @@ dsolve(diff(y(x), x) + y(x) == x, y(x))
 
 # %%
 dsolve(diff(y(x), x, 2) + 4*y(x), y(x), ics=[1, 0])
+
+# %% [markdown]
+# A system goes in as a list of equations and a list of unknowns. It is solved with the Laplace transform (see
+# section 6), so `ics` lists the starting values of every unknown, in order; without it the constants `C1`, `C2`, …
+# are those starting values.
+
+# %%
+u, w = symbols('u w')
+dsolve([diff(u(x), x) == w(x), diff(w(x), x) == -u(x)], [u(x), w(x)], ics=[1, 0])
 
 # %% [markdown]
 # For what has no closed form: `nsolve(eq, x, guess)` for one number and `nroots(poly, x)` for every complex root.
@@ -255,6 +264,30 @@ series(sin(x) / x, x, 0, 8), series(1 / sin(x), x, 0, 4)
 
 # %%
 summation(k**2, (k, 1, n)), summation(1/k**2, (k, 1, oo)), summation(2**(-k), (k, 1, oo))
+
+# %% [markdown]
+# Sums know the classic power series (`exp`, `sin`, `cos`, `sinh`, `cosh`, `log`, `atan`, `atanh`) and fractions that
+# telescope; `product` multiplies, and a symbolic end gives a Gamma function or a closed form.
+
+# %%
+summation(x**k / factorial(k), (k, 0, oo)), summation((-1)**k / (2*k + 1), (k, 0, oo)), summation(1 / (k*(k + 1)), (k, 1, n))
+
+# %%
+product(k, (k, 1, n)), product(1 - 1/k**2, (k, 2, n)), product(2*k, (k, 1, 5))
+
+# %% [markdown]
+# **Transforms.** `laplace(f, t)` and `inverse_laplace(F, s)` handle sums of `t**n`, `exp`, `sin`, `cos`, `sinh` and
+# `cosh` terms, and rational functions of `s`. `fourier(f, t)` takes Gaussians, `exp(-a*abs(t))` and `1/(t**2 + a**2)`
+# (times powers of `t`), with `inverse_fourier` the other way.
+
+# %%
+laplace(t**2 * exp(-3*t), t), laplace(sin(t)**2, t), inverse_laplace(1 / (s**2 + 2*s + 5), s)
+
+# %%
+inverse_laplace((3*s + 1) / ((s - 1) * (s**2 + 4)), s)
+
+# %%
+fourier(exp(-t**2), t), fourier(exp(-2*abs(t)), t), inverse_fourier(1 / (w**2 + 1), w)
 
 # %% [markdown]
 # `Integral`, `Sum`, `Derivative` and `Limit` stay unevaluated and read as mathematics; `doit` evaluates them.
@@ -310,6 +343,13 @@ eigenvals(matrix([[2, 1], [1, 2]])), charpoly(matrix([[2, 1], [1, 2]]), x)
 
 # %%
 eigenvects(matrix([[2, 1], [1, 2]])), nullspace(matrix([[1, 2], [2, 4]]))
+
+# %% [markdown]
+# `rref` gives the reduced row echelon form and the pivot columns. `svd` gives `(U, singular values, V)` exactly, with
+# only the non-zero singular values; the entries are nested radicals when the values are irrational.
+
+# %%
+rref(matrix([[1, 2, 3], [4, 5, 6], [7, 8, 9]])), svd(matrix([[3, 0], [0, 4]])), svd(matrix([[1, 1], [1, 1]]))
 
 # %%
 vec([x, y]) * 3 + vec([1, 2]), A @ vec([1, 1]), shape(A), eye(3)
@@ -420,8 +460,11 @@ contract(gamma_trace(gamma(mu), gamma(nu)) * metric(mu, nu))
 #   (use `nsolve`), most nonlinear systems that are not polynomial, and inequalities that mix `x` with `sin(x)` (as in `sin(x) + x > 0`).
 # - **Integrals** with no elementary form or special function (such as `sin(x**2)/x`) come back as `integrate(...)`
 #   unevaluated; there is no `+ C`, and `1/x` integrates to `log(x)`, not `log|x|`.
-# - **Differential equations**: second-order equations with variable coefficients, systems, and partial equations.
-# - **Transforms**: Laplace and Fourier transforms.
-# - **Matrices**: SVD, assigning to one element (`A[0, 0] = 5`), and `*` between a matrix and a vector (use `@`).
+# - **Differential equations**: second-order equations with variable coefficients, nonlinear systems, and partial
+#   equations.
+# - **Transforms**: Laplace of functions with a step or delta (there is no `Heaviside` yet), Fourier beyond Gaussians,
+#   exponentials and `1/(t**2 + a**2)`.
+# - **Sums and products**: infinite products, and sums that give polylogarithms (`x**k/k**2`).
+# - **Matrices**: assigning to one element (`A[0, 0] = 5`), and `*` between a matrix and a vector (use `@`).
 # - **Python**: classes, imports, dictionaries, sets, `try`, and generators.
 # - **Plots**: 3D surfaces, contour plots and overlaying several data series.
