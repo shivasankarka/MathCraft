@@ -1071,3 +1071,33 @@ fn step_and_delta() {
         "y(t) == -Heaviside(t - 1)*cos(t - 1) + Heaviside(t - 1)"
     );
 }
+
+#[test]
+fn zeta_and_polylog_sums() {
+    assert_eq!(ev("zeta(2)"), "pi**2/6");
+    assert_eq!(ev("zeta(3)"), "zeta(3)");
+    assert_eq!(ev("zeta(-2)"), "0");
+    assert!(ev("N(zeta(3))").starts_with("1.20205690315959"));
+    assert_eq!(ev("polylog(2, 1)"), "pi**2/6");
+    assert_eq!(ev("polylog(2, -1)"), "-pi**2/12");
+    assert_eq!(ev("polylog(1, x)"), "-log(-x + 1)");
+    assert!(ev("N(polylog(2, 1/2))").starts_with("0.58224052646501"));
+    assert_eq!(ev("summation(1/k**3, (k, 1, oo))"), "zeta(3)");
+    assert_eq!(ev("summation(1/k**4, (k, 1, oo))"), "pi**4/90");
+    assert_eq!(ev("summation(x**k/k**2, (k, 1, oo))"), "polylog(2, x)");
+    assert_eq!(ev("summation(x**k/(k + 1)**2, (k, 0, oo))"), "polylog(2, x)/x");
+    assert_eq!(ev("summation((-1)**k/k**2, (k, 1, oo))"), "-pi**2/12");
+    assert_eq!(ev("summation(1/(k**2*(k + 1)), (k, 1, oo))"), "pi**2/6 - 1");
+}
+
+#[test]
+fn infinite_products() {
+    assert_eq!(ev("product(1 + 1/k**2, (k, 1, oo))"), "sinh(pi)/pi");
+    assert_eq!(ev("product(1 - x**2/k**2, (k, 1, oo))"), "sin(pi*x)/(pi*x)");
+    assert_eq!(ev("product(1 - 1/(4*k**2), (k, 1, oo))"), "2/pi");
+    assert_eq!(ev("product(1 - 1/k**2, (k, 2, oo))"), "1/2");
+    assert_eq!(ev("product(1 + 1/k**2, (k, 2, oo))"), "sinh(pi)/(2*pi)");
+    assert_eq!(ev("product(k*(k + 2)/(k + 1)**2, (k, 1, oo))"), "1/2");
+    assert_eq!(ev("product(2**(-k), (k, 1, oo))"), "0");
+    assert!(ev("product(1 + 1/k, (k, 1, oo))").contains("no closed form"));
+}
