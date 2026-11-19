@@ -276,6 +276,16 @@ summation(x**k / factorial(k), (k, 0, oo)), summation((-1)**k / (2*k + 1), (k, 0
 product(k, (k, 1, n)), product(1 - 1/k**2, (k, 2, n)), product(2*k, (k, 1, 5))
 
 # %% [markdown]
+# Sums with `k**p` in the denominator give `zeta` and `polylog` (`zeta(2)` is `pi**2/6`, `zeta(3)` stays symbolic;
+# `N` gives numbers). Products may run to infinity.
+
+# %%
+summation(1/k**3, (k, 1, oo)), summation(x**k / k**2, (k, 1, oo)), N(zeta(3)), N(polylog(2, 1/2))
+
+# %%
+product(1 - 1/k**2, (k, 2, oo)), product(1 + 1/k**2, (k, 1, oo)), product(1 - x**2/k**2, (k, 1, oo))
+
+# %% [markdown]
 # **Transforms.** `laplace(f, t)` and `inverse_laplace(F, s)` handle sums of `t**n`, `exp`, `sin`, `cos`, `sinh` and
 # `cosh` terms, and rational functions of `s`. `fourier(f, t)` takes Gaussians, `exp(-a*abs(t))` and `1/(t**2 + a**2)`
 # (times powers of `t`), with `inverse_fourier` the other way.
@@ -475,7 +485,8 @@ contract(gamma_trace(gamma(mu), gamma(nu)) * metric(mu, nu))
 #   equations.
 # - **Transforms**: Fourier beyond Gaussians, exponentials, `1/(t**2 + a**2)` and `DiracDelta`; derivatives of the
 #   delta in Laplace transforms.
-# - **Sums and products**: infinite products, and sums that give polylogarithms (`x**k/k**2`).
+# - **Sums and products**: infinite products other than ratios of linear factors and `1 + c/k**2`; `polylog(s, z)` is
+#   only evaluated for `|z| < 1`.
 # - **Matrices**: assigning to one element (`A[0, 0] = 5`), and `*` between a matrix and a vector (use `@`).
 # - **Python**: classes, imports, dictionaries, sets, `try`, and generators.
 # - **Plots**: 3D surfaces, contour plots and overlaying several data series.
