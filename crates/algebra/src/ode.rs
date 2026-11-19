@@ -15,13 +15,13 @@ use crate::util::{is_zero_expr, require_symbol, subs};
 use mathcraft_core::{Expr, Kind, MathError, MathResult};
 
 /// The highest derivative order handled.
-const MAX_ORDER: usize = 8;
+pub(crate) const MAX_ORDER: usize = 8;
 
 fn lifted_symbol(k: usize) -> Expr {
     Expr::sym(&format!("_y{k}"))
 }
 
-fn constant(k: usize) -> Expr {
+pub(crate) fn constant(k: usize) -> Expr {
     Expr::sym(&format!("C{k}"))
 }
 
@@ -30,7 +30,7 @@ fn unsupported<T>(what: &str) -> MathResult<T> {
 }
 
 /// `Some(k)` when `e` is the `k`-th derivative of `f` with respect to `x`.
-fn derivative_order(e: &Expr, f: &Expr, x: &Expr) -> Option<usize> {
+pub(crate) fn derivative_order(e: &Expr, f: &Expr, x: &Expr) -> Option<usize> {
     if e == f {
         return Some(0);
     }
@@ -95,7 +95,14 @@ pub fn dsolve(eq: &Expr, f: &Expr) -> MathResult<Vec<Expr>> {
         if order == 1 {
             vec![first_order_linear(&a, &g, x)?]
         } else if a.iter().all(|c| !c.contains(x)) {
-            constant_coefficients(&a, &g, x)?
+            match constant_coefficients(&a, &g, x) {
+                Ok(v) => v,
+                // variation of parameters got stuck: the Laplace transform may still manage the forcing term
+                Err(e) => match crate::ode_laplace::dsolve_laplace(std::slice::from_ref(eq), std::slice::from_ref(f), x) {
+                    Ok(sols) => return Ok(sols),
+                    Err(_) => return Err(e),
+                },
+            }
         } else {
             return unsupported("linear equations of order above one need constant coefficients");
         }
