@@ -129,8 +129,14 @@ fn periodic_inequality(f: &Expr, x: &Expr, strict: bool, upward: bool) -> MathRe
         let zero = v.abs() < 1e-9;
         if zero { !strict } else { (v > 0.0) == upward }
     };
-    let two_pi = Expr::mul(vec![Expr::int(2), Expr::pi()]);
-    // candidate special angles in [0, 2*pi): zeros of g and of its poles, with the reflections and half turns that `solve` leaves out
+    // the smallest period: half a turn when g repeats every pi (tan, cot, sin**2)
+    let half_period = [0.37, 1.91, 4.2].iter().all(|v| match (at(*v), at(v + std::f64::consts::PI)) {
+        (Some(p), Some(q)) => (p - q).abs() <= 1e-8 * p.abs().max(1.0),
+        (None, None) => true,
+        _ => false,
+    });
+    let (turn_f, turn) = if half_period { (std::f64::consts::PI, Expr::pi()) } else { (std::f64::consts::TAU, Expr::mul(vec![Expr::int(2), Expr::pi()])) };
+    // candidate special angles in [0, one period): zeros of g and of its poles, with the reflections and half turns that `solve` leaves out
     let mut sources = vec![g.clone()];
     crate::calculus::trig_denominators(&g, &t, &mut sources);
     let (_, den) = crate::rational::together(&g)?;
@@ -146,12 +152,12 @@ fn periodic_inequality(f: &Expr, x: &Expr, strict: bool, upward: bool) -> MathRe
                 for half in 0..2 {
                     let cand = Expr::add(vec![Expr::mul(vec![r.clone(), Expr::int(sign)]), Expr::mul(vec![Expr::int(half), Expr::pi()])]);
                     let Some(v) = value(&cand) else { continue };
-                    let turns = (v / std::f64::consts::TAU).floor();
-                    let wrapped = v - turns * std::f64::consts::TAU;
-                    let exact = crate::expand::expand(&Expr::add(vec![cand, Expr::mul(vec![two_pi.clone(), Expr::int(-(turns as i64))])]))?;
+                    let turns = (v / turn_f).floor();
+                    let wrapped = v - turns * turn_f;
+                    let exact = crate::expand::expand(&Expr::add(vec![cand, Expr::mul(vec![turn.clone(), Expr::int(-(turns as i64))])]))?;
                     let w = value(&exact).unwrap_or(wrapped);
                     let hit = eval_f64(src, &|s| (s == "t").then_some(w)).ok().is_some_and(|z| z.abs() < 1e-9);
-                    if hit && wrapped < std::f64::consts::TAU - 1e-9 {
+                    if hit && wrapped < turn_f - 1e-9 {
                         if si == 0 {
                             zeros.push(wrapped);
                         }
@@ -171,7 +177,7 @@ fn periodic_inequality(f: &Expr, x: &Expr, strict: bool, upward: bool) -> MathRe
     let mut at_point = Vec::with_capacity(n);
     for k in 0..n {
         let (Some(here), next) = (points.get(k), points.get((k + 1) % n.max(1))) else { continue };
-        let upper = next.map_or(here.0 + 1.0, |q| if k + 1 < n { q.0 } else { q.0 + std::f64::consts::TAU });
+        let upper = next.map_or(here.0 + 1.0, |q| if k + 1 < n { q.0 } else { q.0 + turn_f });
         open.push(at((here.0 + upper) / 2.0).is_some_and(holds));
         at_point.push(match at(here.0) {
             Some(_) if is_zero(here.0) => !strict,
@@ -188,13 +194,13 @@ fn periodic_inequality(f: &Expr, x: &Expr, strict: bool, upward: bool) -> MathRe
     let pieces: Vec<bool> = (0..n).flat_map(|k| [at_point.get(k).copied().unwrap_or(false), open.get(k).copied().unwrap_or(false)]).collect();
     let Some(start) = pieces.iter().position(|ok| !ok) else { return Ok(everything()) };
     let m = pieces.len();
-    let period = two_pi.div(&Expr::call("abs", vec![a.clone()]));
+    let period = turn.div(&Expr::call("abs", vec![a.clone()]));
     let to_x = |angle: &Expr| -> MathResult<Expr> { crate::expand::expand(&Expr::add(vec![angle.clone(), b.neg()]).div(&a)) };
     let shift = Expr::mul(vec![period, Expr::sym("n")]);
     // the angle of the kk-th special point counted around the circle again and again
     let angle = |kk: usize, base: usize| {
         let turns = i64::try_from(kk / n).unwrap_or(0) - i64::try_from(base).unwrap_or(0);
-        points.get(kk % n).map(|p| Expr::add(vec![p.1.clone(), Expr::mul(vec![two_pi.clone(), Expr::int(turns)])]))
+        points.get(kk % n).map(|p| Expr::add(vec![p.1.clone(), Expr::mul(vec![turn.clone(), Expr::int(turns)])]))
     };
     let mut parts = Vec::new();
     let mut q = start + 1;
@@ -310,7 +316,7 @@ mod tests {
         assert_eq!(rel("Gt", double, Expr::zero()), "(n*pi, n*pi + pi/2)");
         // tan has poles, which stay open
         let tan = Expr::call("tan", vec![x()]);
-        assert!(rel("Gt", tan, Expr::one()).contains("2*n*pi + pi/2)"));
+        assert_eq!(rel("Gt", tan, Expr::one()), "(n*pi + pi/4, n*pi + pi/2)");
         // a plain x next to sin(x) does not repeat
         let mixed = Expr::add(vec![sin, x()]);
         assert!(solve_inequality(&Expr::call("Gt", vec![mixed, Expr::zero()]), &x()).is_err());
