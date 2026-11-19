@@ -1,5 +1,5 @@
-//! A small Markdown renderer for text cells: headings, paragraphs, lists, quotes, code blocks, rules, and inline
-//! **bold**, *italic* and `code`.
+//! A small Markdown renderer for text cells: headings, paragraphs, lists, quotes, code blocks, tables, rules, and inline
+//! **bold**, *italic*, ~~struck~~ text, `code`, links and `$math$`.
 
 use crate::fonts::strong_family;
 use crate::theme::Theme;
@@ -12,6 +12,7 @@ pub struct Span {
     pub bold: bool,
     pub italic: bool,
     pub code: bool,
+    pub strike: bool,
 }
 
 /// Split a line of Markdown into styled spans. Unclosed markers are kept as plain text.
@@ -40,6 +41,7 @@ pub fn inline(s: &str) -> Vec<Span> {
         let next = chars.get(i + 1).copied();
         let styled = match (c, next) {
             ('*', Some('*')) => close(i + 2, '*', 2).map(|j| (j, 2, Span { bold: true, ..Span::default() })),
+            ('~', Some('~')) => close(i + 2, '~', 2).map(|j| (j, 2, Span { strike: true, ..Span::default() })),
             ('*', _) | ('_', _)
                 if chars.get(i + 1).is_some_and(|n| !n.is_whitespace())
                     && (c == '*' || i == 0 || chars.get(i.wrapping_sub(1)).is_some_and(|p| !p.is_alphanumeric())) =>
@@ -71,6 +73,44 @@ pub fn inline(s: &str) -> Vec<Span> {
 pub enum Piece {
     Text(String),
     Math(String),
+    /// `[label](url)`: only web and mail addresses are links.
+    Link(String, String),
+}
+
+/// The `[label](url)` link starting at char `i`: its label, address and the index after it.
+fn link_at(chars: &[char], i: usize) -> Option<(String, String, usize)> {
+    if chars.get(i) != Some(&'[') {
+        return None;
+    }
+    let close = (i + 1..chars.len()).find(|&j| chars.get(j) == Some(&']'))?;
+    if chars.get(close + 1) != Some(&'(') {
+        return None;
+    }
+    let end = (close + 2..chars.len()).find(|&j| chars.get(j) == Some(&')'))?;
+    let label: String = chars.get(i + 1..close)?.iter().collect();
+    let url: String = chars.get(close + 2..end)?.iter().collect();
+    let web = ["https://", "http://", "mailto:"].iter().any(|p| url.starts_with(p));
+    (web && !label.is_empty() && !url.contains(char::is_whitespace)).then_some((label, url, end + 1))
+}
+
+/// Split a paragraph into plain text, `$math$` and links.
+pub fn parts(s: &str) -> Vec<Piece> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = Vec::new();
+    let mut text = String::new();
+    let mut i = 0;
+    while let Some(&c) = chars.get(i) {
+        if let Some((label, url, next)) = link_at(&chars, i) {
+            out.extend(pieces(&std::mem::take(&mut text)));
+            out.push(Piece::Link(label, url));
+            i = next;
+        } else {
+            text.push(c);
+            i += 1;
+        }
+    }
+    out.extend(pieces(&text));
+    out
 }
 
 /// Split at `$...$` spans. A `$` opens math only when it is followed by a non-space and the closing `$` follows a
@@ -129,7 +169,8 @@ fn job(spans: &[Span], size: f32, theme: &Theme, color: Color32, width: f32) -> 
         } else if s.bold {
             TextFormat { font_id: FontId::new(size, strong_family()), color: theme.text, italics: s.italic, line_height, ..Default::default() }
         } else {
-            TextFormat { font_id: FontId::new(size, FontFamily::Proportional), color, italics: s.italic, line_height, ..Default::default() }
+            let strikethrough = if s.strike { Stroke::new(1.0, color) } else { Stroke::NONE };
+            TextFormat { font_id: FontId::new(size, FontFamily::Proportional), color, italics: s.italic, strikethrough, line_height, ..Default::default() }
         };
         job.append(&s.text, 0.0, format);
     }
@@ -148,10 +189,10 @@ fn heading(line: &str) -> Option<(usize, &str)> {
 /// One line or paragraph of styled text, with `$math$` typeset in place. Plain text keeps the fast path (one wrapped
 /// label); with math it flows left to right and wraps between pieces.
 fn rich(ui: &mut Ui, text: &str, color: Color32, theme: &Theme) {
-    let parts = pieces(text);
+    let parts = parts(text);
     let ctx = ui.ctx().clone();
     let math = |src: &str| crate::math_view::inline_layout(&ctx, src, BODY * 1.15);
-    if !parts.iter().any(|p| matches!(p, Piece::Math(src) if math(src).is_some())) {
+    if !parts.iter().any(|p| matches!(p, Piece::Link(..)) || matches!(p, Piece::Math(src) if math(src).is_some())) {
         let width = ui.available_width();
         ui.label(job(&inline(text), BODY, theme, color, width));
         return;
@@ -170,6 +211,9 @@ fn rich(ui: &mut Ui, text: &str, color: Color32, theme: &Theme) {
                 },
                 Piece::Text(t) => {
                     ui.label(job(&inline(t), BODY, theme, color, f32::INFINITY));
+                }
+                Piece::Link(label, url) => {
+                    ui.hyperlink_to(RichText::new(label).size(BODY), url).on_hover_text(url);
                 }
             }
         }
@@ -204,6 +248,8 @@ pub fn show(ui: &mut Ui, source: &str, theme: &Theme) -> Response {
             ui.spacing_mut().item_spacing.y = 3.0;
             let mut para = String::new();
             let mut code: Option<Vec<&str>> = None;
+            let mut rows: Vec<Vec<String>> = Vec::new();
+            let mut tables = 0;
             for raw in source.lines() {
                 let line = raw.trim_end();
                 if line.trim_start().starts_with("```") {
@@ -232,6 +278,15 @@ pub fn show(ui: &mut Ui, source: &str, theme: &Theme) -> Response {
                 }
                 let trimmed = line.trim_start();
                 let indent = (line.len() - trimmed.len()) / 2;
+                if trimmed.starts_with('|') {
+                    paragraph(ui, &mut para, theme);
+                    rows.push(table_row(trimmed));
+                    continue;
+                }
+                if !rows.is_empty() {
+                    table(ui, &std::mem::take(&mut rows), tables, theme);
+                    tables += 1;
+                }
                 if line.trim().is_empty() {
                     paragraph(ui, &mut para, theme);
                 } else if let Some(src) = line.trim().strip_prefix("$$").and_then(|r| r.strip_suffix("$$")).filter(|r| !r.trim().is_empty()) {
@@ -267,9 +322,45 @@ pub fn show(ui: &mut Ui, source: &str, theme: &Theme) -> Response {
                 }
             }
             paragraph(ui, &mut para, theme);
+            if !rows.is_empty() {
+                table(ui, &rows, tables, theme);
+            }
         })
         .response;
     r.interact(Sense::click())
+}
+
+/// The cells of a `| a | b |` line.
+fn table_row(line: &str) -> Vec<String> {
+    let inner = line.trim().trim_start_matches('|');
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    inner.split('|').map(|c| c.trim().to_owned()).collect()
+}
+
+/// The `|---|:---:|` line under a header.
+fn is_rule_row(row: &[String]) -> bool {
+    !row.is_empty() && row.iter().all(|c| c.len() >= 3 && c.trim_matches(':').chars().all(|ch| ch == '-') && c.contains('-'))
+}
+
+/// A table: the first row is a header when a `---` row follows it.
+fn table(ui: &mut Ui, rows: &[Vec<String>], index: usize, theme: &Theme) {
+    let header = rows.get(1).is_some_and(|r| is_rule_row(r));
+    egui::Grid::new(ui.next_auto_id().with(("markdown-table", index))).striped(true).spacing(egui::vec2(18.0, 6.0)).show(ui, |ui| {
+        for (n, row) in rows.iter().enumerate() {
+            if header && n == 1 {
+                continue;
+            }
+            for cell in row {
+                if header && n == 0 {
+                    ui.label(RichText::new(cell).font(FontId::new(BODY, strong_family())).color(theme.text));
+                } else {
+                    rich(ui, cell, theme.text, theme);
+                }
+            }
+            ui.end_row();
+        }
+    });
+    ui.add_space(8.0);
 }
 
 fn numbered(s: &str) -> Option<(&str, &str)> {
@@ -292,7 +383,7 @@ mod tests {
     use super::*;
 
     fn s(text: &str, bold: bool, italic: bool, code: bool) -> Span {
-        Span { text: text.into(), bold, italic, code }
+        Span { text: text.into(), bold, italic, code, strike: false }
     }
 
     #[test]
@@ -319,6 +410,30 @@ mod tests {
         assert_eq!(pieces("$a$ and $b$"), vec![m("a"), t(" and "), m("b")]);
         assert_eq!(pieces("open $x"), vec![t("open $x")]);
         assert!(pieces("").is_empty());
+    }
+
+    #[test]
+    fn struck_text_and_links() {
+        assert_eq!(
+            inline("a ~~b~~ c"),
+            vec![s("a ", false, false, false), Span { text: "b".into(), strike: true, ..Span::default() }, s(" c", false, false, false)]
+        );
+        let t = |x: &str| Piece::Text(x.into());
+        let link = |l: &str, u: &str| Piece::Link(l.into(), u.into());
+        assert_eq!(parts("see [docs](https://example.org/a) now"), vec![t("see "), link("docs", "https://example.org/a"), t(" now")]);
+        // other schemes, spaces in the address and missing parts stay text
+        assert_eq!(parts("[x](javascript:alert(1))"), vec![t("[x](javascript:alert(1))")]);
+        assert_eq!(parts("[x](https://a b)"), vec![t("[x](https://a b)")]);
+        assert_eq!(parts("[x] (https://a)"), vec![t("[x] (https://a)")]);
+        assert_eq!(parts("$a$ and [b](http://c)"), vec![Piece::Math("a".into()), t(" and "), link("b", "http://c")]);
+    }
+
+    #[test]
+    fn table_rows() {
+        assert_eq!(table_row("| a | b |"), vec!["a", "b"]);
+        assert_eq!(table_row("a | b"), vec!["a", "b"]);
+        assert!(is_rule_row(&table_row("|---|:---:|")));
+        assert!(!is_rule_row(&table_row("| 1 | 2 |")));
     }
 
     #[test]
