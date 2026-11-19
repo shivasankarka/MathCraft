@@ -976,3 +976,20 @@ fn products() {
     assert_eq!(ev("simplify(Gamma(n + 3)/Gamma(n))"), "n*(n + 1)*(n + 2)");
     assert_eq!(ev("factorial(n)"), "Gamma(n + 1)");
 }
+
+#[test]
+fn laplace_transforms() {
+    assert_eq!(ev("laplace(t**2*exp(-3*t), t)"), "2/(s + 3)**3");
+    assert_eq!(ev("laplace(sin(2*t), t)"), "2/(s**2 + 4)");
+    assert_eq!(ev("laplace(5, t)"), "5/s");
+    assert_eq!(ev("laplace(sin(t)**2, t)"), "2/(s**3 + 4*s)");
+    assert_eq!(ev("laplace(t*sinh(3*t), t)"), "6*s/(s**2 - 9)**2");
+    assert_eq!(ev("laplace(sqrt(t), t)"), "sqrt(pi)/(2*s**(3/2))");
+    assert_eq!(ev("inverse_laplace(1/(s**2 + 4), s)"), "sin(2*t)/2");
+    assert_eq!(ev("inverse_laplace(1/(s*(s + 1)), s)"), "-exp(-t) + 1");
+    assert_eq!(ev("inverse_laplace(1/(s**2 + 2*s + 5), s)"), "exp(-t)*sin(2*t)/2");
+    assert_eq!(ev("inverse_laplace(1/(s**2 + 1)**2, s)"), "-t*cos(t)/2 + sin(t)/2");
+    assert_eq!(ev("inverse_laplace(s/(s**2 - 2), s)"), "cosh(t*sqrt(2))");
+    assert_eq!(ev("inverse_laplace(1/(s - 1)**3, s)"), "t**2*exp(t)/2");
+    assert_eq!(ev("inverse_laplace(1/(s**2 + a**2), s)"), "sin(a*t)/a");
+}
