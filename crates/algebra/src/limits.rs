@@ -111,6 +111,9 @@ fn finite(e: &Expr, x: &Expr, a: &Expr, side: Side) -> MathResult<Expr> {
     if !has_singularity(&direct) {
         return Ok(direct);
     }
+    if let Some(l) = structural(e, x, a, side) {
+        return Ok(lim_expr(l));
+    }
     let (mut num, mut den) = split_fraction(e);
     for _ in 0..MAX_ROUNDS {
         let n0 = expand(&at(&num)?)?;
@@ -128,6 +131,61 @@ fn finite(e: &Expr, x: &Expr, a: &Expr, side: Side) -> MathResult<Expr> {
         den = diff(&den, x)?;
     }
     via_infinity(e, x, a, side)
+}
+
+/// The limit of a sum, product or function value from the limits of its parts, when one of them is infinite (so that
+/// substitution fails) and the combination is unambiguous: `atan(tan(x/2))` at `pi` from the left, `2*atan(..)/3`.
+fn structural(e: &Expr, x: &Expr, a: &Expr, side: Side) -> Option<Lim> {
+    let part = |t: &Expr| -> Option<Lim> {
+        match finite(t, x, a, side).ok()? {
+            v if v == Expr::infinity() => Some(Lim::Inf(1)),
+            v if v == Expr::infinity().neg() => Some(Lim::Inf(-1)),
+            v if has_singularity(&v) => None,
+            v => Some(Lim::Fin(v)),
+        }
+    };
+    match e.kind() {
+        Kind::Call(name, args) => {
+            let [u] = args.as_slice() else { return None };
+            match (&**name, part(u)?) {
+                ("atan", Lim::Inf(d)) => Some(Lim::Fin(Expr::mul(vec![Expr::rational(i64::from(d), 2)?, Expr::pi()]))),
+                ("tanh" | "erf", Lim::Inf(d)) => Some(Lim::Fin(Expr::int(i64::from(d)))),
+                ("exp", Lim::Inf(d)) => Some(if d > 0 { Lim::Inf(1) } else { Lim::Fin(Expr::zero()) }),
+                ("asinh", Lim::Inf(d)) => Some(Lim::Inf(d)),
+                _ => None,
+            }
+        }
+        Kind::Mul(fs) => {
+            let (mut sign, mut infinite, mut values) = (1i8, false, Vec::new());
+            for f in fs {
+                match part(f)? {
+                    Lim::Inf(d) => {
+                        infinite = true;
+                        sign *= d;
+                    }
+                    Lim::Fin(v) => values.push(v),
+                }
+            }
+            if !infinite {
+                return Some(Lim::Fin(Expr::mul(values)));
+            }
+            // every finite factor needs a known non-zero sign
+            let known = values.iter().all(|v| sign_of(v).is_some_and(|s| s != 0));
+            known.then(|| Lim::Inf(sign * values.iter().filter_map(sign_of).product::<i8>()))
+        }
+        Kind::Add(ts) => {
+            let (mut dir, mut values) = (0i8, Vec::new());
+            for t in ts {
+                match part(t)? {
+                    Lim::Inf(d) if dir == 0 || dir == d => dir = d,
+                    Lim::Inf(_) => return None,
+                    Lim::Fin(v) => values.push(v),
+                }
+            }
+            Some(if dir == 0 { Lim::Fin(Expr::add(values)) } else { Lim::Inf(dir) })
+        }
+        _ => None,
+    }
 }
 
 /// Last resort at a finite point: put `x = a + 1/t` and take `t -> +-oo`, where the growth rules (exp, log, powers,
