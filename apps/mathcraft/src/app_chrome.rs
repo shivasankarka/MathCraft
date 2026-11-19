@@ -81,6 +81,10 @@ impl App {
                         self.redo_cells();
                     }
                 });
+                ui.separator();
+                if Self::menu_item(ui, theme, &ctx, "Find and replace…", Some((Modifiers::COMMAND, Key::F))) {
+                    self.open_find();
+                }
             });
             ui.menu_button("Run", |ui| {
                 if Self::menu_item(ui, theme, &ctx, "Run all", Some((Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter))) {
