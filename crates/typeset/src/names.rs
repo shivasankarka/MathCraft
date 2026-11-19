@@ -123,6 +123,9 @@ pub(crate) fn function_name(name: &str) -> (String, Role) {
         "acosh" => "arcosh",
         "atanh" => "artanh",
         "gamma" => "Γ",
+        "zeta" => "ζ",
+        "Heaviside" => "θ",
+        "DiracDelta" => "δ",
         other => other,
     };
     if shown.chars().count() == 1 && shown.chars().all(|c| c.is_ascii_alphabetic()) {
