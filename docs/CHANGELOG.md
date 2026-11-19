@@ -13,6 +13,8 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - Trigonometric inequalities use the smallest period: `solve(tan(x) > 1, x)` is `(n*pi + pi/4, n*pi + pi/2)` instead of two intervals per `2*pi`.
 - The tutorial notebook and the README cover the series sums, `product`, the transforms, `dsolve` systems, `rref` and `svd`, and their "does not work yet" lists are updated.
 - New `Heaviside(x)` (the unit step, 1/2 at 0, derivative `DiracDelta`) and `DiracDelta(x)`. `laplace` handles `Heaviside(t - c)` (the second shift rule) and `DiracDelta(t - c)` (sifting), and `inverse_laplace` turns a factor `exp(-c*s)` into a delay: `inverse_laplace(exp(-s)/(s**2 + 1), s)` is `Heaviside(t - 1)*sin(t - 1)`, a constant becomes `DiracDelta(t)`. So `dsolve` takes step and impulse forcing: `y' + 2*y == DiracDelta(t - 1)` with `ics=[0]` is `exp(-2*t + 2)*Heaviside(t - 1)`. `fourier` knows `DiracDelta(k*t + m)`.
+- New `zeta(s)` (exact at the even integers: `zeta(2)` is `pi**2/6`; `zeta(3)` stays; numeric for `s > 1`) and `polylog(s, z)` (closed forms at `z` equal to 0, 1 or -1 and for `s` equal to 0 or 1; numeric for `|z| < 1`). Sums use them: `summation(1/k**3, (k, 1, oo))` is `zeta(3)`, `summation(x**k/k**2, (k, 1, oo))` is `polylog(2, x)`, `summation(x**k/(k + 1)**2, (k, 0, oo))` is `polylog(2, x)/x`, and `summation((-1)**k/k**2, (k, 1, oo))` is `-pi**2/12`.
+- `product` accepts an infinite upper end: `1 + c/k**2` gives `sinh(pi*w)/(pi*w)` (and `sin(pi*x)/(pi*x)` for `1 - x**2/k**2`), so `product(1 + 1/k**2, (k, 1, oo))` is `sinh(pi)/pi`; any other ratio of linear factors goes through the limit of the finite closed form (`product(1 - 1/k**2, (k, 2, oo))` is `1/2`). A diverging product reports no closed form.
 
 ## 0.4.0 (2026-11-15)
 
