@@ -102,6 +102,9 @@ impl App {
                 i.consume_key(Modifiers::COMMAND, Key::P) || i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::P),
             )
         });
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::F)) {
+            self.open_find();
+        }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F2)) {
             self.show_symbols = !self.show_symbols;
         }
