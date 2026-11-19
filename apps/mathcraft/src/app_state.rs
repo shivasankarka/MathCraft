@@ -149,6 +149,7 @@ impl App {
             ctx,
             show_help: false,
             show_symbols: false,
+            find: None,
             changes: None,
             show_actions: true,
             help_filter: String::new(),
