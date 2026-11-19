@@ -20,6 +20,7 @@ mod completion_ui;
 mod diff;
 mod doc;
 mod examples;
+mod export_html;
 mod fonts;
 mod git;
 mod highlight;
@@ -130,6 +131,7 @@ enum Cmd {
     Tab(u64),
     File(PathBuf),
     Example(usize),
+    ExportHtml,
     Help(String),
 }
 
