@@ -133,7 +133,7 @@ the desktop.
 - **Differential equations:** first order linear, separable, Bernoulli and homogeneous, and linear equations with constant
   coefficients, also systems of those (through the Laplace transform). No Euler equations or partial equations.
 - **Integrals:** an integral with no known form (such as `sin(x**2)/x`) stays as `integrate(...)`. There is no `+ C`.
-- **Transforms:** `laplace` and `fourier` cover a table of common functions (no step or delta functions yet).
+- **Transforms:** `laplace` and `fourier` cover a table of common functions, with `Heaviside` and `DiracDelta` (so `dsolve` takes step and impulse forcing).
 - **Not there:** 3D and contour plots, infinite products, assigning to one matrix element.
 - **Files:** outputs are not stored in the notebook file.
 
