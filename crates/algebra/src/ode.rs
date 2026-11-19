@@ -93,7 +93,15 @@ pub fn dsolve(eq: &Expr, f: &Expr) -> MathResult<Vec<Expr>> {
     }
     let rhs_list = if let Some((a, g)) = linear_parts(&lifted, order)? {
         if order == 1 {
-            vec![first_order_linear(&a, &g, x)?]
+            match first_order_linear(&a, &g, x) {
+                Ok(v) => vec![v],
+                // an integral with no closed form (a step or a delta in the forcing): the Laplace transform may do it
+                Err(e) if a.iter().all(|c| !c.contains(x)) => match crate::ode_laplace::dsolve_laplace(std::slice::from_ref(eq), std::slice::from_ref(f), x) {
+                    Ok(sols) => return Ok(sols),
+                    Err(_) => return Err(e),
+                },
+                Err(e) => return Err(e),
+            }
         } else if a.iter().all(|c| !c.contains(x)) {
             match constant_coefficients(&a, &g, x) {
                 Ok(v) => v,
