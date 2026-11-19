@@ -10,6 +10,7 @@ mod complex;
 mod expand;
 mod extension;
 mod inequality;
+mod laplace;
 mod limits;
 pub mod linalg;
 mod ode;
@@ -42,6 +43,7 @@ pub fn poly_lcm(a: &mathcraft_core::Expr, b: &mathcraft_core::Expr) -> mathcraft
 }
 
 pub use inequality::solve_inequality;
+pub use laplace::{inverse_laplace, laplace};
 pub use limits::{Side, limit, limit_side};
 pub use ode::{apply_conditions, dsolve};
 pub use pattern::{Bindings, find_all, match_expr, replace};
