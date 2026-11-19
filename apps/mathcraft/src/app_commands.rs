@@ -26,6 +26,7 @@ impl App {
             item("View", "Notebook view", String::new(), Cmd::View(View::Notebook)),
             item("View", "Text view", key(Modifiers::COMMAND | Modifiers::SHIFT, Key::T), Cmd::View(View::Text)),
             item("View", "Show or hide the sidebar", key(Modifiers::COMMAND, Key::B), Cmd::ToggleSidebar),
+            item("Edit", "Find and replace in all cells", key(Modifiers::COMMAND, Key::F), Cmd::Find),
             item("View", "Browse all functions", "F1".to_owned(), Cmd::Functions),
             item("View", "Insert symbols and formulas", "F2".to_owned(), Cmd::Symbols),
             item("View", "Changes since the last git commit", String::new(), Cmd::Changes),
@@ -46,6 +47,11 @@ impl App {
         v.push(item("Theme", "Reload theme.json", String::new(), Cmd::ReloadTheme));
         for p in self.recent.iter().filter(|p| p.is_file()) {
             v.push(item("Recent", &file_name(p), p.parent().map(|d| d.display().to_string()).unwrap_or_default(), Cmd::File(p.clone())));
+        }
+        for (n, cell) in self.cur.nb.cells().iter().enumerate().filter(|(_, c)| c.kind == CellKind::Code) {
+            for name in cell.defs() {
+                v.push(item("Definition", name, format!("cell {}", n + 1), Cmd::GoTo(cell.id)));
+            }
         }
         for (i, (name, about, _)) in examples::EXAMPLES.iter().enumerate() {
             v.push(item("Example", name, (*about).to_owned(), Cmd::Example(i)));
@@ -119,6 +125,8 @@ impl App {
             Cmd::File(p) => self.open_path(p),
             Cmd::Example(i) => self.open_example(i),
             Cmd::ExportHtml => self.export_html(),
+            Cmd::Find => self.open_find(),
+            Cmd::GoTo(id) => self.go_to_cell(id),
             Cmd::Help(name) => {
                 self.help_filter = name;
                 self.show_help = true;
