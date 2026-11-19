@@ -9,6 +9,7 @@
 
 mod app_chrome;
 mod app_commands;
+mod app_find;
 mod app_keys;
 mod app_state;
 mod app_tabs;
@@ -21,6 +22,7 @@ mod diff;
 mod doc;
 mod examples;
 mod export_html;
+mod find;
 mod fonts;
 mod git;
 mod highlight;
@@ -132,6 +134,8 @@ enum Cmd {
     File(PathBuf),
     Example(usize),
     ExportHtml,
+    Find,
+    GoTo(CellId),
     Help(String),
 }
 
@@ -161,6 +165,8 @@ struct App {
     ctx: egui::Context,
     show_help: bool,
     show_symbols: bool,
+    /// The find-and-replace window, when open.
+    find: Option<find::State>,
     changes: Option<Changes>,
     show_actions: bool,
     help_filter: String,
