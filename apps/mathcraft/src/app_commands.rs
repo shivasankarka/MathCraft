@@ -14,6 +14,7 @@ impl App {
             item("File", "Open folder…", String::new(), Cmd::OpenFolder),
             item("File", "Save", key(Modifiers::COMMAND, Key::S), Cmd::Save),
             item("File", "Save as…", String::new(), Cmd::SaveAs),
+            item("File", "Export as HTML…", String::new(), Cmd::ExportHtml),
             item("File", "Close tab", key(Modifiers::COMMAND, Key::W), Cmd::CloseTab),
             item("Run", "Run all cells", key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter), Cmd::RunAll),
             item("Edit", "Undo cell change (add, delete, move)", key(Modifiers::COMMAND, Key::Z), Cmd::UndoCell),
@@ -117,6 +118,7 @@ impl App {
             Cmd::Tab(id) => self.select_tab(id),
             Cmd::File(p) => self.open_path(p),
             Cmd::Example(i) => self.open_example(i),
+            Cmd::ExportHtml => self.export_html(),
             Cmd::Help(name) => {
                 self.help_filter = name;
                 self.show_help = true;
