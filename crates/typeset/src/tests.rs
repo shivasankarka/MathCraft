@@ -164,6 +164,15 @@ fn function_names_are_tidied() {
 }
 
 #[test]
+fn special_functions_use_their_usual_symbols() {
+    assert_eq!(texts(&lay(&Expr::call("Heaviside", vec![x()])))[0], "θ");
+    assert_eq!(texts(&lay(&Expr::call("DiracDelta", vec![x()])))[0], "δ");
+    assert_eq!(texts(&lay(&Expr::call("zeta", vec![n(3)])))[0], "ζ");
+    let t = texts(&lay(&Expr::call("polylog", vec![n(2), x()])));
+    assert_eq!(&t[..2], ["Li", "2"], "{t:?}");
+}
+
+#[test]
 fn quotients_and_negative_powers_become_fractions() {
     let e = Expr::div(&Expr::add(vec![x(), n(1)]), &Expr::pow(&x(), &n(2)));
     let l = lay(&e);
