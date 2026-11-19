@@ -47,6 +47,9 @@ impl App {
                 if Self::menu_item(ui, theme, &ctx, "Save As…", None) {
                     self.save(true);
                 }
+                if Self::menu_item(ui, theme, &ctx, "Export as HTML…", None) {
+                    self.export_html();
+                }
                 ui.menu_button("Open example", |ui| {
                     for (i, (name, about, _)) in examples::EXAMPLES.iter().enumerate() {
                         if menu_row(ui, theme, name, None).on_hover_text(*about).clicked() {
