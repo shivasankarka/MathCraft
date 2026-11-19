@@ -1065,6 +1065,9 @@ pub fn integrate_definite(e: &Expr, x: &Expr, a: &Expr, b: &Expr) -> MathResult<
             return if total.contains(&Expr::imag()) { expand(&total) } else { Ok(total) };
         }
     }
+    if let Some(total) = split_at_abs(e, x, a, b)? {
+        return Ok(total);
+    }
     match (eval_f64(a, &none), eval_f64(b, &none)) {
         (Ok(lo), Ok(hi)) => {
             let f = |t: f64| eval_f64(e, &|n| (x.as_sym() == Some(n)).then_some(t));
@@ -1076,6 +1079,81 @@ pub fn integrate_definite(e: &Expr, x: &Expr, a: &Expr, b: &Expr) -> MathResult<
         }
         _ => Err(MathError::unsupported("no closed form found, and numeric integration needs numeric limits")),
     }
+}
+
+/// Every `abs(u)` in `e` with `u` linear in `x`.
+fn linear_abs_arguments(e: &Expr, x: &Expr, out: &mut Vec<Expr>) -> MathResult<()> {
+    if let Kind::Call(name, args) = e.kind()
+        && &**name == "abs"
+        && let [u] = args.as_slice()
+        && u.contains(x)
+        && crate::poly::linear_in(u, x)?.is_some()
+        && !out.contains(u)
+    {
+        out.push(u.clone());
+    }
+    for c in e.children() {
+        linear_abs_arguments(&c, x, out)?;
+    }
+    Ok(())
+}
+
+/// A definite integral whose integrand has `abs(u)`, `u` linear: split where `u` changes sign, drop the bars on each
+/// piece and integrate that (so `1/sqrt(abs(x))` on `(-1, 1)` becomes two convergent integrals). `None` when there is no
+/// such `abs` or the limits are not numbers.
+fn split_at_abs(e: &Expr, x: &Expr, a: &Expr, b: &Expr) -> MathResult<Option<Expr>> {
+    let none = |_: &str| None;
+    let bound = |t: &Expr| -> Option<f64> {
+        if *t == Expr::infinity() {
+            Some(f64::INFINITY)
+        } else if *t == Expr::infinity().neg() {
+            Some(f64::NEG_INFINITY)
+        } else {
+            eval_f64(t, &none).ok()
+        }
+    };
+    let (Some(lo), Some(hi)) = (bound(a), bound(b)) else { return Ok(None) };
+    let mut args = Vec::new();
+    linear_abs_arguments(e, x, &mut args)?;
+    if args.is_empty() {
+        return Ok(None);
+    }
+    let (low, high, flip) = if lo <= hi { (lo, hi, false) } else { (hi, lo, true) };
+    let (start, end) = if flip { (b.clone(), a.clone()) } else { (a.clone(), b.clone()) };
+    let mut cuts: Vec<(f64, Expr)> = Vec::new();
+    for u in &args {
+        let Some((slope, icept)) = crate::poly::linear_in(u, x)? else { continue };
+        let root = expand(&icept.neg().div(&slope))?;
+        if let Ok(v) = eval_f64(&root, &none)
+            && v > low
+            && v < high
+            && !cuts.iter().any(|(w, _)| (w - v).abs() < 1e-12)
+        {
+            cuts.push((v, root));
+        }
+    }
+    cuts.sort_by(|p, q| p.0.total_cmp(&q.0));
+    let mut points = vec![(low, start)];
+    points.extend(cuts);
+    points.push((high, end));
+    let mut total = Vec::new();
+    for w in points.windows(2) {
+        let [(p, pe), (q, qe)] = w else { continue };
+        let mid = match (p.is_finite(), q.is_finite()) {
+            (true, true) => 0.5 * (p + q),
+            (true, false) => p + 1.0,
+            (false, true) => q - 1.0,
+            (false, false) => 0.0,
+        };
+        let mut rules = Vec::new();
+        for u in &args {
+            let sign = eval_f64(u, &|n| (x.as_sym() == Some(n)).then_some(mid))?;
+            rules.push((Expr::call("abs", vec![u.clone()]), if sign >= 0.0 { u.clone() } else { u.neg() }));
+        }
+        total.push(integrate_definite(&subs(e, &rules)?, x, pe, qe)?);
+    }
+    let sum = Expr::add(total);
+    Ok(Some(if flip { sum.neg() } else { sum }))
 }
 
 /// One Simpson interval: endpoints, the function values at both ends and the middle, and the interval's estimate.
