@@ -1,5 +1,5 @@
 //! Fourier transforms `F(w) = integral f(t) exp(-I w t) dt` over the real line, for sums of `c * t**n * core(t)` with
-//! `core` a Gaussian `exp(a t**2 + b t + c)` (`a < 0`), `exp(-a*abs(t))` or `1/(p t**2 + r)`. The factor `t**n` is
+//! `core` a Gaussian `exp(a t**2 + b t + c)` (`a < 0`), `exp(-a*abs(t))` or `1/(p t**2 + r)`, or `DiracDelta(k t + m)`. The factor `t**n` is
 //! `(I d/dw)**n` of the transform. A symbolic coefficient is taken to be positive where the sign decides convergence.
 
 use crate::calculus::diff_n;
@@ -120,6 +120,16 @@ fn core_transform(core: &Expr, t: &Expr, w: &Expr) -> MathResult<Option<Expr>> {
             let a = Expr::pow(&at(0).div(&at(2)), &Expr::half());
             let decay = Expr::pow(&Expr::e(), &Expr::mul(vec![a.clone(), abs_of(w)]).neg());
             Ok(Some(Expr::mul(vec![Expr::pi(), Expr::pow(&Expr::mul(vec![at(2), a]), &Expr::int(-1)), decay])))
+        }
+        Kind::Call(name, args) if &**name == "DiracDelta" => {
+            // delta(k t + m) is exp(-I w c)/k at c = -m/k
+            let [u] = args.as_slice() else { return Ok(None) };
+            let Some((k, m)) = crate::poly::linear_in(u, t)? else { return Ok(None) };
+            if sign_of(&k) != Some(1) {
+                return Ok(None);
+            }
+            let c = expand(&m.neg().div(&k))?;
+            Ok(Some(Expr::mul(vec![Expr::pow(&k, &Expr::int(-1)), Expr::pow(&Expr::e(), &Expr::mul(vec![Expr::imag(), w.clone(), c]).neg())])))
         }
         _ => Ok(None),
     }
