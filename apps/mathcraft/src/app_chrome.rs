@@ -47,6 +47,14 @@ impl App {
                 if Self::menu_item(ui, theme, &ctx, "Save As…", None) {
                     self.save(true);
                 }
+                ui.menu_button("Open example", |ui| {
+                    for (i, (name, about, _)) in examples::EXAMPLES.iter().enumerate() {
+                        if menu_row(ui, theme, name, None).on_hover_text(*about).clicked() {
+                            self.open_example(i);
+                            ui.close();
+                        }
+                    }
+                });
                 let recent: Vec<PathBuf> = self.recent.iter().filter(|p| p.is_file()).cloned().collect();
                 ui.add_enabled_ui(!recent.is_empty(), |ui| {
                     ui.menu_button("Open recent", |ui| {
