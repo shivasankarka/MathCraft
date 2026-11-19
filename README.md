@@ -80,6 +80,8 @@ Python syntax, with maths-friendly meaning:
 ```python
 1/3 + 1/6                        # 1/2, exact
 solve(x**2 > 4, x)               # (-oo, -2) ∪ (2, oo)
+laplace(t*exp(-3*t), t)          # 1/(s + 3)**2
+summation(1/(k*(k + 1)), (k, 1, n))   # 1 - 1/(n + 1)
 A = [[1, 2], [3, 4]]
 det(A), inv(A), A @ A            # matrices; @ is the matrix product
 a = slider(1, 5, 2)              # drag it, and everything that uses `a` re-runs
@@ -129,9 +131,10 @@ the desktop.
 - **Solving:** polynomials up to degree 4 in closed form (`nroots` for any degree), simple log, exp and trig equations,
   linear and small polynomial systems, and inequalities in one real unknown (trigonometric ones give one family with an integer `n`, as long as `x` only appears inside the trig functions). `nsolve` for the rest.
 - **Differential equations:** first order linear, separable, Bernoulli and homogeneous, and linear equations with constant
-  coefficients. No systems, Euler equations or partial equations.
+  coefficients, also systems of those (through the Laplace transform). No Euler equations or partial equations.
 - **Integrals:** an integral with no known form (such as `sin(x**2)/x`) stays as `integrate(...)`. There is no `+ C`.
-- **Not there:** Laplace and Fourier transforms, 3D and contour plots, SVD, assigning to one matrix element.
+- **Transforms:** `laplace` and `fourier` cover a table of common functions (no step or delta functions yet).
+- **Not there:** 3D and contour plots, infinite products, assigning to one matrix element.
 - **Files:** outputs are not stored in the notebook file.
 
 ## Develop
