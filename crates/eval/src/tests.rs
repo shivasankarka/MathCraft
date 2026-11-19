@@ -1004,6 +1004,9 @@ fn fourier_transforms() {
 
 #[test]
 fn laplace_dsolve() {
+    // a trigonometric forcing term comes out as single sines and cosines
+    assert_eq!(ev("y = symbols('y'); dsolve(diff(y(t), t, 2) + 4*y(t) == sin(t), y(t), ics=[0, 1])"), "y(t) == sin(t)/3 + sin(2*t)/3");
+    assert_eq!(ev("y = symbols('y'); dsolve(diff(y(t), t, 2) + y(t) == cos(2*t), y(t))"), "y(t) == C1*cos(t) + C2*sin(t) - cos(2*t)/3");
     assert_eq!(ev("inverse_laplace(1/(s**2 + 1)**3, s)"), "-t**2*sin(t)/8 - 3*t*cos(t)/8 + 3*sin(t)/8");
     assert_eq!(ev("inverse_laplace(1/(s**2 - 1)**2, s)"), "t*exp(t)/4 + t*exp(-t)/4 - exp(t)/4 + exp(-t)/4");
     assert_eq!(
