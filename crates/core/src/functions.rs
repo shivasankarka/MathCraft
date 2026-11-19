@@ -28,6 +28,7 @@ const UNARY: &[&str] = &[
     "log",
     "abs",
     "Heaviside",
+    "zeta",
 ];
 
 pub fn is_builtin_function(name: &str) -> bool {
@@ -40,8 +41,35 @@ pub(crate) fn apply(name: &str, args: Vec<Expr>) -> Expr {
         ("erfc", [x]) => Expr::add(vec![Expr::one(), unary("erf", x).neg()]),
         ("exp", [x]) => Expr::pow(&Expr::e(), x),
         ("DiracDelta", [x]) => dirac_delta(x),
+        ("polylog", [s, z]) => polylog(s, z),
         (_, [x]) if UNARY.contains(&name) => unary(name, x),
         _ => Expr::raw_call(name, args),
+    }
+}
+
+/// `polylog(s, z)` for the cases with a closed form: `z` is 0, 1 or -1, or `s` is 0 or 1.
+fn polylog(s: &Expr, z: &Expr) -> Expr {
+    let raw = || Expr::raw_call("polylog", vec![s.clone(), z.clone()]);
+    if z.is_zero() {
+        return Expr::zero();
+    }
+    // approximate arguments: sum the series
+    if let (Some(sn), Some(zn)) = (s.as_num(), z.as_num())
+        && (!sn.is_exact() || !zn.is_exact())
+        && let Some(v) = polylog_f64(sn.to_f64(), zn.to_f64())
+    {
+        return Expr::float(v);
+    }
+    match s.as_i64() {
+        Some(1) => Expr::call("log", vec![Expr::add(vec![Expr::one(), z.neg()])]).neg(),
+        Some(0) => z.div(&Expr::add(vec![Expr::one(), z.neg()])),
+        Some(n) if n >= 2 && z.is_one() => unary("zeta", s),
+        Some(n) if n >= 2 && z.as_num().is_some_and(|v| v.is_exact() && v.neg().is_one()) => {
+            // Li_n(-1) = -(1 - 2**(1 - n)) zeta(n)
+            let eta = Expr::add(vec![Expr::one(), Expr::pow(&Expr::int(2), &Expr::int(1 - n)).neg()]);
+            Expr::mul(vec![eta, unary("zeta", s)]).neg()
+        }
+        _ => raw(),
     }
 }
 
@@ -102,6 +130,7 @@ pub fn f64_unary(name: &str, v: f64) -> Option<f64> {
         "erfc" => 1.0 - erf(v),
         "log" => v.ln(),
         "abs" => v.abs(),
+        "zeta" => zeta_f64(v)?,
         "Heaviside" => {
             if v == 0.0 {
                 0.5
@@ -523,6 +552,55 @@ fn imaginary_multiple(x: &Expr) -> Option<Expr> {
     }
 }
 
+/// `zeta` at an integer: `pi**(2m)` times a rational at the even integers up to 12, 0 at the negative even ones,
+/// `-1/2` at 0 and `-1/12` at -1; odd integers from 3 stay symbolic.
+fn zeta_exact(n: &Num) -> Option<Expr> {
+    let p = n.as_i64()?;
+    let (num, den) = match p {
+        0 => return Some(Expr::half().neg()),
+        -1 => return Expr::rational(-1, 12),
+        q if q < 0 && q % 2 == 0 => return Some(Expr::zero()),
+        2 => (1, 6),
+        4 => (1, 90),
+        6 => (1, 945),
+        8 => (1, 9450),
+        10 => (1, 93555),
+        12 => (691, 638_512_875),
+        _ => return None,
+    };
+    Some(Expr::mul(vec![Expr::rational(num, den)?, Expr::pow(&Expr::pi(), &Expr::int(p))]))
+}
+
+/// The Riemann zeta function for `v > 1`: a partial sum plus the Euler-Maclaurin tail.
+fn zeta_f64(v: f64) -> Option<f64> {
+    if v <= 1.0 {
+        return None;
+    }
+    const N: i32 = 24;
+    let n = f64::from(N);
+    let head: f64 = (1..N).map(|k| f64::from(k).powf(-v)).sum();
+    let tail = n.powf(1.0 - v) / (v - 1.0) + 0.5 * n.powf(-v) + v * n.powf(-v - 1.0) / 12.0 - v * (v + 1.0) * (v + 2.0) * n.powf(-v - 3.0) / 720.0
+        + v * (v + 1.0) * (v + 2.0) * (v + 3.0) * (v + 4.0) * n.powf(-v - 5.0) / 30240.0;
+    Some(head + tail)
+}
+
+/// `polylog(s, z)` for real `|z| < 1` by its series (`s` any real).
+pub fn polylog_f64(s: f64, z: f64) -> Option<f64> {
+    if z.abs() >= 1.0 {
+        return None;
+    }
+    let (mut term, mut sum) = (1.0_f64, 0.0_f64);
+    for k in 1..100_000 {
+        term *= z;
+        let add = term * f64::from(k).powf(-s);
+        sum += add;
+        if add.abs() < 1e-17 * sum.abs().max(1e-300) {
+            break;
+        }
+    }
+    Some(sum)
+}
+
 fn exact_value(name: &str, n: &Num) -> Option<Expr> {
     let zero = n.is_zero();
     let one = n.is_one();
@@ -547,6 +625,7 @@ fn exact_value(name: &str, n: &Num) -> Option<Expr> {
             Some(Expr::mul(vec![Expr::rational(s, 6)?, Expr::pi()]))
         }
         "Gamma" => gamma_exact(n),
+        "zeta" => zeta_exact(n),
         "Heaviside" => Some(if zero {
             Expr::half()
         } else if n.is_negative() {
