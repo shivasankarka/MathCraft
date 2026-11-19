@@ -178,7 +178,7 @@ fn job(spans: &[Span], size: f32, theme: &Theme, color: Color32, width: f32) -> 
     job
 }
 
-fn heading(line: &str) -> Option<(usize, &str)> {
+pub(crate) fn heading(line: &str) -> Option<(usize, &str)> {
     let hashes = line.chars().take_while(|c| *c == '#').count();
     if !(1..=3).contains(&hashes) {
         return None;
@@ -331,14 +331,14 @@ pub fn show(ui: &mut Ui, source: &str, theme: &Theme) -> Response {
 }
 
 /// The cells of a `| a | b |` line.
-fn table_row(line: &str) -> Vec<String> {
+pub(crate) fn table_row(line: &str) -> Vec<String> {
     let inner = line.trim().trim_start_matches('|');
     let inner = inner.strip_suffix('|').unwrap_or(inner);
     inner.split('|').map(|c| c.trim().to_owned()).collect()
 }
 
 /// The `|---|:---:|` line under a header.
-fn is_rule_row(row: &[String]) -> bool {
+pub(crate) fn is_rule_row(row: &[String]) -> bool {
     !row.is_empty() && row.iter().all(|c| c.len() >= 3 && c.trim_matches(':').chars().all(|ch| ch == '-') && c.contains('-'))
 }
 
@@ -363,7 +363,7 @@ fn table(ui: &mut Ui, rows: &[Vec<String>], index: usize, theme: &Theme) {
     ui.add_space(8.0);
 }
 
-fn numbered(s: &str) -> Option<(&str, &str)> {
+pub(crate) fn numbered(s: &str) -> Option<(&str, &str)> {
     let digits = s.chars().take_while(char::is_ascii_digit).count();
     let rest = s.get(digits..)?.strip_prefix(". ")?;
     (digits > 0).then(|| (s.get(..digits).unwrap_or("1"), rest))
