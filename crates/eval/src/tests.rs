@@ -1003,3 +1003,24 @@ fn fourier_transforms() {
     assert_eq!(ev("fourier(exp(-a*t**2), t)"), "exp(-w**2/(4*a))*sqrt(pi/a)");
     assert_eq!(ev("inverse_fourier(1/(w**2 + 1), w)"), "exp(-abs(t))/2");
 }
+
+#[test]
+fn laplace_dsolve() {
+    assert_eq!(ev("inverse_laplace(1/(s**2 + 1)**3, s)"), "-t**2*sin(t)/8 - 3*t*cos(t)/8 + 3*sin(t)/8");
+    assert_eq!(ev("inverse_laplace(1/(s**2 - 1)**2, s)"), "t*exp(t)/4 + t*exp(-t)/4 - exp(t)/4 + exp(-t)/4");
+    assert_eq!(
+        ev(
+            "y = symbols('y'); simplify(diff(t**2*sin(2*t)/8 + t*cos(2*t)/16 - sin(2*t)/32, t, 2) + 4*(t**2*sin(2*t)/8 + t*cos(2*t)/16 - sin(2*t)/32) - t*cos(2*t))"
+        ),
+        "0"
+    );
+    assert_eq!(
+        ev("x = symbols('x'); y = symbols('y'); dsolve([diff(x(t), t) == y(t), diff(y(t), t) == -x(t)], [x(t), y(t)], ics=[1, 0])"),
+        "[x(t) == cos(t), y(t) == -sin(t)]"
+    );
+    assert_eq!(
+        ev("x = symbols('x'); y = symbols('y'); dsolve([diff(x(t), t) == y(t), diff(y(t), t) == -x(t)], [x(t), y(t)])"),
+        "[x(t) == C1*cos(t) + C2*sin(t), y(t) == -C1*sin(t) + C2*cos(t)]"
+    );
+    assert!(ev("y = symbols('y'); dsolve(diff(y(t), t, 2) + 4*y(t) == t*cos(2*t), y(t))").starts_with("y(t) =="));
+}
