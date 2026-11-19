@@ -167,6 +167,28 @@ fn welcome_notebook_renders_and_runs() {
     assert!(show(3).starts_with("<plot"), "{}", show(3));
 }
 
+/// Every bundled example opens in its own tab, runs to the end without an error, and is listed in the palette.
+#[test]
+fn bundled_examples_open_and_run() {
+    let ctx = egui::Context::default();
+    let mut app = App::with_context(ctx.clone(), None);
+    for (i, (name, ..)) in examples::EXAMPLES.iter().enumerate() {
+        app.open_example(i);
+        let start = Instant::now();
+        while app.busy() || start.elapsed() < Duration::from_millis(200) {
+            frame(&ctx, &mut app);
+            std::thread::sleep(Duration::from_millis(20));
+            assert!(start.elapsed() < Duration::from_secs(60), "the example {name} did not finish running");
+        }
+        for c in app.cur.nb.cells().iter().filter(|c| c.kind == CellKind::Code) {
+            let failed = matches!(c.output.as_ref().map(|o| &o.result), Some(Err(_)));
+            assert!(!failed && c.state == CellState::Fresh, "{name}: cell `{}` is {:?}: {:?}", c.source, c.state, c.output);
+        }
+    }
+    let labels: Vec<String> = app.commands(&ctx).into_iter().filter(|i| i.group == "Example").map(|i| i.title).collect();
+    assert_eq!(labels.len(), examples::EXAMPLES.len());
+}
+
 #[test]
 fn editing_and_running_through_actions_updates_dependents() {
     let ctx = egui::Context::default();
