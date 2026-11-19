@@ -11,6 +11,7 @@ User-facing changes per version. Planning notes and status live in `refs/` (not 
 - Definite integrals of `sin`/`cos` fractions over a full period are exact instead of floats: `integrate(1/(2 + cos(x)), (x, 0, 2*pi))` is `2*pi*sqrt(3)/3`. Limits now combine the limits of the parts of a sum, product or function value when one of them is infinite (`atan(tan(x/2))` as `x -> pi` from the left is `pi/2`), which is what the jumps of the half-angle antiderivative needed.
 - A definite integral with `abs(u)` for linear `u` is split where `u` changes sign: `integrate(1/sqrt(abs(x)), (x, -1, 1))` is `4` (it used to fail), `integrate(exp(-abs(x)), (x, -oo, oo))` is `2`.
 - Trigonometric inequalities use the smallest period: `solve(tan(x) > 1, x)` is `(n*pi + pi/4, n*pi + pi/2)` instead of two intervals per `2*pi`.
+- The tutorial notebook and the README cover the series sums, `product`, the transforms, `dsolve` systems, `rref` and `svd`, and their "does not work yet" lists are updated.
 
 ## 0.4.0 (2026-11-15)
 
