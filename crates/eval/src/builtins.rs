@@ -178,6 +178,8 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("apart", "apart(f, x)", "partial fractions of a rational function"),
     ("laplace", "laplace(f, t, s=s)", "Laplace transform of sums of t**n, exp, sin, cos, sinh and cosh terms"),
     ("inverse_laplace", "inverse_laplace(F, s, t=t)", "inverse Laplace transform of a rational function of s"),
+    ("fourier", "fourier(f, t, w=w)", "Fourier transform of Gaussians, exp(-a*abs(t)) and 1/(t**2 + a**2), times powers of t"),
+    ("inverse_fourier", "inverse_fourier(F, w, t=t)", "inverse Fourier transform (same table, by duality)"),
     ("series", "series(f, x, x0=0, n=6)", "Taylor polynomial up to order n"),
     (
         "solve",
@@ -244,6 +246,8 @@ const METHODS: &[&str] = &[
     "apart",
     "laplace",
     "inverse_laplace",
+    "fourier",
+    "inverse_fourier",
     "nroots",
     "nintegrate",
     "fzero",
@@ -1177,16 +1181,27 @@ pub fn call(it: &mut Interp<'_>, name: &'static str, a: Args) -> R<Value> {
             };
             it.checked(alg::apart(&e, &x)?)
         }
-        "laplace" | "inverse_laplace" => {
+        "laplace" | "inverse_laplace" | "fourier" | "inverse_fourier" => {
             a.limits(name, 2, 3)?;
             let e = a.expr(0)?;
-            let to = if name == "laplace" { "s" } else { "t" };
+            let to = if matches!(name, "laplace") {
+                "s"
+            } else if name == "fourier" {
+                "w"
+            } else {
+                "t"
+            };
             let x = as_symbol(a.pos.get(1).ok_or_else(|| EvalError::new(format!("{name}: name the variable")))?)?;
             let y = match a.pos.get(2) {
                 Some(v) => as_symbol(v)?,
                 None => Expr::sym(to),
             };
-            let found = if name == "laplace" { alg::laplace(&e, &x, &y)? } else { alg::inverse_laplace(&e, &x, &y)? };
+            let found = match name {
+                "laplace" => alg::laplace(&e, &x, &y)?,
+                "inverse_laplace" => alg::inverse_laplace(&e, &x, &y)?,
+                "fourier" => alg::fourier(&e, &x, &y)?,
+                _ => alg::inverse_fourier(&e, &x, &y)?,
+            };
             match found {
                 Some(r) => it.checked(r),
                 None => err(format!("no closed form found for this {name}")),
