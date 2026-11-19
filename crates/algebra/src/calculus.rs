@@ -106,6 +106,7 @@ fn derivative_of(name: &str, u: &Expr) -> Option<Expr> {
         "Ei" => c("exp").div(u),
         "log" => Expr::pow(u, &Expr::int(-1)),
         "abs" => u.div(&c("abs")),
+        "Heaviside" => Expr::call("DiracDelta", vec![u.clone()]),
         _ => return None,
     })
 }
