@@ -1520,6 +1520,9 @@ fn dsolve(it: &Interp<'_>, a: &Args) -> R<Value> {
     if a.pos.len() < 2 || a.pos.len() > 4 {
         return err("dsolve(eq, y(x), ics=None, x0=0)");
     }
+    if let (Value::List(eqs), Value::List(fs)) = (a.get(0)?, a.get(1)?) {
+        return dsolve_system(it, a, eqs, fs);
+    }
     let (eq, f) = (a.expr(0)?, a.expr(1)?);
     let mut sols = alg::dsolve(&eq, &f)?;
     if let Some(ics) = a.opt(2, "ics") {
@@ -1546,6 +1549,44 @@ fn dsolve(it: &Interp<'_>, a: &Args) -> R<Value> {
         out.push(it.checked(s)?);
     }
     Ok(if out.len() == 1 { out.remove(0) } else { Value::list(out) })
+}
+
+/// `dsolve([eq1, eq2], [x(t), y(t)], ics=[x(0), x'(0), ..., y(0), ...])`: a linear system with constant
+/// coefficients through the Laplace transform; the constants are the initial values.
+fn dsolve_system(it: &Interp<'_>, a: &Args, eqs: &[Value], fs: &[Value]) -> R<Value> {
+    let eqs: Vec<Expr> = eqs.iter().map(Value::to_expr).collect::<R<_>>()?;
+    let fs: Vec<Expr> = fs.iter().map(Value::to_expr).collect::<R<_>>()?;
+    let Some(t) = fs.first().and_then(|f| f.children().first().cloned()) else { return err("the unknowns are written x(t), y(t)") };
+    if fs.iter().any(|f| f.children() != [t.clone()]) {
+        return err("every unknown must depend on the same variable");
+    }
+    let mut sols = alg::dsolve_laplace(&eqs, &fs, &t)?;
+    if let Some(ics) = a.opt(2, "ics") {
+        let items: Vec<Expr> = match ics {
+            Value::List(v) | Value::Tuple(v) => v.iter().map(Value::to_expr).collect::<R<_>>()?,
+            single => vec![single.to_expr()?],
+        };
+        let constants: Vec<Expr> = (1..=items.len()).map(|k| Expr::sym(&format!("C{k}"))).collect();
+        if sols.iter().any(|s| s.contains(&Expr::sym(&format!("C{}", items.len() + 1)))) {
+            return err("ics must list the initial value of every unknown and each derivative below its order, in order");
+        }
+        if a.opt(3, "x0").is_some_and(|v| v.to_expr().is_ok_and(|e| !e.is_zero())) {
+            return err("a system is solved from x0 = 0");
+        }
+        let rules: Vec<(Expr, Expr)> = constants.into_iter().zip(items).collect();
+        sols = sols
+            .iter()
+            .map(|s| match s.kind() {
+                Kind::Eq(l, r) => alg::subs(r, &rules).map(|v| Expr::eq(l.clone(), v)).map_err(EvalError::from),
+                _ => Ok(s.clone()),
+            })
+            .collect::<R<_>>()?;
+    }
+    let mut out = Vec::new();
+    for s in sols {
+        out.push(it.checked(s)?);
+    }
+    Ok(Value::list(out))
 }
 
 fn plot(a: &Args) -> R<Value> {
