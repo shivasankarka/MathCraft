@@ -181,15 +181,20 @@ pub(crate) fn coordinate_text(x: f64, y: f64, b: &egui_plot::PlotBounds) -> Stri
     format!("x = {}   y = {}", fmt(x, b.width()), fmt(y, b.height()))
 }
 
-/// Ask where to save, write the picture, and say what happened.
-pub(crate) fn save_svg(p: &mathcraft_eval::PlotSpec, view: [f64; 4], look: plot_export::Look) -> String {
-    let Some(path) = rfd::FileDialog::new().add_filter("SVG picture", &["svg"]).set_file_name("plot.svg").save_file() else { return "Save cancelled".into() };
+/// The plot as an SVG picture on a white page, over `view` (the box around the data when `view` is not usable).
+pub(crate) fn svg_text(p: &mathcraft_eval::PlotSpec, view: [f64; 4], look: plot_export::Look) -> String {
     let sane = view.iter().all(|v| v.is_finite()) && view[1] > view[0] && view[3] > view[2];
     let view = if sane { view } else { plot_export::data_view(p) };
     let hex = |c: Color32| format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b());
     let series: Vec<String> = Theme::light().plot.iter().map(|c| hex(*c)).collect();
     let colors = plot_export::SvgColors { series: &series, text: "#333333", grid: "#e4e4e8" };
-    match std::fs::write(&path, plot_export::svg(p, view, &colors, look, &tick_label)) {
+    plot_export::svg(p, view, &colors, look, &tick_label)
+}
+
+/// Ask where to save, write the picture, and say what happened.
+pub(crate) fn save_svg(p: &mathcraft_eval::PlotSpec, view: [f64; 4], look: plot_export::Look) -> String {
+    let Some(path) = rfd::FileDialog::new().add_filter("SVG picture", &["svg"]).set_file_name("plot.svg").save_file() else { return "Save cancelled".into() };
+    match std::fs::write(&path, svg_text(p, view, look)) {
         Ok(()) => format!("Saved {}", file_name(&path)),
         Err(e) => format!("Could not save the plot: {e}"),
     }
