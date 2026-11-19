@@ -27,7 +27,19 @@ pub fn require_symbol(x: &Expr) -> MathResult<()> {
 
 /// Is `e` identically zero after expansion?
 pub fn is_zero_expr(e: &Expr) -> MathResult<bool> {
-    Ok(e.is_zero() || expand(e)?.is_zero())
+    if e.is_zero() || expand(e)?.is_zero() {
+        return Ok(true);
+    }
+    // a sum of fractions vanishes when its common numerator does (`5 + sqrt(221) - 196/(sqrt(221) - 5)`)
+    if has_division(e) {
+        let (n, _) = crate::rational::together(e)?;
+        return Ok(n.is_zero());
+    }
+    Ok(false)
+}
+
+fn has_division(e: &Expr) -> bool {
+    matches!(e.kind(), Kind::Pow(_, k) if k.as_i64().is_some_and(|k| k < 0)) || e.children().iter().any(has_division)
 }
 
 /// Does the expression contain a division by exact zero (`0 ** -n`) or a non-finite float?
