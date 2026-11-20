@@ -29,6 +29,7 @@ mod highlight;
 mod icons;
 mod markdown;
 mod math_view;
+mod native_menu;
 mod output;
 mod palette;
 mod plot_export;
@@ -136,6 +137,13 @@ enum Cmd {
     ExportHtml,
     Find,
     GoTo(CellId),
+    Quit,
+    /// Show the command palette.
+    Commands,
+    /// Show or hide the Functions window, the Symbols window, and switch the notebook to or from the text view.
+    ToggleFunctions,
+    ToggleSymbols,
+    ToggleTextView,
     Help(String),
 }
 
@@ -167,6 +175,8 @@ struct App {
     show_symbols: bool,
     /// The find-and-replace window, when open.
     find: Option<find::State>,
+    /// The system menu bar (macOS), which then takes the place of the toolbar menus.
+    native_menu: Option<native_menu::NativeMenu>,
     changes: Option<Changes>,
     show_actions: bool,
     help_filter: String,
