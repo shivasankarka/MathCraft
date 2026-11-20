@@ -2,6 +2,10 @@
 
 User-facing changes per version. Planning notes and status live in `refs/` (not tracked).
 
+## Unreleased
+
+- App (macOS): the menus are in the system menu bar at the top of the screen: MathCraft (About, Hide, Quit), File (with Open Recent and Open Example), Edit, Run, View, Settings, Window and Help (which also searches the menus). The toolbar keeps Commands, Functions and Symbols, and the menus that moved are gone from it. Entries show their keys and check marks (view, sidebar, appearance, accent, run mode, strict names, Vim keys); Undo and Redo of cell changes are greyed out when there is nothing to undo. Cut, copy, paste and Cmd+Z stay with the editors. Quit asks about unsaved notebooks like closing the window does. Other systems keep the toolbar menus.
+
 ## 0.5.0 (2026-11-20)
 
 - New `laplace(f, t, s=s)` and `inverse_laplace(F, s, t=t)`. The forward transform covers sums of `c*t**n*exp(a*t)*trig(w*t)` (`sin`, `cos`, `sinh`, `cosh`), powers `t**p` and products or powers of trig functions: `laplace(t**2*exp(-3*t), t)` is `2/(s + 3)**3`, `laplace(sin(t)**2, t)` is `2/(s**3 + 4*s)`. The inverse goes through partial fractions: linear factors to any power, irreducible quadratics up to the square (`inverse_laplace(1/(s**2 + 2*s + 5), s)` is `exp(-t)*sin(2*t)/2`), and `s**p` (`1/sqrt(s)` is `1/(sqrt(pi)*sqrt(t))`).
