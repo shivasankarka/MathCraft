@@ -127,6 +127,14 @@ impl App {
             Cmd::ExportHtml => self.export_html(),
             Cmd::Find => self.open_find(),
             Cmd::GoTo(id) => self.go_to_cell(id),
+            Cmd::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Cmd::Commands => self.palette.show(),
+            Cmd::ToggleFunctions => self.show_help = !self.show_help,
+            Cmd::ToggleSymbols => self.show_symbols = !self.show_symbols,
+            Cmd::ToggleTextView => {
+                let to = if self.cur.view == View::Text { View::Notebook } else { View::Text };
+                self.cur.set_view(to);
+            }
             Cmd::Help(name) => {
                 self.help_filter = name;
                 self.show_help = true;
