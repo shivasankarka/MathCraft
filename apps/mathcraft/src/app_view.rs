@@ -24,6 +24,7 @@ impl App {
     pub(crate) fn show(&mut self, root: &mut egui::Ui) {
         let ctx = root.ctx().clone();
         let ctx = &ctx;
+        self.poll_native_menu(ctx);
         self.poll_kernel();
         self.poll_git(ctx);
         self.persist_settings();
