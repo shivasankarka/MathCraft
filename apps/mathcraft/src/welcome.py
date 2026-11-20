@@ -49,6 +49,7 @@ plot(f, (x, 0, 20))
 # - **F1** lists every function; **Shift+Enter** in that list puts `name(` into your cell.
 # - **F2** opens the symbols window: a calculator keypad, integrals, sums, limits, roots, fractions, trigonometry,
 #   constants, relations and matrices of any size. **Tab** walks through the blanks of what you inserted.
+# - On a Mac the menus are in the menu bar at the top of the screen (the toolbar keeps Commands, Functions and Symbols).
 # - The row under the menus (Simplify, Expand, Factor, Solve, Differentiate, Integrate, Numeric, Plot) wraps the
 #   selected text, or the expression on the cursor's line, in that call. View > Action row hides it.
 # - Optional Vim keys: Settings > Vim keys in the command palette.
