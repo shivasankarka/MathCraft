@@ -31,3 +31,6 @@ image.workspace = true
 
 [lints]
 workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "0.21.2", default-features = false }
