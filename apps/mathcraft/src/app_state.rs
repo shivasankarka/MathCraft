@@ -7,6 +7,7 @@ impl App {
         let path_given = path.is_some();
         let mut app = Self::with_context(cc.egui_ctx.clone(), path);
         app.unified_title_bar = cfg!(target_os = "macos");
+        app.native_menu = native_menu::NativeMenu::install(&cc.egui_ctx);
         app.load_settings(settings::config_dir());
         app.load_session(path_given);
         app
@@ -168,6 +169,7 @@ impl App {
             palette: PaletteState::default(),
             last_cell: None,
             unified_title_bar: false,
+            native_menu: None,
             toolbar_height: 40.0,
             dark,
             light,
