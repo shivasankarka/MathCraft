@@ -22,131 +22,136 @@ impl App {
             if self.unified_title_bar {
                 ui.add_space(theme::TRAFFIC_LIGHTS_INSET);
             }
-            ui.menu_button("File", |ui| {
-                ui.spacing_mut().button_padding = vec2(12.0, 5.0);
-                if Self::menu_item(ui, theme, &ctx, "New", Some((Modifiers::COMMAND, Key::N))) {
-                    self.new_file();
-                }
-                if Self::menu_item(ui, theme, &ctx, "Open…", Some((Modifiers::COMMAND, Key::O))) {
-                    self.open_file();
-                }
-                if Self::menu_item(ui, theme, &ctx, "Open Folder…", None) {
-                    self.open_folder();
-                }
-                if Self::menu_item(ui, theme, &ctx, "Show or hide sidebar", Some((Modifiers::COMMAND, Key::B))) {
-                    self.toggle_sidebar();
-                }
-                ui.separator();
-                if Self::menu_item(ui, theme, &ctx, "Close tab", Some((Modifiers::COMMAND, Key::W))) {
-                    self.close_tab(self.cur.id);
-                }
-                ui.separator();
-                if Self::menu_item(ui, theme, &ctx, "Save", Some((Modifiers::COMMAND, Key::S))) {
-                    self.save(false);
-                }
-                if Self::menu_item(ui, theme, &ctx, "Save As…", None) {
-                    self.save(true);
-                }
-                if Self::menu_item(ui, theme, &ctx, "Export as HTML…", None) {
-                    self.export_html();
-                }
-                ui.menu_button("Open example", |ui| {
-                    for (i, (name, about, _)) in examples::EXAMPLES.iter().enumerate() {
-                        if menu_row(ui, theme, name, None).on_hover_text(*about).clicked() {
-                            self.open_example(i);
-                            ui.close();
-                        }
+            // the system menu bar has these when there is one
+            if self.native_menu.is_none() {
+                ui.menu_button("File", |ui| {
+                    ui.spacing_mut().button_padding = vec2(12.0, 5.0);
+                    if Self::menu_item(ui, theme, &ctx, "New", Some((Modifiers::COMMAND, Key::N))) {
+                        self.new_file();
                     }
-                });
-                let recent: Vec<PathBuf> = self.recent.iter().filter(|p| p.is_file()).cloned().collect();
-                ui.add_enabled_ui(!recent.is_empty(), |ui| {
-                    ui.menu_button("Open recent", |ui| {
-                        for p in &recent {
-                            if menu_row(ui, theme, &file_name(p), None).on_hover_text(p.display().to_string()).clicked() {
-                                self.open_path(p.clone());
+                    if Self::menu_item(ui, theme, &ctx, "Open…", Some((Modifiers::COMMAND, Key::O))) {
+                        self.open_file();
+                    }
+                    if Self::menu_item(ui, theme, &ctx, "Open Folder…", None) {
+                        self.open_folder();
+                    }
+                    if Self::menu_item(ui, theme, &ctx, "Show or hide sidebar", Some((Modifiers::COMMAND, Key::B))) {
+                        self.toggle_sidebar();
+                    }
+                    ui.separator();
+                    if Self::menu_item(ui, theme, &ctx, "Close tab", Some((Modifiers::COMMAND, Key::W))) {
+                        self.close_tab(self.cur.id);
+                    }
+                    ui.separator();
+                    if Self::menu_item(ui, theme, &ctx, "Save", Some((Modifiers::COMMAND, Key::S))) {
+                        self.save(false);
+                    }
+                    if Self::menu_item(ui, theme, &ctx, "Save As…", None) {
+                        self.save(true);
+                    }
+                    if Self::menu_item(ui, theme, &ctx, "Export as HTML…", None) {
+                        self.export_html();
+                    }
+                    ui.menu_button("Open example", |ui| {
+                        for (i, (name, about, _)) in examples::EXAMPLES.iter().enumerate() {
+                            if menu_row(ui, theme, name, None).on_hover_text(*about).clicked() {
+                                self.open_example(i);
                                 ui.close();
                             }
                         }
                     });
+                    let recent: Vec<PathBuf> = self.recent.iter().filter(|p| p.is_file()).cloned().collect();
+                    ui.add_enabled_ui(!recent.is_empty(), |ui| {
+                        ui.menu_button("Open recent", |ui| {
+                            for p in &recent {
+                                if menu_row(ui, theme, &file_name(p), None).on_hover_text(p.display().to_string()).clicked() {
+                                    self.open_path(p.clone());
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
                 });
-            });
-            ui.menu_button("Edit", |ui| {
-                ui.add_enabled_ui(self.cur.can_undo(), |ui| {
-                    if Self::menu_item(ui, theme, &ctx, "Undo cell change", Some((Modifiers::COMMAND, Key::Z))) {
-                        self.undo_cells();
+                ui.menu_button("Edit", |ui| {
+                    ui.add_enabled_ui(self.cur.can_undo(), |ui| {
+                        if Self::menu_item(ui, theme, &ctx, "Undo cell change", Some((Modifiers::COMMAND, Key::Z))) {
+                            self.undo_cells();
+                        }
+                    });
+                    ui.add_enabled_ui(self.cur.can_redo(), |ui| {
+                        if Self::menu_item(ui, theme, &ctx, "Redo cell change", Some((Modifiers::COMMAND | Modifiers::SHIFT, Key::Z))) {
+                            self.redo_cells();
+                        }
+                    });
+                    ui.separator();
+                    if Self::menu_item(ui, theme, &ctx, "Find and replace…", Some((Modifiers::COMMAND, Key::F))) {
+                        self.open_find();
                     }
                 });
-                ui.add_enabled_ui(self.cur.can_redo(), |ui| {
-                    if Self::menu_item(ui, theme, &ctx, "Redo cell change", Some((Modifiers::COMMAND | Modifiers::SHIFT, Key::Z))) {
-                        self.redo_cells();
+                ui.menu_button("Run", |ui| {
+                    if Self::menu_item(ui, theme, &ctx, "Run all", Some((Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter))) {
+                        self.run(RunRequest::All);
+                    }
+                    if Self::menu_item(ui, theme, &ctx, "Run stale cells", None) {
+                        self.run(RunRequest::Stale);
+                    }
+                    if Self::menu_item(ui, theme, &ctx, "Interrupt", Some((Modifiers::COMMAND, Key::Period))) {
+                        self.cur.kernel.interrupt();
                     }
                 });
-                ui.separator();
-                if Self::menu_item(ui, theme, &ctx, "Find and replace…", Some((Modifiers::COMMAND, Key::F))) {
-                    self.open_find();
-                }
-            });
-            ui.menu_button("Run", |ui| {
-                if Self::menu_item(ui, theme, &ctx, "Run all", Some((Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter))) {
-                    self.run(RunRequest::All);
-                }
-                if Self::menu_item(ui, theme, &ctx, "Run stale cells", None) {
-                    self.run(RunRequest::Stale);
-                }
-                if Self::menu_item(ui, theme, &ctx, "Interrupt", Some((Modifiers::COMMAND, Key::Period))) {
-                    self.cur.kernel.interrupt();
-                }
-            });
-            ui.menu_button("View", |ui| {
-                let mut view = self.cur.view;
-                for (v, label) in [(View::Notebook, "Notebook: one block per cell"), (View::Text, "Text: the whole file in one editor")] {
-                    if choice(ui, theme, label, view == v) {
-                        view = v;
+                ui.menu_button("View", |ui| {
+                    let mut view = self.cur.view;
+                    for (v, label) in [(View::Notebook, "Notebook: one block per cell"), (View::Text, "Text: the whole file in one editor")] {
+                        if choice(ui, theme, label, view == v) {
+                            view = v;
+                        }
                     }
-                }
-                if view != self.cur.view {
-                    self.cur.set_view(view);
-                    ui.close();
-                }
-            });
+                    if view != self.cur.view {
+                        self.cur.set_view(view);
+                        ui.close();
+                    }
+                });
+            }
             if ui.button("Commands").on_hover_text("Search every command (⌘P)").clicked() {
                 self.palette.show();
             }
-            ui.menu_button("Settings", |ui| {
-                menu_section(ui, theme, &format!("Appearance (now {})", theme.name));
-                let mut pref = ctx.options(|o| o.theme_preference);
-                for (v, label) in [(ThemePreference::System, "Match system"), (ThemePreference::Light, "Light"), (ThemePreference::Dark, "Dark")] {
-                    if choice(ui, theme, label, pref == v) {
-                        pref = v;
+            if self.native_menu.is_none() {
+                ui.menu_button("Settings", |ui| {
+                    menu_section(ui, theme, &format!("Appearance (now {})", theme.name));
+                    let mut pref = ctx.options(|o| o.theme_preference);
+                    for (v, label) in [(ThemePreference::System, "Match system"), (ThemePreference::Light, "Light"), (ThemePreference::Dark, "Dark")] {
+                        if choice(ui, theme, label, pref == v) {
+                            pref = v;
+                        }
                     }
-                }
-                ctx.set_theme(pref);
-                menu_section(ui, theme, "Accent");
-                if let Some(name) = accent_row(ui, theme, self.accent.as_deref()) {
-                    self.accent = (name != "blue").then(|| name.to_owned());
-                    self.rebuild_themes();
-                }
-                ui.separator();
-                menu_section(ui, theme, "When a cell runs");
-                for (m, label) in [(RunMode::Auto, "Also run the cells that depend on it"), (RunMode::Lazy, "Only mark dependent cells as stale")] {
-                    if choice(ui, theme, label, self.cur.nb.mode == m) {
-                        self.cur.nb.mode = m;
+                    ctx.set_theme(pref);
+                    menu_section(ui, theme, "Accent");
+                    if let Some(name) = accent_row(ui, theme, self.accent.as_deref()) {
+                        self.accent = (name != "blue").then(|| name.to_owned());
+                        self.rebuild_themes();
                     }
-                }
-                ui.separator();
-                menu_section(ui, theme, "Names");
-                if choice(ui, theme, "Strict: declare symbols with symbols()", self.cur.nb.strict) {
-                    self.cur.nb.strict = !self.cur.nb.strict;
-                }
-                ui.separator();
-                menu_section(ui, theme, "Editing");
-                if choice(ui, theme, "Vim keys", self.vim) {
-                    self.vim = !self.vim;
-                }
-                if choice(ui, theme, "Show powers as superscripts in cells", self.pretty) {
-                    self.pretty = !self.pretty;
-                }
-            });
+                    ui.separator();
+                    menu_section(ui, theme, "When a cell runs");
+                    for (m, label) in [(RunMode::Auto, "Also run the cells that depend on it"), (RunMode::Lazy, "Only mark dependent cells as stale")] {
+                        if choice(ui, theme, label, self.cur.nb.mode == m) {
+                            self.cur.nb.mode = m;
+                        }
+                    }
+                    ui.separator();
+                    menu_section(ui, theme, "Names");
+                    if choice(ui, theme, "Strict: declare symbols with symbols()", self.cur.nb.strict) {
+                        self.cur.nb.strict = !self.cur.nb.strict;
+                    }
+                    ui.separator();
+                    menu_section(ui, theme, "Editing");
+                    if choice(ui, theme, "Vim keys", self.vim) {
+                        self.vim = !self.vim;
+                    }
+                    if choice(ui, theme, "Show powers as superscripts in cells", self.pretty) {
+                        self.pretty = !self.pretty;
+                    }
+                });
+            }
             if ui.button("Functions").on_hover_text("List every function (F1)").clicked() {
                 self.show_help = !self.show_help;
             }
