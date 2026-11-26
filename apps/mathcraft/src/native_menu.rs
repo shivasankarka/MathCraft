@@ -104,6 +104,7 @@ pub(crate) fn spec() -> Vec<Menu> {
                 item("save", "Save", Some("cmd+s")),
                 item("save-as", "Save As…", None),
                 item("export-html", "Export as HTML…", None),
+                item("export-pdf", "Export as PDF…", None),
             ],
         },
         Menu {
@@ -203,6 +204,7 @@ pub(crate) fn command(id: &str, recent: &[PathBuf]) -> Option<Cmd> {
         "save" => Cmd::Save,
         "save-as" => Cmd::SaveAs,
         "export-html" => Cmd::ExportHtml,
+        "export-pdf" => Cmd::ExportPdf,
         "quit" => Cmd::Quit,
         "undo-cell" => Cmd::UndoCell,
         "redo-cell" => Cmd::RedoCell,
