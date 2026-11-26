@@ -1,6 +1,8 @@
 //! One open document: a notebook with its own kernel, file path and editing state. The app keeps several (tabs).
 
 use crate::math_view::MathCache;
+use crate::session::Memo;
+use crate::store;
 use eframe::egui;
 use mathcraft_notebook::format::{self, CellText};
 use mathcraft_notebook::{CellId, CellKind, CellState, Event, Kernel, Layout, Notebook, RunRequest};
@@ -33,6 +35,15 @@ pub struct Doc {
     /// Cell orders from before each add, delete or move, newest last (text edits have their own undo in the editor).
     undo: Vec<Layout>,
     redo: Vec<Layout>,
+    /// The name an untitled notebook is kept under between launches, once it has been typed into.
+    pub draft: Option<String>,
+    /// Where the notebook was last scrolled to and where the cursor was; `restore_view` is put back the next time
+    /// the notebook is drawn.
+    pub memo: Memo,
+    pub restore_view: Option<Memo>,
+    /// `revision()` and the draft text as last written to the config folder.
+    saved_rev: u64,
+    saved_draft: String,
 }
 
 const UNDO_DEPTH: usize = 200;
@@ -40,6 +51,15 @@ const UNDO_DEPTH: usize = 200;
 impl Doc {
     /// A document with a fresh kernel; every cell is queued to run.
     pub fn new(id: u64, ctx: &egui::Context, nb: Notebook, path: Option<PathBuf>) -> Self {
+        Self::with_saved(id, ctx, nb, path, None)
+    }
+
+    /// Like `new`, but cells whose results are in `saved` (what `Notebook::export_outputs` wrote) show them, dimmed,
+    /// instead of running; only the other cells run.
+    pub fn with_saved(id: u64, ctx: &egui::Context, mut nb: Notebook, path: Option<PathBuf>, saved: Option<&str>) -> Self {
+        if let Some(json) = saved {
+            nb.import_outputs(json);
+        }
         let mut doc = Doc {
             id,
             nb,
@@ -54,9 +74,62 @@ impl Doc {
             text: String::new(),
             undo: Vec::new(),
             redo: Vec::new(),
+            draft: None,
+            memo: Memo::default(),
+            restore_view: None,
+            saved_rev: 0,
+            saved_draft: String::new(),
         };
-        doc.run(RunRequest::All);
+        doc.run(RunRequest::New);
         doc
+    }
+
+    /// Changes whenever a cell finishes running.
+    pub fn revision(&self) -> u64 {
+        self.generations.values().sum()
+    }
+
+    /// The name this notebook's results and draft are kept under: from its path, or its draft name.
+    pub fn store_key(&self) -> Option<String> {
+        match (&self.path, &self.draft) {
+            (Some(p), _) => Some(store::key_for(p)),
+            (None, Some(d)) => Some(d.clone()),
+            (None, None) => None,
+        }
+    }
+
+    /// Write results (when something finished since the last write and the kernel is idle) and the draft text (when it
+    /// changed) to `dir`. `check_text` is false between the occasional checks, since turning the notebook into text is
+    /// not free.
+    pub fn write_store(&mut self, dir: &Path, check_text: bool) -> std::io::Result<()> {
+        if let Some(name) = self.draft.clone()
+            && check_text
+            && self.path.is_none()
+        {
+            let text = self.nb.to_text();
+            if text != self.saved_draft {
+                store::write_draft(dir, &name, &text)?;
+                self.saved_draft = text;
+            }
+        }
+        if !self.busy()
+            && self.revision() != self.saved_rev
+            && let Some(key) = self.store_key()
+        {
+            store::write_outputs(dir, &key, &self.nb.export_outputs())?;
+            self.saved_rev = self.revision();
+        }
+        Ok(())
+    }
+
+    /// The results are not on disk under the current name (it just changed): write them at the next chance.
+    pub fn outputs_need_writing(&mut self) {
+        self.saved_rev = self.revision().wrapping_add(1);
+    }
+
+    /// Should an untitled notebook be kept as a draft: it has been typed into.
+    pub fn worth_a_draft(&self) -> bool {
+        self.path.is_none() && self.dirty && self.nb.cells().iter().any(|c| !c.source.trim().is_empty())
     }
 
     /// Remember the cell order before a structural change.
