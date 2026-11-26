@@ -810,6 +810,35 @@ fn vim_keys_edit_a_cell() {
 }
 
 #[test]
+fn vim_macros_and_marks_work_in_a_cell() {
+    let mut harness = typing_harness();
+    if let Some(app) = harness.state_mut() {
+        app.vim = true;
+    }
+    let status = |h: &egui_kittest::Harness<'_, Option<App>>| h.state().as_ref().map(|a| a.vim_status.clone()).unwrap_or_default();
+    harness.run();
+    harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("i");
+    harness.run();
+    harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("abcdef gh");
+    harness.run();
+    harness.key_press(Key::Escape);
+    harness.run();
+    harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("0qa");
+    harness.run();
+    assert!(status(&harness).contains("recording @a"), "{}", status(&harness));
+    harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("xq");
+    harness.run();
+    assert!(!status(&harness).contains("recording"), "{}", status(&harness));
+    assert_eq!(source(&harness), "bcdef gh");
+    harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("2@a");
+    harness.run();
+    assert_eq!(source(&harness), "def gh", "the macro plays twice");
+    harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("wmb0d`b");
+    harness.run();
+    assert_eq!(source(&harness), "gh", "a mark set with mb is a motion for d");
+}
+
+#[test]
 fn vim_j_scrolls_the_text_view_to_follow_the_cursor() {
     let mut h = egui_kittest::Harness::builder()
         .with_size(vec2(900.0, 400.0))
