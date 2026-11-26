@@ -3,7 +3,7 @@
 
 use eframe::egui::{self, Event, Key as EKey};
 use egui::text::{CCursor, CCursorRange};
-use mathcraft_vim::{Key, Mode, Reply, Vim};
+use mathcraft_vim::{Key, Macros, Mode, Reply, Vim};
 
 /// Per-editor Vim state, kept in egui's temporary data.
 #[derive(Clone, Default)]
@@ -83,6 +83,9 @@ pub fn drive(ctx: &egui::Context, id: egui::Id, text: &mut String) -> VimResult 
         });
     });
 
+    // macro registers (and a recording in progress) are shared by every editor
+    let macros_id = egui::Id::unique("vim-macros");
+    ed.vim.set_macros(ctx.data_mut(|d| d.get_temp::<Macros>(macros_id)).unwrap_or_default());
     let before = text.clone();
     let mut commands = Vec::new();
     for key in keys {
@@ -115,7 +118,11 @@ pub fn drive(ctx: &egui::Context, id: egui::Id, text: &mut String) -> VimResult 
     }
     ed.last = Some((range.0.min(len), range.1.min(len)));
     let result = VimResult { edited, commands, status: ed.vim.status(), mode: ed.vim.mode() };
-    ctx.data_mut(|d| d.insert_temp(state_id, ed));
+    let macros = ed.vim.take_macros();
+    ctx.data_mut(|d| {
+        d.insert_temp(macros_id, macros);
+        d.insert_temp(state_id, ed);
+    });
     result
 }
 
