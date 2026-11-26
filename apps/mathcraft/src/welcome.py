@@ -64,7 +64,8 @@ plot(f, (x, 0, 20))
 #   File > Export as HTML writes the notebook with its results, typeset maths and plots as one page.
 # - Text cells accept `**bold**`, `*italic*`, `~~struck~~`, `` `code` ``, `[links](https://example.org)`, `$maths$`,
 #   lists, quotes and `| tables |`.
-# - MathCraft remembers your tabs, folder and settings between sessions. Theme and accent colour are in the palette;
+# - MathCraft remembers your tabs, folder, scroll positions and settings between sessions, and shows each notebook's last
+#   results (dimmed until a cell runs) when you open it. Theme and accent colour are in the palette;
 #   `theme.json` can override any colour.
 #
 # **Folders and git**
