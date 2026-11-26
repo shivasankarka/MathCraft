@@ -13,7 +13,7 @@ integrate(sin(x)**2, (x, 0, pi))  # pi/2
 plot(f, (x, 0, 20))               # a plot, right under the cell
 ```
 
-**Status: v0.5.0, early but usable.** It works, but it is young: expect rough edges, and read [What does not work yet](#what-does-not-work-yet).
+**Status: v0.6.0, early but usable.** It works, but it is young: expect rough edges, and read [What does not work yet](#what-does-not-work-yet).
 It is built and tested mainly on macOS (Apple silicon); the Windows and Linux builds come from CI and have had little
 hands-on use.
 
@@ -99,7 +99,8 @@ them with `x, y = symbols('x y')`, or turn on *Strict* in Settings to require it
 - Running a cell re-runs the cells that use what it defines (or marks them stale in lazy mode).
 - Names starting with `_` are private to a cell. A top-level `for` loop's variable becomes a global name, so use `_i`.
 - Files are plain scripts with `# %%` markers, so they diff well in git and also run from the command line.
-  Outputs are not stored in the file.
+  Outputs are not stored in the file: MathCraft keeps each notebook's last results in its own folder and shows them,
+  dimmed, when you reopen it (cells you changed run again).
 - If the folder you open is a git repository, the sidebar marks changed notebooks, and View, Changes shows what changed
   since the last commit.
 
@@ -112,8 +113,8 @@ them with `x, y = symbols('x y')`, or turn on *Strict* in Settings to require it
 - **Command line:** `mathcraft-cli eval 'integrate(sin(x)**2, (x, 0, pi))'`, `run`, `check`, and
   `export notebook.py -o notebook.html` (also Markdown).
 - **For AI tools:** `mathcraft-cli mcp` runs an MCP server so an AI assistant can evaluate expressions and check notebooks.
-- **Editing:** optional Vim keys (Settings), a Text view of the whole file, tabs, a folder sidebar, find and replace across cells (Cmd+F), light and dark themes.
-- **Sharing:** File > Export as HTML writes the notebook with its results, typeset maths and plots as one page; File > Open example opens the bundled notebooks.
+- **Editing:** optional Vim keys (Settings, with marks and macros), the system menu bar on a Mac, a Text view of the whole file, tabs, a folder sidebar, find and replace across cells (Cmd+F), light and dark themes.
+- **Sharing:** File > Export as HTML writes the notebook with its results, typeset maths and plots as one page, and Export as PDF as A4 pages; File > Open example opens the bundled notebooks.
 
 ## Phones and the browser
 
