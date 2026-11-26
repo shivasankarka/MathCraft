@@ -2,7 +2,7 @@
 
 User-facing changes per version. Planning notes and status live in `refs/` (not tracked).
 
-## Unreleased
+## 0.6.0 (2026-11-27)
 
 - App (macOS): the menus are in the system menu bar at the top of the screen: MathCraft (About, Hide, Quit), File (with Open Recent and Open Example), Edit, Run, View, Settings, Window and Help (which also searches the menus). The toolbar keeps Commands, Functions and Symbols, and the menus that moved are gone from it. Entries show their keys and check marks (view, sidebar, appearance, accent, run mode, strict names, Vim keys); Undo and Redo of cell changes are greyed out when there is nothing to undo. Cut, copy, paste and Cmd+Z stay with the editors. Quit asks about unsaved notebooks like closing the window does. Other systems keep the toolbar menus.
 - App: results stay when you close a notebook. Each notebook's last results are kept in MathCraft's config folder (`outputs/`, not next to the file, so the `.py` stays plain and its diffs clean) and shown again, dimmed, when you open it; a cell whose source or inputs changed since runs instead, and so does any cell whose result can't be kept (plots, functions, very long values). Running a cell brings the cells it reads from up to date first. Results older than 60 days are cleaned up.
