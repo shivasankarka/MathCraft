@@ -2070,6 +2070,7 @@ dependencies = [
  "mathcraft-eval",
  "mathcraft-syntax",
  "petgraph",
+ "serde_json",
 ]
 
 [[package]]
