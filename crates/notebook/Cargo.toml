@@ -12,6 +12,7 @@ mathcraft-core.workspace = true
 mathcraft-syntax.workspace = true
 mathcraft-eval.workspace = true
 petgraph.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
