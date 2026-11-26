@@ -39,6 +39,7 @@ mod session;
 mod settings;
 mod sidebar;
 mod slider;
+mod store;
 mod symbols;
 mod tabs;
 mod text_view;
@@ -211,6 +212,8 @@ struct App {
     /// Recently opened files (newest first) and the session as last written to disk.
     recent: Vec<PathBuf>,
     saved_session: session::Session,
+    /// When (egui time) the session, drafts and results were last checked for writing.
+    stored_at: f64,
 }
 
 /// Everything a cell needs from the app while it is drawn.
