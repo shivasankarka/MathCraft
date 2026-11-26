@@ -281,3 +281,14 @@ fn errors_are_saved_and_values_that_do_not_read_back_are_not() {
     assert!(first.is_some_and(|o| o.result.is_err()));
     assert_eq!(nb.cells().get(1).map(|c| c.state), Some(CellState::New), "strings are left to run again");
 }
+
+#[test]
+fn a_restored_result_is_saved_again_only_while_its_source_is_unchanged() {
+    let json = ran(SAVED).export_outputs();
+    let mut nb = Notebook::from_text(SAVED);
+    nb.import_outputs(&json);
+    assert_eq!(nb.export_outputs().matches("\"fp\"").count(), 3, "restored results are kept when saving again");
+    let id = nb.cells().get(2).map(|c| c.id).unwrap_or_default();
+    nb.set_source(id, "print('changed')");
+    assert_eq!(nb.export_outputs().matches("\"fp\"").count(), 2, "an edited cell's old result is not filed under its new source");
+}
