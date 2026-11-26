@@ -128,6 +128,8 @@ pub enum RunRequest {
     All,
     /// Every cell that is new or stale.
     Stale,
+    /// Only the cells that never ran (and any stale cells they read from). Cells showing saved results stay as they are.
+    New,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -150,7 +152,7 @@ pub struct Layout(Vec<(CellId, CellKind, String)>);
 
 #[derive(Debug)]
 pub struct Notebook {
-    cells: Vec<Cell>,
+    pub(crate) cells: Vec<Cell>,
     next_id: CellId,
     pub mode: RunMode,
     /// Require `symbols(...)` declarations instead of treating unknown names as symbols.
@@ -421,7 +423,7 @@ impl Notebook {
         out
     }
 
-    fn ancestors_of(&self, idx: usize) -> Vec<usize> {
+    pub(crate) fn ancestors_of(&self, idx: usize) -> Vec<usize> {
         let mut seen = HashSet::new();
         let mut stack = vec![idx];
         let mut out = Vec::new();
@@ -467,6 +469,16 @@ impl Notebook {
                 }
             }
             RunRequest::All => set.extend(0..self.cells.len()),
+            RunRequest::New => {
+                for i in 0..self.cells.len() {
+                    if self.cells.get(i).is_some_and(|c| c.state == CellState::New) {
+                        set.insert(i);
+                        if self.mode == RunMode::Auto {
+                            set.extend(self.descendants_of(i));
+                        }
+                    }
+                }
+            }
             RunRequest::Stale => {
                 for i in 0..self.cells.len() {
                     if self.cells.get(i).is_some_and(|c| matches!(c.state, CellState::New | CellState::Stale)) {
