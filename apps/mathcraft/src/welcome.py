@@ -52,7 +52,10 @@ plot(f, (x, 0, 20))
 # - On a Mac the menus are in the menu bar at the top of the screen (the toolbar keeps Commands, Functions and Symbols).
 # - The row under the menus (Simplify, Expand, Factor, Solve, Differentiate, Integrate, Numeric, Plot) wraps the
 #   selected text, or the expression on the cursor's line, in that call. View > Action row hides it.
-# - Optional Vim keys: Settings > Vim keys in the command palette.
+# - Optional Vim keys: Settings > Vim keys in the command palette. They include text objects, dot repeat, marks (`ma`, `'a`,
+#   `` `a ``) and macros (`qa` ... `q`, then `@a`, `@@` or `3@a`; they work across cells).
+# - File > Export as PDF writes the notebook with its results and plots as an A4 document (the text is drawn as outlines, so
+#   it cannot be selected or searched; use Export as HTML for that).
 #
 # **Cells and tabs**
 # - Drag a cell by the grip in its toolbar, or a tab by its title, to reorder. **Cmd+Z** brings back a deleted or
