@@ -77,7 +77,13 @@ impl Notebook {
         let mut entries = Vec::new();
         for (c, fp) in self.cells.iter().zip(self.fingerprints()) {
             let Some(o) = &c.output else { continue };
-            if c.kind != CellKind::Code || !matches!(c.state, CellState::Fresh | CellState::Error | CellState::Stale) {
+            // a stale result is kept only while it is still the one that was restored for this very source
+            let kept = match c.state {
+                CellState::Fresh | CellState::Error => true,
+                CellState::Stale => c.restored_fp == Some(fp),
+                _ => false,
+            };
+            if c.kind != CellKind::Code || !kept {
                 continue;
             }
             let mut e = Map::new();
@@ -130,6 +136,7 @@ impl Notebook {
             let elapsed = Duration::from_millis(entry.get("ms").and_then(Json::as_u64).unwrap_or(0));
             cell.output = Some(CellOutput { stdout, result, elapsed });
             cell.state = CellState::Stale;
+            cell.restored_fp = Some(fp);
             restored += 1;
         }
         restored
