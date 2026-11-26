@@ -1983,6 +1983,7 @@ dependencies = [
  "egui",
  "egui_kittest",
  "egui_plot",
+ "flate2",
  "image",
  "mathcraft-core",
  "mathcraft-eval",
