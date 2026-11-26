@@ -60,7 +60,7 @@ fn the_session_comes_back_with_tabs_folder_and_recent_files() {
     app.open_path(work.join("b.py"));
     frame(&ctx, &mut app);
     let saved = session::Session::load(&cfg);
-    assert_eq!(saved.files.len(), 3);
+    assert_eq!(saved.tabs.len(), 3);
     assert_eq!(saved.folder.as_deref(), Some(work.as_path()));
     assert_eq!(saved.recent.first(), Some(&work.join("c.py")));
     // a file deleted since is skipped; the active tab (b) is selected again
@@ -1312,4 +1312,117 @@ fn help_screenshot() {
         h.run_steps(4);
         h.render().unwrap().save(dir.join(format!("help-{name}.png"))).unwrap();
     }
+}
+
+fn run_to_idle(ctx: &egui::Context, app: &mut App) {
+    let start = Instant::now();
+    while app.busy() || start.elapsed() < Duration::from_millis(150) {
+        frame(ctx, app);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    frame(ctx, app);
+}
+
+fn scratch(name: &str) -> (PathBuf, PathBuf) {
+    let base = std::env::temp_dir().join(format!("mathcraft-app-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (cfg, work) = (base.join("cfg"), base.join("work"));
+    std::fs::create_dir_all(&work).unwrap();
+    (cfg, work)
+}
+
+#[test]
+fn results_are_shown_again_when_a_notebook_is_reopened_and_only_new_cells_run() {
+    let (cfg, work) = scratch("results");
+    let file = work.join("a.py");
+    std::fs::write(&file, "# %%\ny = x**2 + 1\n\n# %%\ndiff(y, x)\n").unwrap();
+    let ctx = egui::Context::default();
+    let mut app = App::with_context(ctx.clone(), None);
+    app.load_settings(Some(cfg.clone()));
+    app.open_path(file.clone());
+    run_to_idle(&ctx, &mut app);
+    assert!(app.cur.nb.cells().iter().all(|c| c.state == CellState::Fresh));
+
+    // a new launch shows the same results, dimmed, without running anything
+    let ctx2 = egui::Context::default();
+    let mut again = App::with_context(ctx2.clone(), None);
+    again.load_settings(Some(cfg.clone()));
+    again.open_path(file.clone());
+    assert!(!again.cur.busy(), "nothing is queued: every cell has a saved result");
+    let cells = again.cur.nb.cells();
+    assert!(cells.iter().all(|c| c.state == CellState::Stale && c.output.is_some()));
+    assert!(cells.get(1).and_then(|c| c.output.as_ref()).is_some_and(|o| format!("{:?}", o.result).contains("2*x")));
+    frame(&ctx2, &mut again);
+
+    // running one cell brings its inputs up to date first
+    let id = again.cur.nb.cells().get(1).map(|c| c.id).unwrap_or(0);
+    again.run(RunRequest::Cell(id));
+    run_to_idle(&ctx2, &mut again);
+    assert!(again.cur.nb.cells().iter().all(|c| c.state == CellState::Fresh));
+
+    // editing the file outside makes the results of the changed cell and those below it run again
+    std::fs::write(&file, "# %%\ny = x**3\n\n# %%\ndiff(y, x)\n").unwrap();
+    let mut edited = App::with_context(egui::Context::default(), None);
+    edited.load_settings(Some(cfg.clone()));
+    edited.open_path(file);
+    assert!(edited.cur.busy(), "the changed cells run");
+    let _ = std::fs::remove_dir_all(cfg.parent().unwrap_or(&cfg));
+}
+
+#[test]
+fn an_untitled_notebook_comes_back_with_its_results_and_goes_when_closed_or_saved() {
+    let (cfg, _) = scratch("drafts");
+    let ctx = egui::Context::default();
+    let mut app = App::with_context(ctx.clone(), None);
+    app.load_settings(Some(cfg.clone()));
+    app.replace_notebook(Notebook::from_text("# %%\nz = 3\nz * 7\n"), None);
+    app.cur.dirty = true;
+    run_to_idle(&ctx, &mut app);
+    app.persist_session(true);
+    let name = app.cur.draft.clone().expect("typed-into notebooks become drafts");
+    assert!(store::read_draft(&cfg, &name).is_some_and(|t| t.contains("z * 7")));
+    assert!(!app.any_dirty(), "quitting does not discard it");
+
+    let mut again = App::with_context(egui::Context::default(), None);
+    again.load_settings(Some(cfg.clone()));
+    again.load_session(false);
+    assert_eq!(again.cur.draft.as_deref(), Some(name.as_str()));
+    assert!(again.cur.dirty && again.cur.path.is_none());
+    assert!(!again.cur.busy());
+    assert!(again.cur.nb.cells().first().is_some_and(|c| c.state == CellState::Stale && c.output.is_some()));
+
+    // closing the tab throws the draft away (the confirmation dialog is for unsaved changes, so say there are none)
+    again.cur.dirty = false;
+    let id = again.cur.id;
+    again.close_tab(id);
+    assert_eq!(store::read_draft(&cfg, &name), None);
+    let _ = std::fs::remove_dir_all(cfg.parent().unwrap_or(&cfg));
+}
+
+#[test]
+fn scroll_and_cursor_are_remembered_per_tab() {
+    let (cfg, work) = scratch("view");
+    let file = work.join("v.py");
+    std::fs::write(&file, "# %%\na = 1\n\n# %%\nbb = 22\n").unwrap();
+    let ctx = egui::Context::default();
+    let mut app = App::with_context(ctx.clone(), None);
+    app.load_settings(Some(cfg.clone()));
+    app.open_path(file.clone());
+    app.cur.memo = session::Memo { scroll: 37, cursor: Some((1, 3)) };
+    app.persist_session(true);
+
+    let mut again = App::with_context(egui::Context::default(), None);
+    again.load_settings(Some(cfg.clone()));
+    again.load_session(false);
+    assert_eq!(again.cur.restore_view, Some(session::Memo { scroll: 37, cursor: Some((1, 3)) }));
+    assert_eq!(again.current_session().views.get(&file.to_string_lossy().into_owned()).map(|m| m.scroll), Some(37), "a tab not yet shown keeps its view");
+    let ctx2 = egui::Context::default();
+    let scroll = again.take_restored_view(&ctx2);
+    assert_eq!(scroll, Some(37.0));
+    let second = again.cur.nb.cells().get(1).map(|c| c.id);
+    assert_eq!(again.cur.focus, second, "the cell that had the cursor takes the keyboard");
+    let caret = egui::TextEdit::load_state(&ctx2, editor_id(second.unwrap_or(0))).and_then(|s| s.cursor.char_range()).map(|r| usize::from(r.primary.index));
+    assert_eq!(caret, Some(3));
+    assert!(again.cur.restore_view.is_none(), "restored once");
+    let _ = std::fs::remove_dir_all(cfg.parent().unwrap_or(&cfg));
 }
