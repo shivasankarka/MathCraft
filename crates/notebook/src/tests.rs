@@ -227,3 +227,57 @@ fn restore_brings_back_deleted_cells_and_keeps_typing() {
     nb.add_cell(None, CellKind::Code, "z = 1");
     assert_eq!(nb.restore(&after).len(), 1);
 }
+
+fn ran(text: &str) -> Notebook {
+    let mut nb = Notebook::from_text(text);
+    let mut r = runner();
+    nb.run_blocking(&mut r, RunRequest::All);
+    nb
+}
+
+const SAVED: &str = "# %%\na = x**2 + 1\n\n# %%\nb = diff(a, x)\nb\n\n# %%\nprint('hi')\n\n# %%\nplot(sin(x), (x, 0, 1))\n";
+
+#[test]
+fn saved_results_come_back_dimmed_and_only_for_cells_that_are_unchanged() {
+    let json = ran(SAVED).export_outputs();
+    let mut nb = Notebook::from_text(SAVED);
+    assert_eq!(nb.import_outputs(&json), 3, "the plot is not saved");
+    let states: Vec<_> = nb.cells().iter().map(|c| c.state).collect();
+    assert_eq!(states, [CellState::Stale, CellState::Stale, CellState::Stale, CellState::New]);
+    let shown = nb.cells().get(1).and_then(|c| c.output.as_ref()).map(|o| format!("{:?}", o.result));
+    assert!(shown.as_ref().is_some_and(|s| s.contains("2*x")), "{shown:?}");
+    assert_eq!(nb.cells().get(2).and_then(|c| c.output.as_ref()).map(|o| o.stdout.as_str()), Some("hi\n"));
+
+    // changing a cell drops its result and those of the cells that read from it
+    let mut edited = Notebook::from_text(&SAVED.replace("x**2 + 1", "x**3"));
+    assert_eq!(edited.import_outputs(&json), 1, "only the print cell is independent of it");
+    assert_eq!(edited.cells().first().map(|c| c.state), Some(CellState::New));
+    assert_eq!(edited.import_outputs("not json"), 0);
+}
+
+#[test]
+fn opening_runs_only_cells_without_a_saved_result() {
+    let json = ran(SAVED).export_outputs();
+    let mut nb = Notebook::from_text(SAVED);
+    nb.import_outputs(&json);
+    let mut r = runner();
+    nb.run_blocking(&mut r, RunRequest::New);
+    assert_eq!(nb.cells().last().map(|c| c.state), Some(CellState::Fresh));
+    assert_eq!(nb.cells().first().map(|c| c.state), Some(CellState::Stale), "saved results stay dimmed until they run");
+    assert_eq!(nb.cells().get(2).map(|c| c.state), Some(CellState::Stale));
+    // running a saved cell's dependent brings its stale inputs back first
+    let id = nb.cells().get(1).map(|c| c.id).unwrap_or_default();
+    nb.run_blocking(&mut r, RunRequest::Cell(id));
+    assert_eq!(nb.cells().get(1).map(|c| c.state), Some(CellState::Fresh));
+}
+
+#[test]
+fn errors_are_saved_and_values_that_do_not_read_back_are_not() {
+    let src = "# %%\n1/0\n\n# %%\ns = 'it\\'s'\ns\n";
+    let json = ran(src).export_outputs();
+    let mut nb = Notebook::from_text(src);
+    nb.import_outputs(&json);
+    let first = nb.cells().first().and_then(|c| c.output.as_ref());
+    assert!(first.is_some_and(|o| o.result.is_err()));
+    assert_eq!(nb.cells().get(1).map(|c| c.state), Some(CellState::New), "strings are left to run again");
+}
