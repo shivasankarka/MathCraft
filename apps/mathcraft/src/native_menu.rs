@@ -9,6 +9,9 @@
 //! where the window did the same thing with it (open, save, find, ...). Cut, copy, paste and select all are left
 //! out: the editors handle those keys themselves, and a system item would take them away.
 
+// The entries are only read by the macOS menu and the tests; other systems keep the toolbar menus.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use super::*;
 
 /// A menu in the bar.
