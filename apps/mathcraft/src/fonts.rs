@@ -6,7 +6,7 @@ use egui::{FontData, FontDefinitions, FontFamily, FontId};
 use std::sync::Arc;
 
 pub const INTER: &[u8] = include_bytes!("../../../assets/fonts/InterVariable.ttf");
-const JETBRAINS: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
+pub const JETBRAINS: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
 pub const STIX_MATH: &[u8] = include_bytes!("../../../assets/fonts/STIX2Math.otf");
 
 pub fn math_family() -> FontFamily {
