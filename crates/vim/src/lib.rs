@@ -3,9 +3,10 @@
 //! and a short "pending" string for a status line. In insert mode every key except Esc is passed back to the editor.
 //!
 //! Supported: counts; motions `h j k l w b e 0 ^ $ gg G f F t T ; , n N`; operators `d c y` with motions and doubled
-//! (`dd cc yy`); `x X D C s S r J ~ p P u Ctrl-r`; inserts `i a I A o O`; visual `v V` with `d c y x o`; `:` command line
-//! (returned to the caller as [`Reply::Ex`]) and `/` search. Not yet: dot repeat, text objects, marks, macros, named
-//! registers.
+//! (`dd cc yy`); `x X D C s S r J ~ p P u Ctrl-r`; inserts `i a I A o O`; visual `v V` with `d c y x o`; dot repeat; text
+//! objects (`iw aw i" a( ...`); marks (`ma`, `'a`, `` `a ``, `''`, as motions after operators too); macros (`qa ... q`,
+//! `@a`, `@@`, `3@a`; the registers are shared through [`Macros`]); `:` command line (returned to the caller as
+//! [`Reply::Ex`]) and `/` search. Not yet: named text registers.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -37,7 +38,37 @@ pub enum Reply {
     Ex(String),
 }
 
+use std::collections::HashMap;
+
+/// One step of a recorded macro: a key, or the text typed in an insert session (the engine never sees those keys, the
+/// editor types them; the text is taken from the difference when Esc ends the session).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Unit {
+    Key(Key),
+    Typed(String),
+}
+
+/// Macro registers `a`-`z` and the recording in progress. Held by the caller so every editor shares them (a macro
+/// recorded in one cell plays in another): hand them to an editor's engine with [`Vim::set_macros`] before its keys
+/// and take them back with [`Vim::take_macros`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Macros {
+    regs: HashMap<char, Vec<Unit>>,
+    recording: Option<(char, Vec<Unit>)>,
+    last: Option<char>,
+}
+
+impl Macros {
+    /// The register being recorded into, if any.
+    pub fn recording(&self) -> Option<char> {
+        self.recording.as_ref().map(|(r, _)| *r)
+    }
+}
+
 const MAX_COUNT: usize = 9999;
+/// A macro may call another (or itself) this deep, and run this many steps in all, so a loop that never fails ends.
+const MAX_MACRO_DEPTH: usize = 16;
+const MAX_MACRO_STEPS: usize = 200_000;
 const MAX_UNDO: usize = 200;
 
 struct State {
@@ -85,6 +116,20 @@ pub struct Vim {
     cmd_kind: char,
     search: String,
     last_find: Option<(char, char)>,
+    /// Marks `a`-`z` and `'` (where the last jump started), as char indices that follow the text as it changes.
+    marks: HashMap<char, usize>,
+    /// The text as it was when the marks were last brought up to date.
+    seen: Option<Vec<char>>,
+    /// `m`, `'` or a backtick, waiting for the mark's name.
+    pending_mark: Option<char>,
+    /// `q` or `@`, waiting for a register name.
+    pending_macro: Option<char>,
+    macros: Macros,
+    /// How deep inside a playing macro (0 when the user types).
+    macro_depth: usize,
+    macro_steps: usize,
+    /// The last key could not do what it says (a motion found nothing); a macro stops there.
+    failed: bool,
 }
 
 impl Default for Vim {
@@ -358,7 +403,25 @@ impl Vim {
             cmd_kind: ':',
             search: String::new(),
             last_find: None,
+            marks: HashMap::new(),
+            seen: None,
+            pending_mark: None,
+            pending_macro: None,
+            macros: Macros::default(),
+            macro_depth: 0,
+            macro_steps: 0,
+            failed: false,
         }
+    }
+
+    /// Use these macro registers from now on (see [`Macros`]).
+    pub fn set_macros(&mut self, macros: Macros) {
+        self.macros = macros;
+    }
+
+    /// Give the macro registers back to the caller.
+    pub fn take_macros(&mut self) -> Macros {
+        std::mem::take(&mut self.macros)
     }
 
     pub fn mode(&self) -> Mode {
@@ -389,10 +452,13 @@ impl Vim {
         }
         pending.extend(self.pending_find);
         pending.extend(self.pending_obj);
+        pending.extend(self.pending_mark);
+        pending.extend(self.pending_macro);
         if self.mode == Mode::Command {
             return format!("{}{}", self.cmd_kind, self.cmd);
         }
-        if pending.is_empty() { name.to_owned() } else { format!("{name}  {pending}") }
+        let recording = self.macros.recording().map(|r| format!("recording @{r}"));
+        [Some(name.to_owned()), (!pending.is_empty()).then_some(pending), recording].into_iter().flatten().collect::<Vec<_>>().join("  ")
     }
 
     /// Back to normal mode with nothing pending (also used when focus moves to another editor).
@@ -408,6 +474,8 @@ impl Vim {
         self.pending_find = None;
         self.pending_replace = false;
         self.pending_obj = None;
+        self.pending_mark = None;
+        self.pending_macro = None;
     }
 
     /// Nothing typed yet for the next command.
@@ -419,14 +487,66 @@ impl Vim {
             && self.pending_find.is_none()
             && !self.pending_replace
             && self.pending_obj.is_none()
+            && self.pending_mark.is_none()
+            && self.pending_macro.is_none()
     }
 
     /// Feed one key. `text` and `cursor` (char index) are edited in place.
     pub fn handle(&mut self, text: &mut String, cursor: &mut usize, key: Key) -> Reply {
+        // text typed in insert mode (by the editor) or changed by an earlier key moves the marks
+        self.sync_marks(text);
+        let reply = self.handle_key(text, cursor, key);
+        self.sync_marks(text);
+        reply
+    }
+
+    /// Bring the marks in line with `text`: those after a change move with it, those inside it go to its start.
+    fn sync_marks(&mut self, text: &str) {
+        if self.marks.is_empty() {
+            self.seen = None;
+            return;
+        }
+        let now: Vec<char> = text.chars().collect();
+        if let Some(old) = self.seen.take()
+            && old != now
+        {
+            let prefix = old.iter().zip(&now).take_while(|(a, b)| a == b).count();
+            let suffix = old.iter().rev().zip(now.iter().rev()).take(old.len().min(now.len()) - prefix).take_while(|(a, b)| a == b).count();
+            let old_end = old.len() - suffix;
+            for m in self.marks.values_mut() {
+                if *m >= old_end {
+                    *m = (*m + now.len()).saturating_sub(old.len());
+                } else if *m >= prefix {
+                    *m = prefix;
+                }
+                *m = (*m).min(now.len());
+            }
+        }
+        self.seen = Some(now);
+    }
+
+    fn recording_user(&self) -> bool {
+        self.macro_depth == 0 && !self.replaying && self.macros.recording.is_some()
+    }
+
+    fn record(&mut self, unit: Unit) {
+        if let Some((_, units)) = self.macros.recording.as_mut() {
+            units.push(unit);
+        }
+    }
+
+    fn handle_key(&mut self, text: &mut String, cursor: &mut usize, key: Key) -> Reply {
         if self.mode == Mode::Insert {
             if key == Key::Esc || key == Key::Ctrl('[') {
                 let chars: Vec<char> = text.chars().collect();
                 let cur = (*cursor).min(chars.len());
+                if self.recording_user() {
+                    let typed = if cur >= self.insert_from { text_of(&chars, self.insert_from, cur) } else { String::new() };
+                    if !typed.is_empty() {
+                        self.record(Unit::Typed(typed));
+                    }
+                    self.record(Unit::Key(key));
+                }
                 if self.rec_ok && !self.replaying {
                     // what was typed, for `.` (a plain run of insertions; edits with backspace are not replayed)
                     let typed = if cur >= self.insert_from { text_of(&chars, self.insert_from, cur) } else { String::new() };
@@ -440,6 +560,12 @@ impl Vim {
                 return Reply::Eaten;
             }
             return Reply::Pass;
+        }
+        if let Some(reply) = self.macro_key(text, cursor, key) {
+            return reply;
+        }
+        if self.recording_user() {
+            self.record(Unit::Key(key));
         }
         if key == Key::Char('.')
             && self.mode == Mode::Normal
@@ -488,6 +614,108 @@ impl Vim {
             *text = new_text;
         }
         *cursor = st.cur;
+        reply
+    }
+
+    /// `q{a-z}` starts recording, `q` ends it, `{count}@{a-z}` and `@@` play. `None` when the key is not for macros.
+    fn macro_key(&mut self, text: &mut String, cursor: &mut usize, key: Key) -> Option<Reply> {
+        if let Some(prefix) = self.pending_macro.take() {
+            if let Key::Char(c) = key {
+                if prefix == 'q' && c.is_ascii_lowercase() {
+                    self.macros.recording = Some((c, Vec::new()));
+                } else if prefix == '@' && (c.is_ascii_lowercase() || c == '@') {
+                    if let Some(reg) = if c == '@' { self.macros.last } else { Some(c) } {
+                        if self.recording_user() {
+                            self.record(Unit::Key(Key::Char('@')));
+                            self.record(Unit::Key(key));
+                        }
+                        return Some(self.play(reg, text, cursor));
+                    }
+                    self.failed = true;
+                }
+            }
+            self.count = 0;
+            return Some(Reply::Eaten);
+        }
+        let bare = self.mode == Mode::Normal
+            && self.op.is_none()
+            && !self.pending_g
+            && self.pending_find.is_none()
+            && !self.pending_replace
+            && self.pending_obj.is_none()
+            && self.pending_mark.is_none();
+        match key {
+            Key::Char('q') if bare && self.macro_depth == 0 && self.count == 0 => {
+                match self.macros.recording.take() {
+                    Some((reg, units)) => {
+                        self.macros.regs.insert(reg, units);
+                    }
+                    None => self.pending_macro = Some('q'),
+                }
+                Some(Reply::Eaten)
+            }
+            Key::Char('@') if bare => {
+                self.pending_macro = Some('@');
+                Some(Reply::Eaten)
+            }
+            _ => None,
+        }
+    }
+
+    /// Play register `reg` `count` times, stopping when a key in it fails (a motion that finds nothing), so a
+    /// macro that calls itself runs until the end of the text.
+    fn play(&mut self, reg: char, text: &mut String, cursor: &mut usize) -> Reply {
+        let times = self.count1();
+        self.count = 0;
+        let Some(units) = self.macros.regs.get(&reg).cloned() else {
+            self.failed = true;
+            return Reply::Eaten;
+        };
+        self.macros.last = Some(reg);
+        if self.macro_depth >= MAX_MACRO_DEPTH {
+            self.failed = true;
+            return Reply::Eaten;
+        }
+        if self.macro_depth == 0 {
+            self.macro_steps = 0;
+        }
+        self.macro_depth += 1;
+        let mut reply = Reply::Eaten;
+        let mut stopped = false;
+        'times: for _ in 0..times {
+            for unit in &units {
+                if self.macro_steps >= MAX_MACRO_STEPS {
+                    stopped = true;
+                    break 'times;
+                }
+                self.macro_steps += 1;
+                self.failed = false;
+                match unit {
+                    Unit::Key(k) => {
+                        if let Reply::Ex(line) = self.handle(text, cursor, *k) {
+                            reply = Reply::Ex(line);
+                        }
+                    }
+                    Unit::Typed(typed) if self.mode == Mode::Insert => {
+                        let mut chars: Vec<char> = text.chars().collect();
+                        let at = (*cursor).min(chars.len());
+                        for (i, ch) in typed.chars().enumerate() {
+                            chars.insert(at + i, ch);
+                        }
+                        *cursor = at + typed.chars().count();
+                        *text = chars.into_iter().collect();
+                    }
+                    Unit::Typed(_) => {}
+                }
+                if self.failed {
+                    stopped = true;
+                    break 'times;
+                }
+            }
+        }
+        self.macro_depth -= 1;
+        // the macro that called this one stops too; at the top the failure is spent
+        self.failed = stopped && self.macro_depth > 0;
         reply
     }
 
@@ -554,7 +782,10 @@ impl Vim {
                     self.search = line;
                 }
                 if let Some(p) = search_from(&st.chars, st.cur, &self.search, true) {
+                    self.marks.insert('\'', st.cur);
                     st.cur = p;
+                } else {
+                    self.failed = true;
                 }
             }
             Key::Ctrl(_) => {}
@@ -616,9 +847,14 @@ impl Vim {
             self.run_find(st, kind, c, false);
             return Reply::Eaten;
         }
+        if let Some(kind) = self.pending_mark.take() {
+            self.mark_key(st, kind, c);
+            return Reply::Eaten;
+        }
         if self.pending_g {
             self.pending_g = false;
             if c == 'g' {
+                self.marks.insert('\'', st.cur);
                 let line = if self.count > 0 { self.count - 1 } else { 0 };
                 let to = first_nonblank(&st.chars, start_of_line_number(&st.chars, line.min(line_count(&st.chars) - 1)));
                 self.motion_or_operate(st, Motion { to, inclusive: false, linewise: true });
@@ -741,13 +977,23 @@ impl Vim {
             'n' | 'N' => search_from(&st.chars, st.cur, &self.search, c == 'n').map(|to| Motion { to, inclusive: false, linewise: false }),
             _ => None,
         };
+        if motion.is_none() && matches!(c, 'n' | 'N' | '%') {
+            self.failed = true;
+        }
         if let Some(m) = motion {
+            if m.to == st.cur && matches!(c, 'h' | 'l' | 'j' | 'k') {
+                self.failed = true;
+            }
+            if matches!(c, 'G' | '%' | '{' | '}' | 'n' | 'N') {
+                self.marks.insert('\'', st.cur);
+            }
             self.motion_or_operate(st, m);
             return Reply::Eaten;
         }
         match c {
             'g' => self.pending_g = true,
             'f' | 'F' | 't' | 'T' => self.pending_find = Some(c),
+            'm' | '\'' | '`' => self.pending_mark = Some(c),
             ';' | ',' => {
                 if let Some((kind, target)) = self.last_find {
                     let kind = if c == ';' { kind } else { flip(kind) };
@@ -859,8 +1105,35 @@ impl Vim {
         if let Some((to, forward)) = find_in_line(&st.chars, from, kind, target, count) {
             self.motion_or_operate(st, Motion { to, inclusive: forward, linewise: false });
         } else {
+            self.failed = true;
             self.clear_pending();
         }
+    }
+
+    /// The key after `m`, `'` or a backtick: set mark `c`, or jump to it (to its line for `'`, exactly for a backtick).
+    fn mark_key(&mut self, st: &mut State, kind: char, c: char) {
+        if kind == 'm' {
+            if c.is_ascii_lowercase() {
+                self.marks.insert(c, st.cur);
+            }
+            self.clear_pending();
+            return;
+        }
+        // `''` and two backticks go back to where the last jump started
+        let name = if matches!(c, '\'' | '`') { '\'' } else { c };
+        let target = self.marks.get(&name).copied().filter(|_| name == '\'' || name.is_ascii_lowercase());
+        let Some(to) = target.map(|t| t.min(st.chars.len())) else {
+            self.failed = true;
+            self.clear_pending();
+            return;
+        };
+        self.marks.insert('\'', st.cur);
+        let motion = if kind == '\'' {
+            Motion { to: first_nonblank(&st.chars, to), inclusive: false, linewise: true }
+        } else {
+            Motion { to, inclusive: false, linewise: false }
+        };
+        self.motion_or_operate(st, motion);
     }
 
     fn motion_or_operate(&mut self, st: &mut State, m: Motion) {
@@ -1311,7 +1584,7 @@ mod tests {
 
     #[test]
     fn random_key_sequences_never_panic() {
-        let alphabet: Vec<Key> = "dcyxXDCsSrJ~pPuhjklwbe0^$GgfFtT;,nNiaIAoOvV:/ab12\n."
+        let alphabet: Vec<Key> = "dcyxXDCsSrJ~pPuhjklwbe0^$GgfFtT;,nNiaIAoOvV:/ab12\n.mq@'`"
             .chars()
             .map(Key::Char)
             .chain([Key::Esc, Key::Enter, Key::Backspace, Key::Ctrl('r')])
@@ -1333,5 +1606,81 @@ mod tests {
                 assert!(c <= t.chars().count());
             }
         }
+    }
+
+    #[test]
+    fn marks_jump_to_a_line_or_an_exact_place_and_work_with_operators() {
+        let (t, _, _) = run("a\nb\nc\nd", 0, "jmajjd'a");
+        assert_eq!(t, "a", "d'a deletes the lines from the mark to here");
+        let (t, c, _) = run("hello world", 0, "wma0d`a");
+        assert_eq!((t.as_str(), c), ("world", 0), "a backtick mark is exact and exclusive");
+        let (_, c, _) = run("1\n2\n3\n4", 0, "G''");
+        assert_eq!(c, 0, "'' goes back to where the jump started");
+        let (_, c, _) = run("  x\n  y", 0, "jma0gg'a");
+        assert_eq!(c, 6, "'a lands on the first non-blank of the mark's line");
+        let (_, c, v) = run("abc", 1, "'z");
+        assert_eq!(c, 1, "an unset mark does nothing");
+        assert_eq!(v.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn marks_follow_the_text_as_it_changes() {
+        // a line is added above the mark, by typing in insert mode
+        let (t, c, _) = run("ab\ncd", 0, "jmaggOxx<Esc>'a");
+        assert_eq!(t, "xx\nab\ncd");
+        assert_eq!(c, 6, "still on the `cd` line");
+        // text before the mark is deleted
+        let (_, c, _) = run("abcdef", 4, "ma0x`a");
+        assert_eq!(c, 3, "the mark moved one to the left with the deleted character");
+    }
+
+    #[test]
+    fn a_recorded_macro_replays_with_counts_and_stops_when_a_motion_fails() {
+        let (t, _, _) = run("a1\na2\na3\na4", 0, "qaI-<Esc>jq2@a");
+        assert_eq!(t, "-a1\n-a2\n-a3\na4");
+        let (t, _, _) = run("a\nb", 0, "qaA!<Esc>jq@a");
+        assert_eq!(t, "a!\nb!", "typed text is replayed");
+        let (t, _, _) = run("a\nb\nc\nd", 0, "qaA!<Esc>jq9@a");
+        assert_eq!(t, "a!\nb!\nc!\nd!", "j fails on the last line, which ends the replay");
+        let (t, _, _) = run("a\nb\nc", 0, "qaA.<Esc>jq@a@@");
+        assert_eq!(t, "a.\nb.\nc.", "@@ plays the last macro again");
+    }
+
+    #[test]
+    fn a_macro_that_calls_itself_runs_to_the_end_of_the_text() {
+        let (t, _, _) = run("x\ny\nz", 0, "qaqqaI-<Esc>j@aq@a");
+        assert_eq!(t, "-x\n-y\n-z");
+        // one that never fails still ends
+        let (t, _, _) = run("x", 0, "qaqqa@aq@a");
+        assert_eq!(t, "x");
+    }
+
+    #[test]
+    fn macros_are_shared_between_editors_and_show_in_the_status() {
+        let (mut t, mut c) = ("one\ntwo\n".to_owned(), 0usize);
+        let mut first = Vim::new();
+        for k in [Key::Char('q'), Key::Char('a')] {
+            first.handle(&mut t, &mut c, k);
+        }
+        assert!(first.status().contains("recording @a"), "{}", first.status());
+        for k in [Key::Char('x'), Key::Char('q')] {
+            first.handle(&mut t, &mut c, k);
+        }
+        assert_eq!(t, "ne\ntwo\n");
+        let shared = first.take_macros();
+        let (mut other, mut t2, mut c2) = (Vim::new(), "xyz".to_owned(), 0usize);
+        other.set_macros(shared);
+        for k in [Key::Char('@'), Key::Char('a')] {
+            other.handle(&mut t2, &mut c2, k);
+        }
+        assert_eq!(t2, "yz", "a macro recorded in one editor plays in another");
+    }
+
+    #[test]
+    fn macro_keys_do_not_disturb_dot_repeat_or_counts() {
+        let (t, _, _) = run("abcdef", 0, "qaxq@a.");
+        assert_eq!(t, "def", "the macro deleted one, and . repeats that deletion");
+        let (t, _, _) = run("abcdef", 0, "2xqaxq");
+        assert_eq!(t, "def", "recording does not change what the keys do");
     }
 }
