@@ -97,6 +97,8 @@ pub struct Cell {
     /// Why a blocked cell did not run.
     pub note: Option<String>,
     pub problems: Vec<Problem>,
+    /// Set while the output is one restored from a saved copy: the fingerprint it was restored under.
+    pub(crate) restored_fp: Option<u64>,
     syntax: Option<(u32, String)>,
     analysis: Option<CellAnalysis>,
     stmts: Option<Arc<Vec<Stmt>>>,
@@ -213,6 +215,7 @@ impl Notebook {
             output: None,
             note: None,
             problems: Vec::new(),
+            restored_fp: None,
             syntax: None,
             analysis: None,
             stmts: None,
@@ -548,11 +551,13 @@ impl Notebook {
                 JobResult::Done(CellResult { stdout, result, elapsed }) => {
                     c.state = if result.is_ok() { CellState::Fresh } else { CellState::Error };
                     c.note = None;
+                    c.restored_fp = None;
                     c.output = Some(CellOutput { stdout, result, elapsed });
                 }
                 JobResult::Skipped(why) => {
                     c.state = CellState::Blocked;
                     c.note = Some(why);
+                    c.restored_fp = None;
                     c.output = None;
                 }
                 JobResult::Cancelled => c.state = CellState::Stale,
