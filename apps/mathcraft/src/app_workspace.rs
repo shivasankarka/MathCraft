@@ -95,6 +95,8 @@ impl App {
                 self.remember(&target);
                 self.cur.path = Some(target);
                 self.cur.dirty = false;
+                // its results are filed under the new name
+                self.cur.outputs_need_writing();
                 self.rescan();
             }
             Err(e) => self.status = format!("Could not save: {e}"),
