@@ -22,6 +22,7 @@ mod diff;
 mod doc;
 mod examples;
 mod export_html;
+mod export_pdf;
 mod find;
 mod fonts;
 mod git;
@@ -32,6 +33,7 @@ mod math_view;
 mod native_menu;
 mod output;
 mod palette;
+mod pdf;
 mod plot_export;
 mod plot_png;
 mod plot_view;
@@ -136,6 +138,7 @@ enum Cmd {
     File(PathBuf),
     Example(usize),
     ExportHtml,
+    ExportPdf,
     Find,
     GoTo(CellId),
     Quit,
