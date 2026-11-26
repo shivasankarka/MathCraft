@@ -25,7 +25,7 @@ impl App {
 
     /// Replace the current document's content (a new kernel: the old one's variables belong to the old notebook).
     pub(crate) fn replace_notebook(&mut self, nb: Notebook, path: Option<PathBuf>) {
-        self.cur = Doc::new(self.cur.id, &self.ctx, nb, path);
+        self.cur = self.make_doc(self.cur.id, nb, path, None);
     }
 
     /// Show a notebook in a new tab, or in the current one when that is still untouched and untitled.
@@ -35,7 +35,8 @@ impl App {
             return;
         }
         let id = self.fresh_id();
-        let old = std::mem::replace(&mut self.cur, Doc::new(id, &self.ctx, nb, path));
+        let fresh = self.make_doc(id, nb, path, None);
+        let old = std::mem::replace(&mut self.cur, fresh);
         self.others.push(old);
         self.order.push(id);
     }
@@ -69,8 +70,10 @@ impl App {
         if self.cur.id == id { Some(&self.cur) } else { self.others.iter().find(|d| d.id == id) }
     }
 
+    /// Quitting would lose edits: to a saved file, or to an untitled notebook when drafts are not being kept.
     pub(crate) fn any_dirty(&self) -> bool {
-        self.cur.dirty || self.others.iter().any(|d| d.dirty)
+        let lost = |d: &Doc| d.dirty && (d.path.is_some() || self.config.is_none());
+        lost(&self.cur) || self.others.iter().any(lost)
     }
 
     pub(crate) fn confirm(title: &str, description: &str) -> bool {
@@ -83,6 +86,11 @@ impl App {
             if !Self::confirm("Unsaved changes", &format!("{} has unsaved changes. Close it and discard them?", self.cur.name())) {
                 return;
             }
+        }
+        if let Some(dir) = &self.config
+            && let Some(name) = self.doc(id).and_then(|d| d.draft.clone())
+        {
+            store::forget_draft(dir, &name);
         }
         let pos = self.order.iter().position(|o| *o == id).unwrap_or(0);
         self.order.retain(|o| *o != id);
