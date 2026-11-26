@@ -11,6 +11,7 @@ pub mod format;
 mod kernel;
 mod notebook;
 mod runner;
+mod saved;
 
 pub use kernel::Kernel;
 pub use notebook::{Cell, CellId, CellKind, CellOutput, CellState, Diagnostic, Job, Layout, Notebook, Problem, RunMode, RunRequest};
