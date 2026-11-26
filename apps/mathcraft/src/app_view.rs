@@ -28,9 +28,12 @@ impl App {
         self.poll_kernel();
         self.poll_git(ctx);
         self.persist_settings();
-        self.persist_session();
+        self.persist_session(false);
         if let Some(c) = self.cur.nb.cells().iter().find(|c| ctx.memory(|m| m.has_focus(editor_id(c.id)))) {
             self.last_cell = Some(c.id);
+        }
+        if self.cur.view == View::Notebook && self.cur.restore_view.is_none() {
+            self.track_cursor(ctx);
         }
         self.shortcuts(ctx);
         let theme = self.theme(ctx);
@@ -40,6 +43,9 @@ impl App {
             && !Self::confirm("Unsaved changes", "Some notebooks have unsaved changes. Quit and discard them?")
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        } else if ctx.input(|i| i.viewport().close_requested()) {
+            // leaving: write drafts, results and where everything was scrolled to
+            self.persist_session(true);
         }
 
         let name = self.cur.path.as_ref().and_then(|p| p.file_name()).map_or("Untitled".to_string(), |n| n.to_string_lossy().to_string());
@@ -122,6 +128,7 @@ impl App {
         }
 
         let mut actions: Vec<Action> = Vec::new();
+        let restored_scroll = if self.cur.view == View::Notebook { self.take_restored_view(ctx) } else { None };
         let focus = self.cur.focus.take();
         if self.cur.view == View::Text {
             let active = text_view::active_cell(ctx, &self.cur);
@@ -164,7 +171,11 @@ impl App {
         } else {
             egui::CentralPanel::default().frame(egui::Frame::new().fill(theme.bg)).show(root, |ui| {
                 // one scroll position per tab, so switching tabs does not carry the offset over
-                egui::ScrollArea::vertical().id_salt(("notebook-scroll", self.cur.id)).auto_shrink([false, false]).show(ui, |ui| {
+                let mut area = egui::ScrollArea::vertical().id_salt(("notebook-scroll", self.cur.id)).auto_shrink([false, false]);
+                if let Some(y) = restored_scroll {
+                    area = area.vertical_scroll_offset(y);
+                }
+                let scrolled = area.show(ui, |ui| {
                     let side = ((ui.available_width() - COLUMN) / 2.0).max(16.0);
                     ui.add_space(14.0);
                     ui.horizontal_top(|ui| {
@@ -204,6 +215,7 @@ impl App {
                         });
                     });
                 });
+                self.cur.memo.scroll = scrolled.state.clamped_offset().y.round().max(0.0) as u32;
             });
         }
         self.apply(actions);
